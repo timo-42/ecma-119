@@ -42,6 +42,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
   let descriptors: VolumeDescriptor[] = [];
+  let descriptorSequenceFailed = false;
   try {
     descriptors = parseVolumeDescriptors(image);
     const terminator = descriptors.find((descriptor) => descriptor.kind === "terminator");
@@ -56,12 +57,15 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       issues.push(...validateDirectoryRecordLayout(image, pvd.rootDirectoryRecord, "."));
     }
   } catch (error) {
+    descriptorSequenceFailed = true;
     issues.push({ code: "descriptor.sequence", message: error instanceof Error ? error.message : String(error) });
   }
-  try {
-    parseIsoImage(image, { includeData: false });
-  } catch (error) {
-    issues.push({ code: "image.parse", message: error instanceof Error ? error.message : String(error) });
+  if (!descriptorSequenceFailed) {
+    try {
+      parseIsoImage(image, { includeData: false });
+    } catch (error) {
+      issues.push({ code: "image.parse", message: error instanceof Error ? error.message : String(error) });
+    }
   }
   return dedupeIssues(issues);
 }
@@ -199,7 +203,11 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
     issues.push({ code: "path_table.root", message: "first path table record must be the root directory with parent number 1" });
   }
   for (const [index, record] of pathTable.entries()) {
-    if (record.parentDirectoryNumber < 1 || record.parentDirectoryNumber > index + 1) {
+    const isRoot = index === 0;
+    const invalidParent = isRoot
+      ? record.parentDirectoryNumber !== 1
+      : record.parentDirectoryNumber < 1 || record.parentDirectoryNumber >= index + 1;
+    if (invalidParent) {
       issues.push({
         code: "path_table.parent",
         message: `path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
