@@ -1,0 +1,6 @@
+
+.plan/
+node_modules/
+dist/
+coverage/
+*.tgz
