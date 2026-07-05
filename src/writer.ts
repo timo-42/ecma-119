@@ -184,13 +184,14 @@ function collectFiles(root: DirectoryNode): FileNode[] {
 }
 
 function directoryDataLength(directory: DirectoryNode): number {
-  let length = 0;
-  length += 34;
-  length += 34;
+  let offset = 0;
+  offset = nextRecordOffset(offset, 34);
+  offset = nextRecordOffset(offset, 34);
   for (const child of [...directory.children.values()].sort(compareNode)) {
-    length += 33 + child.isoIdentifier.length + ((33 + child.isoIdentifier.length) % 2 === 0 ? 0 : 1);
+    const recordLength = 33 + child.isoIdentifier.length + ((33 + child.isoIdentifier.length) % 2 === 0 ? 0 : 1);
+    offset = nextRecordOffset(offset, recordLength);
   }
-  return length;
+  return offset;
 }
 
 function encodeDirectoryExtent(directory: DirectoryNode): Uint8Array {
@@ -231,6 +232,14 @@ function appendRecord(bytes: Uint8Array, offset: number, record: Uint8Array): nu
   }
   bytes.set(record, offset);
   return offset + record.byteLength;
+}
+
+function nextRecordOffset(offset: number, recordLength: number): number {
+  const sectorRemaining = SECTOR_SIZE - (offset % SECTOR_SIZE);
+  if (recordLength > sectorRemaining) {
+    offset += sectorRemaining;
+  }
+  return offset + recordLength;
 }
 
 function encodePrimaryVolumeDescriptor(input: {
