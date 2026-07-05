@@ -1,0 +1,61 @@
+import { readUint16BE, readUint16LE, readUint32BE, readUint32LE, writeUint16BE, writeUint16LE, writeUint32BE, writeUint32LE } from "./binary.js";
+
+export type PathTableEndian = "little" | "big";
+
+export type PathTableRecord = {
+  identifier: Uint8Array;
+  extent: number;
+  parentDirectoryNumber: number;
+  extendedAttributeRecordLength?: number;
+};
+
+export function pathTableRecordLength(identifierLength: number): number {
+  const base = 8 + identifierLength;
+  return base + (identifierLength % 2 === 0 ? 0 : 1);
+}
+
+export function encodePathTable(records: PathTableRecord[], endian: PathTableEndian): Uint8Array {
+  const size = records.reduce((sum, record) => sum + pathTableRecordLength(record.identifier.length), 0);
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+
+  for (const record of records) {
+    const length = pathTableRecordLength(record.identifier.length);
+    bytes[offset] = record.identifier.length;
+    bytes[offset + 1] = record.extendedAttributeRecordLength ?? 0;
+    if (endian === "little") {
+      writeUint32LE(bytes, offset + 2, record.extent);
+      writeUint16LE(bytes, offset + 6, record.parentDirectoryNumber);
+    } else {
+      writeUint32BE(bytes, offset + 2, record.extent);
+      writeUint16BE(bytes, offset + 6, record.parentDirectoryNumber);
+    }
+    bytes.set(record.identifier, offset + 8);
+    offset += length;
+  }
+
+  return bytes;
+}
+
+export function decodePathTable(bytes: Uint8Array, endian: PathTableEndian): PathTableRecord[] {
+  const records: PathTableRecord[] = [];
+  let offset = 0;
+
+  while (offset < bytes.length) {
+    const identifierLength = bytes[offset]!;
+    if (identifierLength === 0) {
+      break;
+    }
+    const extent = endian === "little" ? readUint32LE(bytes, offset + 2) : readUint32BE(bytes, offset + 2);
+    const parentDirectoryNumber = endian === "little" ? readUint16LE(bytes, offset + 6) : readUint16BE(bytes, offset + 6);
+    records.push({
+      identifier: bytes.slice(offset + 8, offset + 8 + identifierLength),
+      extent,
+      parentDirectoryNumber,
+      extendedAttributeRecordLength: bytes[offset + 1]!,
+    });
+    offset += pathTableRecordLength(identifierLength);
+  }
+
+  return records;
+}

@@ -1,0 +1,43 @@
+{
+  "name": "ecma-119",
+  "version": "0.1.0",
+  "description": "Read and write ECMA-119 / ISO 9660 CD-ROM volume images.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Timo Haas",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build && npm test"
+  },
+  "keywords": [
+    "ecma-119",
+    "iso9660",
+    "cdrom",
+    "iso",
+    "filesystem"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
