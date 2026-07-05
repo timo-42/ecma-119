@@ -45,12 +45,12 @@ describe("volume descriptor sequence parsing", () => {
     sector(missingTerminator, TERMINATOR_SECTOR).fill(0);
 
     expect(() => parseVolumeDescriptors(missingTerminator)).toThrow(/terminator/i);
-    expect(validateIsoImage(missingTerminator)).toEqual([
+    expect(validateIsoImage(missingTerminator)).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        code: "image.parse",
+        code: "descriptor.sequence",
         message: expect.stringMatching(/terminator/i),
       }),
-    ]);
+    ]));
   });
 
   test("classifies supplementary, enhanced, partition, and unknown descriptors", async () => {

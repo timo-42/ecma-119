@@ -1,7 +1,7 @@
 import { decodeVolumeDate, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeFileIdentifier, stripVersion } from "./identifiers.js";
-import { decodePathTable } from "./path-table.js";
+import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
   type IsoDirectoryEntry,
   type IsoFileEntry,
@@ -41,16 +41,29 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
   if (image.byteLength % SECTOR_SIZE !== 0) {
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
+  let descriptors: VolumeDescriptor[] = [];
   try {
-    const parsed = parseIsoImage(image, { includeData: false });
-    const terminator = parsed.descriptors.find((descriptor) => descriptor.kind === "terminator");
+    descriptors = parseVolumeDescriptors(image);
+    const terminator = descriptors.find((descriptor) => descriptor.kind === "terminator");
     if (terminator && !allZero(terminator.raw.subarray(7))) {
       issues.push({ code: "descriptor.terminator_reserved", message: "volume descriptor set terminator reserved bytes must be zero" });
     }
+    const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
+    if (!pvd) {
+      issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
+    } else {
+      issues.push(...validatePrimaryVolumeDescriptor(image, pvd));
+      issues.push(...validateDirectoryRecordLayout(image, pvd.rootDirectoryRecord, "."));
+    }
+  } catch (error) {
+    issues.push({ code: "descriptor.sequence", message: error instanceof Error ? error.message : String(error) });
+  }
+  try {
+    parseIsoImage(image, { includeData: false });
   } catch (error) {
     issues.push({ code: "image.parse", message: error instanceof Error ? error.message : String(error) });
   }
-  return issues;
+  return dedupeIssues(issues);
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
@@ -156,6 +169,86 @@ function validatePrimaryDescriptorReferences(image: Uint8Array, pvd: PrimaryVolu
   decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
 }
 
+function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (pvd.logicalBlockSize !== SECTOR_SIZE) {
+    issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
+  }
+  if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
+    issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
+  }
+  const pathTableStart = pvd.typeLPathTableLocation * SECTOR_SIZE;
+  const pathTableEnd = pathTableStart + pvd.pathTableSize;
+  if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
+    issues.push({ code: "path_table.bounds", message: "Type L path table extent is out of bounds" });
+    return issues;
+  }
+  let pathTable: PathTableRecord[];
+  try {
+    pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
+  } catch (error) {
+    issues.push({ code: "path_table.parse", message: error instanceof Error ? error.message : String(error) });
+    return issues;
+  }
+  if (pathTable.length === 0) {
+    issues.push({ code: "path_table.empty", message: "path table must contain the root directory record" });
+    return issues;
+  }
+  const root = pathTable[0]!;
+  if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
+    issues.push({ code: "path_table.root", message: "first path table record must be the root directory with parent number 1" });
+  }
+  for (const [index, record] of pathTable.entries()) {
+    if (record.parentDirectoryNumber < 1 || record.parentDirectoryNumber > index + 1) {
+      issues.push({
+        code: "path_table.parent",
+        message: `path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
+      });
+    }
+  }
+  return issues;
+}
+
+function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const start = directory.extent * SECTOR_SIZE;
+  const end = start + directory.size;
+  if (start < 0 || end > image.byteLength) {
+    return [{ code: "directory.record_bounds", message: `directory extent for ${path} is out of bounds`, path }];
+  }
+  let offset = start;
+  while (offset < end) {
+    const length = image[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      continue;
+    }
+    const relative = offset - start;
+    if ((relative % SECTOR_SIZE) + length > SECTOR_SIZE) {
+      issues.push({ code: "directory.record_crosses_sector", message: `directory record crosses a logical sector boundary at ${path}`, path });
+      offset += 1;
+      continue;
+    }
+    if (length < 34 || offset + length > end) {
+      issues.push({ code: "directory.record_malformed", message: `directory record has invalid length at ${path}`, path });
+      offset += Math.max(1, length);
+      continue;
+    }
+    const identifierLength = image[offset + 32]!;
+    const minimumLength = 33 + identifierLength + ((33 + identifierLength) % 2 === 0 ? 0 : 1);
+    if (identifierLength === 0 || minimumLength > length) {
+      issues.push({ code: "directory.record_malformed", message: `directory record identifier length is inconsistent with record length at ${path}`, path });
+      offset += length;
+      continue;
+    }
+    if ((image[offset + 25]! & 0x60) !== 0) {
+      issues.push({ code: "directory.file_flags_reserved", message: `directory record has reserved file flag bits set at ${path}`, path });
+    }
+    offset += length;
+  }
+  return issues;
+}
+
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
   const common = {
     ...baseDescriptor(image, offset, sector, image[offset + 6] === 2 ? "enhanced" : "supplementary"),
@@ -201,7 +294,13 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
       continue;
     }
+    if ((offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
+      throw new Error(`directory record crosses a logical sector boundary at ${path || "."}`);
+    }
     const record = decodeDirectoryRecord(bytes, offset);
+    if ((record.flags & 0x60) !== 0) {
+      throw new Error(`directory record has reserved file flag bits set at ${path || "."}`);
+    }
     offset += record.length;
 
     if (recordIndex++ < 2) {
@@ -293,6 +392,18 @@ function baseDescriptor(image: Uint8Array, offset: number, sector: number, kind:
 
 function allZero(bytes: Uint8Array): boolean {
   return bytes.every((byte) => byte === 0);
+}
+
+function dedupeIssues(issues: ValidationIssue[]): ValidationIssue[] {
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    const key = `${issue.code}\0${issue.path ?? ""}\0${issue.message}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function joinPath(parent: string, child: string): string {
