@@ -15,10 +15,17 @@ export type CreateIsoOptions = {
   publisherIdentifier?: string;
   dataPreparerIdentifier?: string;
   applicationIdentifier?: string;
+  bootRecord?: BootRecordOptions;
   createdAt?: Date;
   modifiedAt?: Date;
   effectiveAt?: Date;
   expiresAt?: Date | null;
+};
+
+export type BootRecordOptions = {
+  bootSystemIdentifier?: string;
+  bootIdentifier?: string;
+  bootSystemUse?: Uint8Array | Buffer | string;
 };
 
 export type IsoFileEntry = {

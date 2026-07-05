@@ -18,7 +18,11 @@ import { createIsoImage, parseIsoImage } from "ecma-119";
 const image = createIsoImage([
   { path: "README.TXT", data: "Hello from ECMA-119\n" }
 ], {
-  volumeIdentifier: "EXAMPLE"
+  volumeIdentifier: "EXAMPLE",
+  bootRecord: {
+    bootSystemIdentifier: "EL TORITO SPECIFICATION",
+    bootIdentifier: "BOOT CATALOG"
+  }
 });
 
 const parsed = parseIsoImage(image);
@@ -31,9 +35,10 @@ Implemented support is intentionally explicit:
 
 - ECMA-119 logical sectors of 2,048 bytes
 - primary volume descriptor and descriptor set terminator
+- optional boot record volume descriptor
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Supplementary/enhanced descriptors, boot records, extended attributes, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile.
+Supplementary/enhanced descriptors, executable boot semantics, extended attributes, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record volume descriptors are supported as raw descriptor metadata.

@@ -12,7 +12,7 @@ import {
 import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
 import { normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { CreateIsoOptions, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS } from "./types.js";
+import { type BootRecordOptions, CreateIsoOptions, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -51,8 +51,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const pathTableBytesL = encodePathTable(pathRecords, "little");
   const pathTableBytesM = encodePathTable(pathRecords, "big");
   const pathTableSectors = sectorsForBytes(pathTableBytesL.length);
+  const descriptorSectorCount = 2 + (options.bootRecord ? 1 : 0);
 
-  let nextSector = SYSTEM_AREA_SECTORS + 2;
+  let nextSector = SYSTEM_AREA_SECTORS + descriptorSectorCount;
   const typeLPathTableSector = nextSector;
   nextSector += pathTableSectors;
   const typeMPathTableSector = nextSector;
@@ -87,6 +88,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     image.set(file.data, sectorOffset(file.extent));
   }
 
+  let descriptorSector = SYSTEM_AREA_SECTORS;
   image.set(encodePrimaryVolumeDescriptor({
     options,
     now,
@@ -95,8 +97,11 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     typeLPathTableSector,
     typeMPathTableSector,
     root,
-  }), sectorOffset(SYSTEM_AREA_SECTORS));
-  image.set(encodeTerminator(), sectorOffset(SYSTEM_AREA_SECTORS + 1));
+  }), sectorOffset(descriptorSector++));
+  if (options.bootRecord) {
+    image.set(encodeBootVolumeDescriptor(options.bootRecord), sectorOffset(descriptorSector++));
+  }
+  image.set(encodeTerminator(), sectorOffset(descriptorSector));
 
   return image;
 }
@@ -284,6 +289,23 @@ function encodeTerminator(): Uint8Array {
   bytes[0] = 255;
   writeAsciiPadded(bytes, 1, 5, STANDARD_IDENTIFIER, 0x00);
   bytes[6] = 1;
+  return bytes;
+}
+
+function encodeBootVolumeDescriptor(options: BootRecordOptions): Uint8Array {
+  const bytes = new Uint8Array(SECTOR_SIZE);
+  bytes[0] = 0;
+  writeAsciiPadded(bytes, 1, 5, STANDARD_IDENTIFIER, 0x00);
+  bytes[6] = 1;
+  writeAField(bytes, 7, 32, options.bootSystemIdentifier ?? "");
+  writeAField(bytes, 39, 32, options.bootIdentifier ?? "");
+  if (options.bootSystemUse) {
+    const bootSystemUse = toBytes(options.bootSystemUse);
+    if (bootSystemUse.byteLength > SECTOR_SIZE - 71) {
+      throw new Error(`boot system use field exceeds ${SECTOR_SIZE - 71} bytes`);
+    }
+    bytes.set(bootSystemUse, 71);
+  }
   return bytes;
 }
 
