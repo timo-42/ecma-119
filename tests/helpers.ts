@@ -73,18 +73,17 @@ export function findImageCreator(
 
 export async function createFixtureImage(
   createImage: (files: ImageFileInput[], options: ImageMetadataInput) => unknown,
-): Promise<Uint8Array> {
-  const result = await createImage(
-    [
-      {
-        path: "README.TXT",
-        data: new TextEncoder().encode("hello ecma-119\n"),
-      },
-    ],
+  files: ImageFileInput[] = [
     {
-      volumeIdentifier: "ECMA119_FIXTURE",
+      path: "README.TXT",
+      data: new TextEncoder().encode("hello ecma-119\n"),
     },
-  );
+  ],
+  options: ImageMetadataInput = {
+    volumeIdentifier: "ECMA119_FIXTURE",
+  },
+): Promise<Uint8Array> {
+  const result = await createImage(files, options);
 
   return asBytes(result);
 }

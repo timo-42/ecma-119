@@ -17,7 +17,7 @@ import {
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
   const pvd = parsePrimaryVolumeDescriptor(image);
-  const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true);
+  const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true, new Set());
   return {
     primaryVolumeDescriptor: { ...pvd, rootDirectoryRecord: root },
     root,
@@ -76,7 +76,12 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array): PrimaryVolumeDescripto
   return pvd;
 }
 
-function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean): IsoDirectoryEntry {
+function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, visited: Set<number>): IsoDirectoryEntry {
+  assertExtentInBounds(image, directory.extent, directory.size, path || ".");
+  if (visited.has(directory.extent)) {
+    throw new Error(`invalid directory cycle detected at ${path || "."}`);
+  }
+  visited.add(directory.extent);
   const start = directory.extent * SECTOR_SIZE;
   const bytes = image.subarray(start, start + directory.size);
   const children: IsoNode[] = [];
@@ -100,8 +105,9 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromRecord(record, childPath, []);
-      children.push(readDirectoryTree(image, child, childPath, includeData));
+      children.push(readDirectoryTree(image, child, childPath, includeData, new Set(visited)));
     } else {
+      assertExtentInBounds(image, record.extent, record.dataLength, joinPath(path, stripVersion(identifier)));
       const cleanName = stripVersion(identifier);
       const filePath = joinPath(path, cleanName);
       const file: IsoFileEntry = {
@@ -120,6 +126,14 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
   }
 
   return { ...directory, children };
+}
+
+function assertExtentInBounds(image: Uint8Array, extent: number, length: number, path: string): void {
+  const start = extent * SECTOR_SIZE;
+  const end = start + length;
+  if (!Number.isInteger(extent) || !Number.isInteger(length) || extent < 0 || length < 0 || start < 0 || end > image.byteLength) {
+    throw new Error(`invalid extent bounds for ${path}`);
+  }
 }
 
 function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {

@@ -115,4 +115,37 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
     const fileContent = image.subarray((fileRecord?.extent ?? 0) * SECTOR_SIZE, (fileRecord?.extent ?? 0) * SECTOR_SIZE + 15);
     expect(ascii(fileContent)).toBe("hello ecma-119\n");
   });
+
+  test("sizes large directories with sector padding between records", async () => {
+    expect(createImage).toBeTypeOf("function");
+    const files = Array.from({ length: 132 }, (_, index) => ({
+      path: `F${index.toString().padStart(5, "0")}.TXT`,
+      data: new TextEncoder().encode(`file ${index}\n`),
+    }));
+
+    const largeImage = await createFixtureImage(createImage!, files, { volumeIdentifier: "ECMA119_BIGDIR" });
+    const pvd = sector(largeImage, PVD_SECTOR);
+    const rootRecord = readDirectoryRecord(pvd, 156);
+    const rootDirectory = largeImage.subarray(rootRecord.extent * SECTOR_SIZE, rootRecord.extent * SECTOR_SIZE + rootRecord.dataLength);
+
+    expect(rootRecord.dataLength).toBeGreaterThan(SECTOR_SIZE);
+    expect(findDirectoryRecord(rootDirectory, "F00131.TXT;1")).toBeDefined();
+  });
+
+  test("rejects malformed directory cycles instead of recursing indefinitely", async () => {
+    const module = await loadEcma119Module();
+    const parseIsoImage = module?.parseIsoImage;
+    expect(parseIsoImage).toBeTypeOf("function");
+
+    const malformed = image.slice();
+    const rootRecord = readDirectoryRecord(primaryVolumeDescriptor, 156);
+    const rootOffset = rootRecord.extent * SECTOR_SIZE;
+    const childOffset = rootOffset + 68;
+
+    malformed[childOffset + 25] = 0x02;
+    malformed.set(primaryVolumeDescriptor.subarray(156 + 2, 156 + 10), childOffset + 2);
+    malformed.set(primaryVolumeDescriptor.subarray(156 + 10, 156 + 18), childOffset + 10);
+
+    expect(() => (parseIsoImage as (bytes: Uint8Array) => unknown)(malformed)).toThrow(/cycle|bounds|invalid/i);
+  });
 });
