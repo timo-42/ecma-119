@@ -7,7 +7,11 @@ import {
   type IsoFileEntry,
   type IsoImage,
   type IsoNode,
+  type EnhancedVolumeDescriptor,
   type PrimaryVolumeDescriptor,
+  type SupplementaryVolumeDescriptor,
+  type VolumeDescriptor,
+  type VolumePartitionDescriptor,
   SECTOR_SIZE,
   STANDARD_IDENTIFIER,
   SYSTEM_AREA_SECTORS,
@@ -16,9 +20,15 @@ import {
 
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
-  const pvd = parsePrimaryVolumeDescriptor(image);
+  const descriptors = parseVolumeDescriptors(image);
+  const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
+  if (!pvd) {
+    throw new Error("missing primary volume descriptor");
+  }
+  validatePrimaryDescriptorReferences(image, pvd);
   const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true, new Set());
   return {
+    descriptors,
     primaryVolumeDescriptor: { ...pvd, rootDirectoryRecord: root },
     root,
     files: collectParsedFiles(root),
@@ -32,22 +42,89 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
   try {
-    parseIsoImage(image, { includeData: false });
+    const parsed = parseIsoImage(image, { includeData: false });
+    const terminator = parsed.descriptors.find((descriptor) => descriptor.kind === "terminator");
+    if (terminator && !allZero(terminator.raw.subarray(7))) {
+      issues.push({ code: "descriptor.terminator_reserved", message: "volume descriptor set terminator reserved bytes must be zero" });
+    }
   } catch (error) {
     issues.push({ code: "image.parse", message: error instanceof Error ? error.message : String(error) });
   }
   return issues;
 }
 
-function parsePrimaryVolumeDescriptor(image: Uint8Array): PrimaryVolumeDescriptor {
-  const offset = sectorOffset(SYSTEM_AREA_SECTORS);
-  assertDescriptorHeader(image, offset, 1);
+export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
+  const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
+  const descriptors: VolumeDescriptor[] = [];
+  let sector = SYSTEM_AREA_SECTORS;
+
+  while (sectorOffset(sector + 1) <= image.byteLength) {
+    const offset = sectorOffset(sector);
+    let descriptor: VolumeDescriptor;
+    try {
+      descriptor = parseVolumeDescriptorAt(image, offset, sector);
+    } catch (error) {
+      throw new Error(`missing volume descriptor set terminator before sector ${sector}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    descriptors.push(descriptor);
+    if (descriptor.type === 255) {
+      return descriptors;
+    }
+    sector += 1;
+  }
+
+  throw new Error("missing volume descriptor set terminator");
+}
+
+function parseVolumeDescriptorAt(image: Uint8Array, offset: number, sector: number): VolumeDescriptor {
+  const type = image[offset]!;
+  const version = image[offset + 6]!;
+  assertDescriptorHeader(image, offset);
+  switch (type) {
+    case 0:
+      assertDescriptorVersion(version, [1], "boot record");
+      return {
+        ...baseDescriptor(image, offset, sector, "boot"),
+        type: 0,
+        kind: "boot",
+        bootSystemIdentifier: readAsciiTrimmed(image, offset + 7, 32),
+        bootIdentifier: readAsciiTrimmed(image, offset + 39, 32),
+        bootSystemUse: image.slice(offset + 71, offset + SECTOR_SIZE),
+      };
+    case 1:
+      assertDescriptorVersion(version, [1], "primary volume descriptor");
+      return parsePrimaryVolumeDescriptor(image, offset, sector);
+    case 2:
+      assertDescriptorVersion(version, [1, 2], "supplementary or enhanced volume descriptor");
+      return parseSupplementaryLikeDescriptor(image, offset, sector);
+    case 3:
+      assertDescriptorVersion(version, [1], "volume partition descriptor");
+      return parsePartitionDescriptor(image, offset, sector);
+    case 255:
+      assertDescriptorVersion(version, [1], "volume descriptor set terminator");
+      return {
+        ...baseDescriptor(image, offset, sector, "terminator"),
+        type: 255,
+        kind: "terminator",
+      };
+    default:
+      return {
+        ...baseDescriptor(image, offset, sector, "unknown"),
+        kind: "unknown",
+      };
+  }
+}
+
+function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector: number): PrimaryVolumeDescriptor {
   const rootRecord = decodeDirectoryRecord(image, offset + 156);
   const pvd: PrimaryVolumeDescriptor = {
     type: 1,
+    kind: "primary",
     identifier: STANDARD_IDENTIFIER,
     version: image[offset + 6]!,
     offset,
+    sector,
+    raw: image.slice(offset, offset + SECTOR_SIZE),
     systemIdentifier: readAsciiTrimmed(image, offset + 8, 32),
     volumeIdentifier: readAsciiTrimmed(image, offset + 40, 32),
     volumeSpaceSize: readUint32Both(image, offset + 80),
@@ -67,13 +144,43 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array): PrimaryVolumeDescripto
     expiresAt: decodeVolumeDate(image, offset + 847),
     effectiveAt: decodeVolumeDate(image, offset + 864),
   };
-  const pathTable = image.subarray(
-    pvd.typeLPathTableLocation * SECTOR_SIZE,
-    pvd.typeLPathTableLocation * SECTOR_SIZE + pvd.pathTableSize,
-  );
-  decodePathTable(pathTable, "little");
-  assertDescriptorHeader(image, sectorOffset(SYSTEM_AREA_SECTORS + 1), 255);
   return pvd;
+}
+
+function validatePrimaryDescriptorReferences(image: Uint8Array, pvd: PrimaryVolumeDescriptor): void {
+  const pathTableStart = pvd.typeLPathTableLocation * SECTOR_SIZE;
+  const pathTableEnd = pathTableStart + pvd.pathTableSize;
+  if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
+    throw new Error("primary volume descriptor path table extent is out of bounds");
+  }
+  decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
+}
+
+function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
+  const common = {
+    ...baseDescriptor(image, offset, sector, image[offset + 6] === 2 ? "enhanced" : "supplementary"),
+    type: 2 as const,
+    volumeFlags: image[offset + 7]!,
+    systemIdentifier: readAsciiTrimmed(image, offset + 8, 32),
+    volumeIdentifier: readAsciiTrimmed(image, offset + 40, 32),
+    escapeSequences: image.slice(offset + 88, offset + 120),
+  };
+  return image[offset + 6] === 2
+    ? { ...common, kind: "enhanced", version: 2 }
+    : { ...common, kind: "supplementary", version: 1 };
+}
+
+function parsePartitionDescriptor(image: Uint8Array, offset: number, sector: number): VolumePartitionDescriptor {
+  return {
+    ...baseDescriptor(image, offset, sector, "partition"),
+    type: 3,
+    kind: "partition",
+    systemIdentifier: readAsciiTrimmed(image, offset + 8, 32),
+    volumePartitionIdentifier: readAsciiTrimmed(image, offset + 40, 32),
+    volumePartitionLocation: readUint32Both(image, offset + 72),
+    volumePartitionSize: readUint32Both(image, offset + 80),
+    systemUse: image.slice(offset + 88, offset + SECTOR_SIZE),
+  };
 }
 
 function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, visited: Set<number>): IsoDirectoryEntry {
@@ -160,16 +267,32 @@ function collectParsedFiles(directory: IsoDirectoryEntry): IsoFileEntry[] {
   return files;
 }
 
-function assertDescriptorHeader(image: Uint8Array, offset: number, type: number): void {
-  if (image[offset] !== type) {
-    throw new Error(`expected descriptor type ${type} at byte offset ${offset}`);
-  }
+function assertDescriptorHeader(image: Uint8Array, offset: number): void {
   if (readAscii(image, offset + 1, 5) !== STANDARD_IDENTIFIER) {
     throw new Error(`expected ${STANDARD_IDENTIFIER} descriptor identifier at byte offset ${offset + 1}`);
   }
-  if (image[offset + 6] !== 1) {
-    throw new Error(`expected descriptor version 1 at byte offset ${offset + 6}`);
+}
+
+function assertDescriptorVersion(version: number, allowed: number[], name: string): void {
+  if (!allowed.includes(version)) {
+    throw new Error(`expected ${name} version ${allowed.join(" or ")}`);
   }
+}
+
+function baseDescriptor(image: Uint8Array, offset: number, sector: number, kind: string): { type: number; kind: string; identifier: string; version: number; offset: number; sector: number; raw: Uint8Array } {
+  return {
+    type: image[offset]!,
+    kind,
+    identifier: STANDARD_IDENTIFIER,
+    version: image[offset + 6]!,
+    offset,
+    sector,
+    raw: image.slice(offset, offset + SECTOR_SIZE),
+  };
+}
+
+function allZero(bytes: Uint8Array): boolean {
+  return bytes.every((byte) => byte === 0);
 }
 
 function joinPath(parent: string, child: string): string {
