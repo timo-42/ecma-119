@@ -51,6 +51,24 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports a path table record that points to itself as parent", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
+    const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childParentDirectoryNumberOffset = pathTableOffset + rootPathTableRecordLength + 6;
+    image[childParentDirectoryNumberOffset] = 2;
+    image[childParentDirectoryNumberOffset + 1] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.parent",
+          message: expect.stringMatching(/parent/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports a directory record that crosses a sector boundary", () => {
     const image = baselineImage();
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
