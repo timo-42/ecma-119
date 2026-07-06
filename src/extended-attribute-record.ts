@@ -119,6 +119,21 @@ export function decodeExtendedAttributeRecord(bytes: Uint8Array): ExtendedAttrib
   };
 }
 
+export function extendedAttributeRecordFileFlags(record: ExtendedAttributeRecord): number {
+  let flags = 0;
+  if (record.recordFormat !== 0) {
+    flags |= 0x08;
+  }
+  if (
+    record.ownerIdentification !== 0
+    || record.groupIdentification !== 0
+    || (record.permissions & 0x5555) !== 0
+  ) {
+    flags |= 0x10;
+  }
+  return flags;
+}
+
 function validateOwnerGroup(ownerIdentification: number, groupIdentification: number): void {
   assertUintRange(ownerIdentification, 0xffff, "owner identification");
   assertUintRange(groupIdentification, 0xffff, "group identification");

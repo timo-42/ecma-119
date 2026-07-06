@@ -1,6 +1,6 @@
 import { decodeVolumeDate, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, type DecodedDirectoryRecord } from "./directory-record.js";
-import { decodeExtendedAttributeRecord } from "./extended-attribute-record.js";
+import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
@@ -56,6 +56,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd));
       issues.push(...validateDirectoryRecordLayout(image, pvd.rootDirectoryRecord, "."));
+      issues.push(...validateExtendedAttributeRecords(image, pvd.rootDirectoryRecord, "."));
       issues.push(...validateVolumePartitionDescriptors(image, descriptors, pvd));
     }
   } catch (error) {
@@ -355,7 +356,10 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       const child = directoryEntryFromRecord(record, childPath, []);
       if (record.extendedAttributeRecordLength > 0) {
         child.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
-        child.extendedAttributeRecordFields = decodeExtendedAttributeRecord(child.extendedAttributeRecord);
+        const fields = decodeOptionalExtendedAttributeRecord(child.extendedAttributeRecord);
+        if (fields) {
+          child.extendedAttributeRecordFields = fields;
+        }
       }
       children.push(readDirectoryTree(image, child, childPath, includeData, new Set(visited)));
     } else {
@@ -373,7 +377,10 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       };
       if (record.extendedAttributeRecordLength > 0) {
         file.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
-        file.extendedAttributeRecordFields = decodeExtendedAttributeRecord(file.extendedAttributeRecord);
+        const fields = decodeOptionalExtendedAttributeRecord(file.extendedAttributeRecord);
+        if (fields) {
+          file.extendedAttributeRecordFields = fields;
+        }
       }
       if (record.systemUse.byteLength > 0) {
         file.systemUse = record.systemUse;
@@ -389,9 +396,63 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
   const entry = { ...directory, children };
   if (entry.extendedAttributeRecordLength > 0 && !entry.extendedAttributeRecord) {
     entry.extendedAttributeRecord = image.slice(directory.extent * SECTOR_SIZE, (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE);
-    entry.extendedAttributeRecordFields = decodeExtendedAttributeRecord(entry.extendedAttributeRecord);
+    const fields = decodeOptionalExtendedAttributeRecord(entry.extendedAttributeRecord);
+    if (fields) {
+      entry.extendedAttributeRecordFields = fields;
+    }
   }
   return entry;
+}
+
+function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
+  const end = start + directory.size;
+  if (start < 0 || end > image.byteLength) {
+    return issues;
+  }
+  let offset = start;
+  let recordIndex = 0;
+  while (offset < end) {
+    const length = image[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      continue;
+    }
+    if (length < 34 || offset + length > end || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+      offset += Math.max(1, length);
+      continue;
+    }
+    const record = decodeDirectoryRecord(image, offset);
+    offset += record.length;
+    if (recordIndex++ < 2 || record.extendedAttributeRecordLength === 0) {
+      continue;
+    }
+
+    const identifier = decodeFileIdentifier(record.identifier);
+    const recordPath = joinPath(path === "." ? "" : path, stripVersion(identifier)) || ".";
+    const extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+    try {
+      const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
+      if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+        const expected = extendedAttributeRecordFileFlags(fields);
+        if ((record.flags & 0x18) !== expected) {
+          issues.push({
+            code: "extended_attribute_record.file_flags",
+            message: `directory record flags for ${recordPath} do not match associated extended attribute record fields`,
+            path: recordPath,
+          });
+        }
+      }
+    } catch (error) {
+      issues.push({
+        code: "extended_attribute_record.parse",
+        message: error instanceof Error ? error.message : String(error),
+        path: recordPath,
+      });
+    }
+  }
+  return issues;
 }
 
 function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttributeRecordLength: number, length: number, path: string): void {
@@ -431,6 +492,14 @@ function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, 
 function readExtendedAttributeRecord(image: Uint8Array, record: DecodedDirectoryRecord): Uint8Array {
   const start = record.extent * SECTOR_SIZE;
   return image.slice(start, start + record.extendedAttributeRecordLength * SECTOR_SIZE);
+}
+
+function decodeOptionalExtendedAttributeRecord(bytes: Uint8Array): ReturnType<typeof decodeExtendedAttributeRecord> | undefined {
+  try {
+    return decodeExtendedAttributeRecord(bytes);
+  } catch {
+    return undefined;
+  }
 }
 
 function collectParsedFiles(directory: IsoDirectoryEntry): IsoFileEntry[] {
