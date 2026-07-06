@@ -130,6 +130,17 @@ export type IsoFileEntry = {
   extendedAttributeRecordFields?: ExtendedAttributeRecord;
   data?: Uint8Array;
   systemUse?: Uint8Array;
+  sections?: IsoFileSection[];
+};
+
+export type IsoFileSection = {
+  extent: number;
+  extendedAttributeRecordLength: number;
+  size: number;
+  flags: number;
+  fileUnitSize: number;
+  interleaveGapSize: number;
+  volumeSequenceNumber: number;
 };
 
 export type IsoDirectoryEntry = {
