@@ -339,18 +339,33 @@ function sectorsForBytes(size: number): number {
 }
 
 type PathTableValidationInput = PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor;
+type CanonicalPathTableRecord = PathTableRecord & { key: string };
 
 function validatePathTableReferences(
   image: Uint8Array,
   descriptor: PathTableValidationInput,
   codePrefix: string,
 ): ValidationIssue[] {
-  return [
-    ...validatePathTableReference(image, descriptor, codePrefix, "little", descriptor.typeLPathTableLocation),
-    ...validatePathTableReference(image, descriptor, codePrefix, "big", descriptor.typeMPathTableLocation),
+  const little = validatePathTableReference(image, descriptor, codePrefix, "little", descriptor.typeLPathTableLocation);
+  const big = validatePathTableReference(image, descriptor, codePrefix, "big", descriptor.typeMPathTableLocation);
+  const issues = [
+    ...little.issues,
+    ...big.issues,
     ...validateOptionalPathTableReference(image, descriptor, codePrefix, "little"),
     ...validateOptionalPathTableReference(image, descriptor, codePrefix, "big"),
   ];
+  if (little.records && big.records) {
+    issues.push(...validatePathTableMirror(little.records, big.records, codePrefix));
+  }
+  const expected = expectedPathTableRecords(image, descriptor.rootDirectoryRecord);
+  if (expected) {
+    if (little.records) {
+      issues.push(...validatePathTableAgainstHierarchy(little.records, expected, codePrefix, "Type L"));
+    } else if (big.records) {
+      issues.push(...validatePathTableAgainstHierarchy(big.records, expected, codePrefix, "Type M"));
+    }
+  }
+  return issues;
 }
 
 function validatePathTableReference(
@@ -359,25 +374,25 @@ function validatePathTableReference(
   codePrefix: string,
   endian: "little" | "big",
   location: number,
-): ValidationIssue[] {
+): { issues: ValidationIssue[]; records?: PathTableRecord[] } {
   const issues: ValidationIssue[] = [];
   const label = endian === "little" ? "Type L" : "Type M";
   const pathTableStart = location * SECTOR_SIZE;
   const pathTableEnd = pathTableStart + descriptor.pathTableSize;
   if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
     issues.push({ code: `${codePrefix}.${endian}.bounds`, message: `${label} path table extent is out of bounds` });
-    return issues;
+    return { issues };
   }
   let pathTable: PathTableRecord[];
   try {
     pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), endian);
   } catch (error) {
     issues.push({ code: `${codePrefix}.${endian}.parse`, message: error instanceof Error ? error.message : String(error) });
-    return issues;
+    return { issues };
   }
   if (pathTable.length === 0) {
     issues.push({ code: `${codePrefix}.${endian}.empty`, message: `${label} path table must contain the root directory record` });
-    return issues;
+    return { issues, records: pathTable };
   }
   const root = pathTable[0]!;
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
@@ -395,7 +410,7 @@ function validatePathTableReference(
       });
     }
   }
-  return issues;
+  return { issues, records: pathTable };
 }
 
 function validateOptionalPathTableReference(
@@ -408,7 +423,168 @@ function validateOptionalPathTableReference(
   if (location === 0) {
     return [];
   }
-  return validatePathTableReference(image, descriptor, `${codePrefix}.optional`, endian, location);
+  const result = validatePathTableReference(image, descriptor, `${codePrefix}.optional`, endian, location);
+  return result.issues;
+}
+
+function validatePathTableMirror(little: PathTableRecord[], big: PathTableRecord[], codePrefix: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (little.length !== big.length) {
+    issues.push({
+      code: `${codePrefix}.mirror.mismatch`,
+      message: `Type L and Type M path tables have different record counts: ${little.length} !== ${big.length}`,
+    });
+  }
+  for (let index = 0; index < Math.min(little.length, big.length); index += 1) {
+    const left = little[index]!;
+    const right = big[index]!;
+    if (!samePathTableRecord(left, right)) {
+      issues.push({
+        code: `${codePrefix}.mirror.mismatch`,
+        message: `Type L and Type M path table record ${index + 1} do not match`,
+      });
+    }
+  }
+  return issues;
+}
+
+function validatePathTableAgainstHierarchy(
+  actual: PathTableRecord[],
+  expected: CanonicalPathTableRecord[],
+  codePrefix: string,
+  label: string,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const actualRecords = canonicalPathTableRecords(actual, issues, codePrefix);
+  const actualByKey = new Map(actualRecords.map((record) => [record.key, record]));
+  const expectedByKey = new Map(expected.map((record) => [record.key, record]));
+
+  for (const actualRecord of actualRecords) {
+    if (!expectedByKey.has(actualRecord.key)) {
+      issues.push({
+        code: `${codePrefix}.hierarchy.extra`,
+        message: `${label} path table contains an extra directory record not present in the directory hierarchy`,
+      });
+    }
+  }
+  for (const expectedRecord of expected) {
+    const actualRecord = actualByKey.get(expectedRecord.key);
+    if (!actualRecord) {
+      issues.push({
+        code: `${codePrefix}.hierarchy.missing`,
+        message: `${label} path table is missing a directory from the directory hierarchy`,
+      });
+      continue;
+    }
+    if (
+      actualRecord.extent !== expectedRecord.extent
+      || (actualRecord.extendedAttributeRecordLength ?? 0) !== (expectedRecord.extendedAttributeRecordLength ?? 0)
+    ) {
+      issues.push({
+        code: `${codePrefix}.hierarchy.record`,
+        message: `${label} path table directory record does not match the directory hierarchy extent fields`,
+      });
+    }
+  }
+  return issues;
+}
+
+function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): CanonicalPathTableRecord[] | undefined {
+  const records: CanonicalPathTableRecord[] = [];
+  const visit = (directory: IsoDirectoryEntry, identifier: Uint8Array, parentDirectoryNumber: number, parentKey: string, visited: Set<number>): void => {
+    if (visited.has(directory.extent)) {
+      return;
+    }
+    visited.add(directory.extent);
+    const directoryNumber = records.length + 1;
+    const key = directoryNumber === 1 ? "/" : `${parentKey}/${bytesKey(identifier)}`;
+    records.push({
+      identifier,
+      extent: directory.extent,
+      parentDirectoryNumber,
+      extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+      key,
+    });
+
+    const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
+    const end = start + directory.size;
+    if (start < 0 || end > image.byteLength) {
+      return;
+    }
+    let offset = start;
+    let recordIndex = 0;
+    while (offset < end) {
+      const length = image[offset]!;
+      if (length === 0) {
+        offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+        continue;
+      }
+      if (length < 34 || offset + length > end || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+        offset += Math.max(1, length);
+        continue;
+      }
+      let record: DecodedDirectoryRecord;
+      try {
+        record = decodeDirectoryRecord(image, offset);
+      } catch {
+        offset += length;
+        continue;
+      }
+      offset += record.length;
+      if (recordIndex++ < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+        continue;
+      }
+      visit(directoryEntryFromRecord(record, "", []), record.identifier, directoryNumber, key, new Set(visited));
+    }
+  };
+
+  try {
+    visit(root, Uint8Array.of(0), 1, "", new Set());
+    return records;
+  } catch {
+    return undefined;
+  }
+}
+
+function canonicalPathTableRecords(records: PathTableRecord[], issues: ValidationIssue[], codePrefix: string): CanonicalPathTableRecord[] {
+  const canonical: CanonicalPathTableRecord[] = [];
+  const seen = new Set<string>();
+  for (const [index, record] of records.entries()) {
+    let key: string;
+    if (index === 0) {
+      key = "/";
+    } else {
+      const parent = canonical[record.parentDirectoryNumber - 1];
+      if (!parent) {
+        continue;
+      }
+      key = `${parent.key}/${bytesKey(record.identifier)}`;
+    }
+    if (seen.has(key)) {
+      issues.push({
+        code: `${codePrefix}.hierarchy.duplicate`,
+        message: "path table contains duplicate directory paths",
+      });
+    }
+    seen.add(key);
+    canonical.push({ ...record, key });
+  }
+  return canonical;
+}
+
+function samePathTableRecord(left: PathTableRecord, right: PathTableRecord): boolean {
+  return left.extent === right.extent
+    && left.parentDirectoryNumber === right.parentDirectoryNumber
+    && (left.extendedAttributeRecordLength ?? 0) === (right.extendedAttributeRecordLength ?? 0)
+    && bytesEqual(left.identifier, right.identifier);
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
+function bytesKey(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {

@@ -67,6 +67,87 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports Type L and Type M path table mirror mismatches", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "mirror mismatch\n" }]);
+    const pathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    writeUint32BE(image, pathTableOffset + rootPathTableRecordLength + 2, 0xffff);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.mirror.mismatch",
+          message: expect.stringMatching(/Type L and Type M path table record 2/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports path table records that disagree with the directory hierarchy", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "hierarchy mismatch\n" }]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    writeUint32LE(image, littlePathTableOffset + 2, 0xffff);
+    writeUint32BE(image, bigPathTableOffset + 2, 0xffff);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.hierarchy.record",
+          message: expect.stringMatching(/extent fields/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports path table directories missing from the directory hierarchy", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "missing path table\n" }]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    image[littlePathTableOffset + rootPathTableRecordLength] = 0;
+    image[bigPathTableOffset + rootPathTableRecordLength] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.hierarchy.missing",
+          message: expect.stringMatching(/missing/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports extra path table directories not present in the directory hierarchy", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "extra path table\n" }]);
+    appendPrimaryPathTableRecord(image, "EXT", 1, rootDirectoryExtent(image), 0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.hierarchy.extra",
+          message: expect.stringMatching(/extra/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports duplicate path table directory paths", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "duplicate path table\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    appendPrimaryPathTableRecord(image, "DIR", 1, readBothEndianUint32(image, dirRecordOffset + 2), image[dirRecordOffset + 1]!);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.hierarchy.duplicate",
+          message: expect.stringMatching(/duplicate/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports optional Type L path table issues when the optional location is present", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     writeUint32LE(image, PVD_OFFSET + 144, 0xffff);
@@ -571,6 +652,31 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports supplementary path table hierarchy mismatches", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supp hierarchy\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const littlePathTableOffset = readUint32LE(image, supplementaryDescriptorOffset + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, supplementaryDescriptorOffset + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    writeUint32LE(image, littlePathTableOffset + rootPathTableRecordLength + 2, 0xffff);
+    writeUint32BE(image, bigPathTableOffset + rootPathTableRecordLength + 2, 0xffff);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.hierarchy.record",
+          message: expect.stringMatching(/extent fields/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports supplementary optional Type M path table issues when the optional location is present", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
@@ -755,6 +861,40 @@ function expectVolumeSpaceLowerBoundIssue(): ReturnType<typeof expect.objectCont
     code: "pvd.volume_space_size.lower_bound",
     message: expect.stringMatching(/smaller than referenced sector end/i),
   });
+}
+
+function appendPrimaryPathTableRecord(image: Uint8Array, identifier: string, parentDirectoryNumber: number, extent: number, extendedAttributeRecordLength: number): void {
+  const identifierBytes = new TextEncoder().encode(identifier);
+  const currentSize = readBothEndianUint32(image, PVD_OFFSET + 132);
+  const recordLength = 8 + identifierBytes.byteLength + (identifierBytes.byteLength % 2 === 0 ? 0 : 1);
+  const littleOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE + currentSize;
+  const bigOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE + currentSize;
+  writePathTableRecord(image, littleOffset, "little", identifierBytes, parentDirectoryNumber, extent, extendedAttributeRecordLength);
+  writePathTableRecord(image, bigOffset, "big", identifierBytes, parentDirectoryNumber, extent, extendedAttributeRecordLength);
+  writeUint32Both(image, PVD_OFFSET + 132, currentSize + recordLength);
+}
+
+function writePathTableRecord(
+  image: Uint8Array,
+  offset: number,
+  endian: "little" | "big",
+  identifier: Uint8Array,
+  parentDirectoryNumber: number,
+  extent: number,
+  extendedAttributeRecordLength: number,
+): void {
+  image[offset] = identifier.byteLength;
+  image[offset + 1] = extendedAttributeRecordLength;
+  if (endian === "little") {
+    writeUint32LE(image, offset + 2, extent);
+    image[offset + 6] = parentDirectoryNumber & 0xff;
+    image[offset + 7] = (parentDirectoryNumber >>> 8) & 0xff;
+  } else {
+    writeUint32BE(image, offset + 2, extent);
+    image[offset + 6] = (parentDirectoryNumber >>> 8) & 0xff;
+    image[offset + 7] = parentDirectoryNumber & 0xff;
+  }
+  image.set(identifier, offset + 8);
 }
 
 function findDirectoryRecordOffset(image: Uint8Array, directoryOffset: number, directorySize: number, identifier: string): number {
