@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage, type VolumePartitionDescriptor } from "../src/index";
+import { createIsoImage, decodePathTable, parseIsoImage, parseVolumeDescriptors, validateIsoImage, type VolumePartitionDescriptor } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import { readBothEndianUint32, readUint32BE, readUint32LE } from "./helpers";
 
@@ -118,6 +118,103 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "path_table.big.parent",
           message: expect.stringMatching(/Type M path table record 2 parent number 2/i),
+        }),
+      ]),
+    );
+  });
+
+  test("writes path table records in ECMA-119 breadth-first order", () => {
+    const image = baselineImage([
+      { path: "A/AA/FILE.TXT", data: "nested a\n" },
+      { path: "B/FILE.TXT", data: "nested b\n" },
+    ]);
+    const pathTableSize = readBothEndianUint32(image, PVD_OFFSET + 132);
+    const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const records = decodePathTable(image.subarray(pathTableOffset, pathTableOffset + pathTableSize), "little");
+    const textDecoder = new TextDecoder("ascii");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(records.map((record) => record.identifier[0] === 0 ? "." : textDecoder.decode(record.identifier))).toEqual([".", "A", "B", "AA"]);
+    expect(records.map((record) => record.parentDirectoryNumber)).toEqual([1, 1, 1, 2]);
+    expect(parseIsoImage(image).files.map((file) => file.path).sort()).toEqual(["A/AA/FILE.TXT", "B/FILE.TXT"]);
+  });
+
+  test("reports path table records with hierarchy levels out of ECMA-119 order", () => {
+    const image = baselineImage([
+      { path: "A/AA/FILE.TXT", data: "nested a\n" },
+      { path: "B/FILE.TXT", data: "nested b\n" },
+    ]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const recordLength = 10;
+    const thirdRecordOffset = recordLength * 2;
+    const fourthRecordOffset = recordLength * 3;
+    swapBytes(image, littlePathTableOffset + thirdRecordOffset, littlePathTableOffset + fourthRecordOffset, recordLength);
+    swapBytes(image, bigPathTableOffset + thirdRecordOffset, bigPathTableOffset + fourthRecordOffset, recordLength);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.order.level",
+          message: expect.stringMatching(/ordered by hierarchy level/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.big.order.level",
+          message: expect.stringMatching(/ordered by hierarchy level/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports path table records with parent numbers out of ECMA-119 order", () => {
+    const image = baselineImage([
+      { path: "A/AA/FILE.TXT", data: "nested aa\n" },
+      { path: "B/BB/FILE.TXT", data: "nested bb\n" },
+    ]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const recordLength = 10;
+    const fourthRecordOffset = recordLength * 3;
+    const fifthRecordOffset = recordLength * 4;
+    swapBytes(image, littlePathTableOffset + fourthRecordOffset, littlePathTableOffset + fifthRecordOffset, recordLength);
+    swapBytes(image, bigPathTableOffset + fourthRecordOffset, bigPathTableOffset + fifthRecordOffset, recordLength);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.order.parent",
+          message: expect.stringMatching(/parent directory number/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.big.order.parent",
+          message: expect.stringMatching(/parent directory number/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports path table records with sibling identifiers out of ECMA-119 order", () => {
+    const image = baselineImage([
+      { path: "A/FILE.TXT", data: "nested a\n" },
+      { path: "B/FILE.TXT", data: "nested b\n" },
+    ]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const recordLength = 10;
+    const secondRecordOffset = recordLength;
+    const thirdRecordOffset = recordLength * 2;
+    swapBytes(image, littlePathTableOffset + secondRecordOffset, littlePathTableOffset + thirdRecordOffset, recordLength);
+    swapBytes(image, bigPathTableOffset + secondRecordOffset, bigPathTableOffset + thirdRecordOffset, recordLength);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.order.identifier",
+          message: expect.stringMatching(/directory identifier/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.big.order.identifier",
+          message: expect.stringMatching(/directory identifier/i),
         }),
       ]),
     );
@@ -1492,6 +1589,12 @@ function findDirectoryRecordOffsetByPath(image: Uint8Array, identifiers: string[
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
+function swapBytes(bytes: Uint8Array, leftOffset: number, rightOffset: number, length: number): void {
+  const left = bytes.slice(leftOffset, leftOffset + length);
+  bytes.copyWithin(leftOffset, rightOffset, rightOffset + length);
+  bytes.set(left, rightOffset);
 }
 
 function writeUint32Both(bytes: Uint8Array, offset: number, value: number): void {

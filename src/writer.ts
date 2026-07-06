@@ -361,15 +361,15 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
 }
 
 function collectDirectories(root: DirectoryNode): DirectoryNode[] {
-  const directories: DirectoryNode[] = [];
-  const visit = (directory: DirectoryNode): void => {
-    directory.pathTableIndex = directories.length + 1;
-    directories.push(directory);
-    for (const child of [...directory.children.values()].filter((node): node is DirectoryNode => node.kind === "directory").sort(compareNode)) {
-      visit(child);
+  const directories: DirectoryNode[] = [root];
+  root.pathTableIndex = 1;
+  for (let index = 0; index < directories.length; index += 1) {
+    const directory = directories[index]!;
+    for (const child of [...directory.children.values()].filter((node): node is DirectoryNode => node.kind === "directory").sort(comparePathTableDirectoryNode)) {
+      child.pathTableIndex = directories.length + 1;
+      directories.push(child);
     }
-  };
-  visit(root);
+  }
   return directories;
 }
 
@@ -756,6 +756,22 @@ function setFlag(flags: number, bit: number, value: boolean | undefined): number
 
 function compareNode(left: DirectoryNode | FileNode, right: DirectoryNode | FileNode): number {
   return left.isoIdentifier.localeCompare(right.isoIdentifier, "en", { numeric: false });
+}
+
+function comparePathTableDirectoryNode(left: DirectoryNode, right: DirectoryNode): number {
+  return comparePathTableIdentifierBytes(asciiBytes(left.isoIdentifier), asciiBytes(right.isoIdentifier));
+}
+
+function comparePathTableIdentifierBytes(left: Uint8Array, right: Uint8Array): number {
+  const length = Math.max(left.byteLength, right.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    const leftByte = left[index] ?? 0x20;
+    const rightByte = right[index] ?? 0x20;
+    if (leftByte !== rightByte) {
+      return leftByte - rightByte;
+    }
+  }
+  return 0;
 }
 
 function toBytes(data: Uint8Array | Buffer | string): Uint8Array {
