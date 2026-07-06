@@ -60,6 +60,9 @@ export type CreateIsoOptions = {
   publisherIdentifier?: string;
   dataPreparerIdentifier?: string;
   applicationIdentifier?: string;
+  copyrightFileIdentifier?: string;
+  abstractFileIdentifier?: string;
+  bibliographicFileIdentifier?: string;
   bootRecord?: BootRecordOptions;
   supplementaryVolumeDescriptors?: SupplementaryVolumeDescriptorOptions[];
   enhancedVolumeDescriptors?: EnhancedVolumeDescriptorOptions[];
@@ -80,6 +83,9 @@ export type SupplementaryVolumeDescriptorOptions = {
   publisherIdentifier?: string;
   dataPreparerIdentifier?: string;
   applicationIdentifier?: string;
+  copyrightFileIdentifier?: string;
+  abstractFileIdentifier?: string;
+  bibliographicFileIdentifier?: string;
 };
 
 export type EnhancedVolumeDescriptorOptions = SupplementaryVolumeDescriptorOptions;
@@ -169,6 +175,9 @@ export type PrimaryVolumeDescriptor = BaseVolumeDescriptor & {
   publisherIdentifier: string;
   dataPreparerIdentifier: string;
   applicationIdentifier: string;
+  copyrightFileIdentifier: string;
+  abstractFileIdentifier: string;
+  bibliographicFileIdentifier: string;
   createdAt: Date | null;
   modifiedAt: Date | null;
   expiresAt: Date | null;
@@ -190,6 +199,9 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   typeLPathTableLocation: number;
   typeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
+  copyrightFileIdentifier: string;
+  abstractFileIdentifier: string;
+  bibliographicFileIdentifier: string;
   escapeSequences: Uint8Array;
 };
 
@@ -208,6 +220,9 @@ export type EnhancedVolumeDescriptor = BaseVolumeDescriptor & {
   typeLPathTableLocation: number;
   typeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
+  copyrightFileIdentifier: string;
+  abstractFileIdentifier: string;
+  bibliographicFileIdentifier: string;
   escapeSequences: Uint8Array;
 };
 

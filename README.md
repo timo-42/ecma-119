@@ -47,6 +47,7 @@ Implemented support is intentionally explicit:
 
 - ECMA-119 logical sectors of 2,048 bytes
 - primary volume descriptor and descriptor set terminator
+- volume descriptor metadata and file identifier fields
 - optional boot record volume descriptor
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy

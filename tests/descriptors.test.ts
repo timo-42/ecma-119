@@ -53,18 +53,43 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("descriptor shifted\n");
   });
 
+  test("writes primary volume descriptor file identifier fields", () => {
+    const image = createIsoImage([{
+      path: "README.TXT",
+      data: "descriptor file identifiers\n",
+    }], {
+      copyrightFileIdentifier: "COPY.TXT",
+      abstractFileIdentifier: "ABSTRACT.TXT",
+      bibliographicFileIdentifier: "BIBLIO.TXT",
+    });
+
+    const parsed = parseIsoImage(image);
+    const primary = parsed.primaryVolumeDescriptor;
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(primary).toMatchObject({
+      copyrightFileIdentifier: "COPY.TXT;1",
+      abstractFileIdentifier: "ABSTRACT.TXT;1",
+      bibliographicFileIdentifier: "BIBLIO.TXT;1",
+    });
+  });
+
   test("writes enhanced volume descriptors with separate path tables and directory hierarchy", () => {
     const image = createIsoImage([{
       path: "DIR/README.TXT",
       data: "enhanced descriptor\n",
     }], {
       volumeIdentifier: "PRIMARY",
+      copyrightFileIdentifier: "COPY.TXT",
+      abstractFileIdentifier: "ABSTRACT.TXT",
+      bibliographicFileIdentifier: "BIBLIO.TXT",
       enhancedVolumeDescriptors: [{
         volumeIdentifier: "ENHANCED",
         systemIdentifier: "ENH_SYS",
         volumeFlags: 1,
         escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
         applicationIdentifier: "ENH_APP",
+        abstractFileIdentifier: "ENHABS.TXT",
       }],
     });
 
@@ -83,6 +108,11 @@ describe("volume descriptor sequence parsing", () => {
       volumeFlags: 1,
       systemIdentifier: "ENH_SYS",
       volumeIdentifier: "ENHANCED",
+    });
+    expect(enhanced).toMatchObject({
+      copyrightFileIdentifier: "COPY.TXT;1",
+      abstractFileIdentifier: "ENHABS.TXT;1",
+      bibliographicFileIdentifier: "BIBLIO.TXT;1",
     });
     expect(enhanced?.kind === "enhanced" ? enhanced.escapeSequences.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
     expect(primary?.kind === "primary" && enhanced?.kind === "enhanced"
@@ -142,6 +172,16 @@ describe("volume descriptor sequence parsing", () => {
         escapeSequences: new Uint8Array(33),
       }],
     })).toThrow(/escape sequences/i);
+
+    expect(() => createIsoImage([], {
+      copyrightFileIdentifier: "TOOLONGNAME.TXT",
+    })).toThrow(/file name exceeds/i);
+
+    expect(() => createIsoImage([], {
+      supplementaryVolumeDescriptors: [{
+        abstractFileIdentifier: "BAD-NAME.TXT",
+      }],
+    })).toThrow(/d-characters/i);
   });
 
   test("scans descriptors until the terminator instead of requiring it at sector 17", async () => {

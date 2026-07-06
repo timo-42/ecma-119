@@ -470,6 +470,9 @@ function encodePrimaryVolumeDescriptor(input: {
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? "");
   writeAField(bytes, 574, 128, input.options.applicationIdentifier ?? "ECMA-119");
+  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? "");
+  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? "");
+  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? "");
   bytes.set(encodeVolumeDate(input.options.createdAt ?? input.now), 813);
   bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.options.createdAt ?? input.now), 830);
   bytes.set(encodeVolumeDate(input.options.expiresAt), 847);
@@ -515,6 +518,9 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? input.baseOptions.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? input.baseOptions.dataPreparerIdentifier ?? "");
   writeAField(bytes, 574, 128, input.options.applicationIdentifier ?? input.baseOptions.applicationIdentifier ?? "ECMA-119");
+  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? input.baseOptions.copyrightFileIdentifier ?? "");
+  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? input.baseOptions.abstractFileIdentifier ?? "");
+  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? input.baseOptions.bibliographicFileIdentifier ?? "");
   bytes.set(encodeVolumeDate(input.baseOptions.createdAt ?? input.now), 813);
   bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now), 830);
   bytes.set(encodeVolumeDate(input.baseOptions.expiresAt), 847);
@@ -646,6 +652,11 @@ function writeDField(bytes: Uint8Array, offset: number, length: number, value: s
 
 function writeAField(bytes: Uint8Array, offset: number, length: number, value: string): void {
   writeAsciiPadded(bytes, offset, length, normalizeACharacters(value, "a-character field"));
+}
+
+function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: string): void {
+  const identifier = value === "" ? "" : normalizeFilePath(value).isoIdentifier;
+  writeAsciiPadded(bytes, offset, 37, identifier);
 }
 
 function checkedByte(value: number, name: string): number {
