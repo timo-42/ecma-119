@@ -384,13 +384,16 @@ function minimumReferencedVolumeSpaceSize(image: Uint8Array, descriptors: Volume
   for (const descriptor of descriptors) {
     minimum = Math.max(minimum, descriptor.sector + 1);
     if (descriptor.kind === "primary" || descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+      const localRootEndSector = descriptor.rootDirectoryRecord.volumeSequenceNumber === descriptor.volumeSequenceNumber
+        ? directoryTreeEndSector(image, descriptor.rootDirectoryRecord, descriptor.volumeSequenceNumber, new Set())
+        : 0;
       minimum = Math.max(
         minimum,
         pathTableEndSector(descriptor.typeLPathTableLocation, descriptor.pathTableSize),
         pathTableEndSector(descriptor.typeMPathTableLocation, descriptor.pathTableSize),
         optionalPathTableEndSector(descriptor.optionalTypeLPathTableLocation, descriptor.pathTableSize),
         optionalPathTableEndSector(descriptor.optionalTypeMPathTableLocation, descriptor.pathTableSize),
-        directoryTreeEndSector(image, descriptor.rootDirectoryRecord, descriptor.volumeSequenceNumber, new Set()),
+        localRootEndSector,
       );
     } else if (descriptor.kind === "partition") {
       minimum = Math.max(minimum, descriptor.volumePartitionLocation + descriptor.volumePartitionSize);
@@ -511,7 +514,9 @@ function validatePathTableReferences(
   if (big.records && optionalBig.records) {
     issues.push(...validatePathTableCopy(big.records, optionalBig.records, codePrefix, "big"));
   }
-  const expected = expectedPathTableRecords(image, descriptor.rootDirectoryRecord);
+  const expected = descriptor.rootDirectoryRecord.volumeSequenceNumber === descriptor.volumeSequenceNumber
+    ? expectedPathTableRecords(image, descriptor.rootDirectoryRecord)
+    : undefined;
   if (expected) {
     if (little.records) {
       issues.push(...validatePathTableAgainstHierarchy(little.records, expected, codePrefix, "Type L"));
@@ -960,6 +965,9 @@ function validateDirectoryHierarchy(
   const issues: ValidationIssue[] = [];
   const validatePrimaryLevelOne = options.validatePrimaryLevelOne ?? false;
   const depth = options.depth ?? 1;
+  if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
+    return issues;
+  }
   if (validatePrimaryLevelOne && depth > 8) {
     issues.push({
       code: "directory.hierarchy_depth",
