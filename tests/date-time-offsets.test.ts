@@ -98,7 +98,10 @@ describe("ECMA-119 date/time zone offsets", () => {
     const rootDirectory = getRootDirectoryBytes(image);
     const fileRecord = findDirectoryRecord(rootDirectory, "EAR.TXT;1");
     const ear = image.subarray(readUint32Both(fileRecord, 2) * SECTOR_SIZE, (readUint32Both(fileRecord, 2) + 1) * SECTOR_SIZE);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
 
+    expect(validateIsoImage(image)).toEqual([]);
     expect(direct[10 + 16]).toBe(8);
     expect(direct[27 + 16]).toBe(8);
     expect(direct[44 + 16]).toBe(8);
@@ -107,6 +110,10 @@ describe("ECMA-119 date/time zone offsets", () => {
     expect(ear[27 + 16]).toBe(0xec);
     expect(ear[44 + 16]).toBe(0xec);
     expect(ear[61 + 16]).toBe(0xec);
+    expect(file?.extendedAttributeRecordFields?.createdAt.toISOString()).toBe("2026-07-05T23:02:03.450Z");
+    expect(file?.extendedAttributeRecordFields?.modifiedAt.toISOString()).toBe("2026-07-05T23:02:03.450Z");
+    expect(file?.extendedAttributeRecordFields?.expiresAt?.toISOString()).toBe("2026-07-05T23:02:03.450Z");
+    expect(file?.extendedAttributeRecordFields?.effectiveAt?.toISOString()).toBe("2026-07-05T23:02:03.450Z");
   });
 
   test("rejects invalid time zone offsets", () => {
