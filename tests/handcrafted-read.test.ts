@@ -32,6 +32,20 @@ describe("handcrafted ISO reader fixture", () => {
     });
   });
 
+  test("reads a zero-length file from an image not produced by createIsoImage", () => {
+    const image = handcraftedIso({ filePayload: new Uint8Array(), fileIdentifier: "EMPTY.TXT;1" });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "EMPTY.TXT",
+      identifier: "EMPTY.TXT;1",
+      size: 0,
+    });
+    expect(parsed.files[0]?.data).toEqual(new Uint8Array());
+  });
+
   test("reads a nested directory hierarchy and path tables from an image not produced by createIsoImage", () => {
     const image = handcraftedNestedIso();
     const parsed = parseIsoImage(image);
@@ -99,7 +113,7 @@ describe("handcrafted ISO reader fixture", () => {
   });
 });
 
-function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
+function handcraftedIso(options: { fileFlags?: number; fileIdentifier?: string; filePayload?: Uint8Array } = {}): Uint8Array {
   const image = new Uint8Array(24 * SECTOR_SIZE);
   const pvd = sector(image, 16);
   const rootDirectory = sector(image, 20);
@@ -107,7 +121,8 @@ function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
   const pathTableL = sector(image, 18);
   const pathTableM = sector(image, 19);
   const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
-  const filePayload = new TextEncoder().encode("hello handmade\n");
+  const filePayload = options.filePayload ?? new TextEncoder().encode("hello handmade\n");
+  const fileIdentifier = options.fileIdentifier ?? "HELLO.TXT;1";
 
   fileData.set(filePayload);
   writePathTableRoot(pathTableL, "little", 20);
@@ -116,7 +131,7 @@ function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
   let offset = 0;
   const self = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
   const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
-  const file = directoryRecord({ extent: 21, size: filePayload.byteLength, flags: options.fileFlags ?? 0, identifier: asciiBytes("HELLO.TXT;1"), date });
+  const file = directoryRecord({ extent: 21, size: filePayload.byteLength, flags: options.fileFlags ?? 0, identifier: asciiBytes(fileIdentifier), date });
   rootDirectory.set(self, offset);
   offset += self.byteLength;
   rootDirectory.set(parent, offset);
