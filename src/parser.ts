@@ -1425,7 +1425,7 @@ function validateDescriptorRootDirectoryRecordIdentifier(
   codePrefix: string,
   label: string,
 ): ValidationIssue[] {
-  if (descriptor.rootDirectoryRecord.identifier === ".") {
+  if (descriptor.raw[156 + 32] === 1 && descriptor.raw[156 + 33] === 0) {
     return [];
   }
   return [{

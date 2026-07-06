@@ -2194,20 +2194,34 @@ describe("validateIsoImage hardening", () => {
       kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
+      identifierByte: 1,
     },
     {
       kind: "enhanced",
       options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
       codePrefix: "enhanced",
+      identifierByte: 1,
     },
-  ])("reports $kind descriptor root directory record identifier mismatches", ({ options, codePrefix }) => {
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+      identifierByte: ".".charCodeAt(0),
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+      identifierByte: ".".charCodeAt(0),
+    },
+  ])("reports $kind descriptor root directory record identifier byte $identifierByte mismatches", ({ options, codePrefix, identifierByte }) => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary root identifier\n" }], {
       volumeIdentifier: "VALIDATION",
       ...options,
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     const descriptorOffset = 17 * SECTOR_SIZE;
-    image[descriptorOffset + 156 + 33] = 1;
+    image[descriptorOffset + 156 + 33] = identifierByte;
 
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
