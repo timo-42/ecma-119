@@ -134,8 +134,9 @@ describe("volume descriptor sequence parsing", () => {
       copyrightFileIdentifier: "COPY.TXT;1",
       abstractFileIdentifier: "ENHABS.TXT;1",
       bibliographicFileIdentifier: "BIBLIO.TXT;1",
-      fileStructureVersion: 1,
+      fileStructureVersion: 2,
     });
+    expect(image[17 * SECTOR_SIZE + 881]).toBe(2);
     expect(enhanced?.kind === "enhanced" ? enhanced.applicationUse.subarray(0, 3) : undefined).toEqual(Uint8Array.of(5, 6, 7));
     expect(enhanced?.kind === "enhanced" ? enhanced.escapeSequences.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
     expect(primary?.kind === "primary" && enhanced?.kind === "enhanced"

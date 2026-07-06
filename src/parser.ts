@@ -1014,8 +1014,12 @@ function validateSupplementaryLikeVolumeDescriptor(
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
   issues.push(...validateVolumeSpaceSize(image, descriptor, descriptors, label));
-  if (descriptor.fileStructureVersion !== 1) {
-    issues.push({ code: `${label}.file_structure_version`, message: `${label} volume descriptor file structure version must be 1` });
+  const expectedFileStructureVersion = descriptor.kind === "enhanced" ? 2 : 1;
+  if (descriptor.fileStructureVersion !== expectedFileStructureVersion) {
+    issues.push({
+      code: `${label}.file_structure_version`,
+      message: `${label} volume descriptor file structure version must be ${expectedFileStructureVersion}`,
+    });
   }
   issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
