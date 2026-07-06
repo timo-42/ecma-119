@@ -55,8 +55,12 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd));
-      issues.push(...validateDirectoryRecordLayout(image, pvd.rootDirectoryRecord, "."));
-      issues.push(...validateExtendedAttributeRecords(image, pvd.rootDirectoryRecord, "."));
+      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, ".", new Set()));
+      for (const descriptor of descriptors) {
+        if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+          issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor));
+        }
+      }
       issues.push(...validateVolumePartitionDescriptors(image, descriptors, pvd));
     }
   } catch (error) {
@@ -184,26 +188,36 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
     issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
   }
-  const pathTableStart = pvd.typeLPathTableLocation * SECTOR_SIZE;
-  const pathTableEnd = pathTableStart + pvd.pathTableSize;
+  issues.push(...validatePathTableReferences(image, pvd, "path_table"));
+  return issues;
+}
+
+function validatePathTableReferences(
+  image: Uint8Array,
+  descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  codePrefix: string,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const pathTableStart = descriptor.typeLPathTableLocation * SECTOR_SIZE;
+  const pathTableEnd = pathTableStart + descriptor.pathTableSize;
   if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
-    issues.push({ code: "path_table.bounds", message: "Type L path table extent is out of bounds" });
+    issues.push({ code: `${codePrefix}.bounds`, message: "Type L path table extent is out of bounds" });
     return issues;
   }
   let pathTable: PathTableRecord[];
   try {
     pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
   } catch (error) {
-    issues.push({ code: "path_table.parse", message: error instanceof Error ? error.message : String(error) });
+    issues.push({ code: `${codePrefix}.parse`, message: error instanceof Error ? error.message : String(error) });
     return issues;
   }
   if (pathTable.length === 0) {
-    issues.push({ code: "path_table.empty", message: "path table must contain the root directory record" });
+    issues.push({ code: `${codePrefix}.empty`, message: "path table must contain the root directory record" });
     return issues;
   }
   const root = pathTable[0]!;
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
-    issues.push({ code: "path_table.root", message: "first path table record must be the root directory with parent number 1" });
+    issues.push({ code: `${codePrefix}.root`, message: "first path table record must be the root directory with parent number 1" });
   }
   for (const [index, record] of pathTable.entries()) {
     const isRoot = index === 0;
@@ -212,7 +226,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
       : record.parentDirectoryNumber < 1 || record.parentDirectoryNumber >= index + 1;
     if (invalidParent) {
       issues.push({
-        code: "path_table.parent",
+        code: `${codePrefix}.parent`,
         message: `path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
       });
     }
@@ -261,6 +275,67 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       issues.push({ code: "directory.file_flags_reserved", message: `directory record has reserved file flag bits set at ${path}`, path });
     }
     offset += length;
+  }
+  return issues;
+}
+
+function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEntry, path: string, visited: Set<number>): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const key = directory.extent;
+  if (visited.has(key)) {
+    return [{ code: "directory.cycle", message: `directory cycle detected at ${path}`, path }];
+  }
+  visited.add(key);
+  issues.push(...validateDirectoryRecordLayout(image, directory, path));
+  issues.push(...validateExtendedAttributeRecords(image, directory, path));
+
+  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
+  const end = start + directory.size;
+  if (start < 0 || end > image.byteLength) {
+    return issues;
+  }
+  let offset = start;
+  let recordIndex = 0;
+  while (offset < end) {
+    const length = image[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      continue;
+    }
+    if (length < 34 || offset + length > end || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+      offset += Math.max(1, length);
+      continue;
+    }
+    let record: DecodedDirectoryRecord;
+    try {
+      record = decodeDirectoryRecord(image, offset);
+    } catch {
+      offset += length;
+      continue;
+    }
+    offset += record.length;
+    if (recordIndex++ < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+      continue;
+    }
+    const identifier = decodeFileIdentifier(record.identifier);
+    const childPath = joinPath(path === "." ? "" : path, identifier);
+    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), childPath, new Set(visited)));
+  }
+  return issues;
+}
+
+function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const label = descriptor.kind === "supplementary" ? "supplementary" : "enhanced";
+  if ((descriptor.volumeFlags & 0xfe) !== 0) {
+    issues.push({ code: `${label}.volume_flags`, message: `${label} volume descriptor flags bits 1 through 7 must be zero` });
+  }
+  if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
+    issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
+  }
+  issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
+  if (descriptor.rootDirectoryRecord.size > 0) {
+    issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
   }
   return issues;
 }
@@ -445,7 +520,13 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
       offset += Math.max(1, length);
       continue;
     }
-    const record = decodeDirectoryRecord(image, offset);
+    let record: DecodedDirectoryRecord;
+    try {
+      record = decodeDirectoryRecord(image, offset);
+    } catch {
+      offset += length;
+      continue;
+    }
     offset += record.length;
     if (recordIndex++ < 2 || record.extendedAttributeRecordLength === 0) {
       continue;

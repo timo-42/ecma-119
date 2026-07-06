@@ -104,6 +104,107 @@ describe("validateIsoImage hardening", () => {
       ]),
     );
   });
+
+  test("reports reserved file flag bits inside nested directories", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirSize = readBothEndianUint32(image, dirRecordOffset + 10);
+    const fileRecordOffset = findDirectoryRecordOffset(image, dirExtent * SECTOR_SIZE, dirSize, "FILE.TXT;1");
+    image[fileRecordOffset + 25] = 0x20;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_reserved",
+          path: "DIR",
+          message: expect.stringMatching(/reserved/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports malformed extended attribute records inside nested directories", () => {
+    const image = baselineImage([{
+      path: "DIR/FILE.TXT",
+      data: "nested ear\n",
+      extendedAttributeRecord: {
+        systemIdentifier: "VALIDATION",
+      },
+    }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirSize = readBothEndianUint32(image, dirRecordOffset + 10);
+    const fileRecordOffset = findDirectoryRecordOffset(image, dirExtent * SECTOR_SIZE, dirSize, "FILE.TXT;1");
+    const fileExtent = readBothEndianUint32(image, fileRecordOffset + 2);
+    image[fileExtent * SECTOR_SIZE + 182] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "DIR/FILE.TXT",
+          message: expect.stringMatching(/reserved bytes/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports supplementary path table parent issues", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const pathTableOffset = readUint32LE(image, supplementaryDescriptorOffset + 140) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childParentDirectoryNumberOffset = pathTableOffset + rootPathTableRecordLength + 6;
+    image[childParentDirectoryNumberOffset] = 2;
+    image[childParentDirectoryNumberOffset + 1] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.parent",
+          message: expect.stringMatching(/parent/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports directory record issues inside supplementary hierarchies", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const supplementaryRootRecordOffset = supplementaryDescriptorOffset + 156;
+    const supplementaryRootExtent = readBothEndianUint32(image, supplementaryRootRecordOffset + 2);
+    const supplementaryRootSize = readBothEndianUint32(image, supplementaryRootRecordOffset + 10);
+    const dirRecordOffset = findDirectoryRecordOffset(image, supplementaryRootExtent * SECTOR_SIZE, supplementaryRootSize, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirSize = readBothEndianUint32(image, dirRecordOffset + 10);
+    const fileRecordOffset = findDirectoryRecordOffset(image, dirExtent * SECTOR_SIZE, dirSize, "FILE.TXT;1");
+    image[fileRecordOffset + 25] = 0x20;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_reserved",
+          path: "supplementary:./DIR",
+          message: expect.stringMatching(/reserved/i),
+        }),
+      ]),
+    );
+  });
 });
 
 function baselineImage(files = [{ path: "README.TXT", data: "hello ecma-119\n" }]): Uint8Array {
@@ -119,6 +220,30 @@ function rootDirectoryExtent(image: Uint8Array): number {
 
 function setRootDirectorySize(image: Uint8Array, size: number): void {
   writeUint32Both(image, PVD_OFFSET + 156 + 10, size);
+}
+
+function findDirectoryRecordOffset(image: Uint8Array, directoryOffset: number, directorySize: number, identifier: string): number {
+  const expected = new TextEncoder().encode(identifier);
+  let offset = directoryOffset;
+  const end = directoryOffset + directorySize;
+  while (offset < end) {
+    const length = image[offset];
+    if (length === 0) {
+      offset = Math.ceil((offset - directoryOffset + 1) / SECTOR_SIZE) * SECTOR_SIZE + directoryOffset;
+      continue;
+    }
+    const identifierLength = image[offset + 32];
+    const actual = image.subarray(offset + 33, offset + 33 + identifierLength);
+    if (bytesEqual(actual, expected)) {
+      return offset;
+    }
+    offset += length;
+  }
+  throw new Error(`missing directory record ${identifier}`);
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
 }
 
 function writeUint32Both(bytes: Uint8Array, offset: number, value: number): void {
