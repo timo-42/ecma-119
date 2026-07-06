@@ -509,7 +509,7 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports primary path table directory identifiers outside Level 1 d-character rules", () => {
+  test("reports primary path table directory identifiers outside primary d-character rules", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table chars\n" }]);
     const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
     const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
@@ -521,22 +521,22 @@ describe("validateIsoImage hardening", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.little.identifier.characters",
-          message: expect.stringMatching(/Level 1 d-characters/i),
+          message: expect.stringMatching(/primary d-characters/i),
         }),
         expect.objectContaining({
           code: "path_table.big.identifier.characters",
-          message: expect.stringMatching(/Level 1 d-characters/i),
+          message: expect.stringMatching(/primary d-characters/i),
         }),
       ]),
     );
 
     const tooLong = baselineImage([{ path: "DIR/FILE.TXT", data: "path table length\n" }]);
-    appendPrimaryPathTableRecord(tooLong, "TOO_LONG1", 1, rootDirectoryExtent(tooLong), 0);
+    appendPrimaryPathTableRecord(tooLong, "D".repeat(32), 1, rootDirectoryExtent(tooLong), 0);
     expect(validateIsoImage(tooLong)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.little.identifier.characters",
-          message: expect.stringMatching(/Level 1 d-characters/i),
+          message: expect.stringMatching(/primary d-characters/i),
         }),
       ]),
     );
@@ -885,7 +885,7 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports primary directory record identifiers outside Level 1 rules", () => {
+  test("reports primary directory record identifiers outside primary rules", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "identifier rules\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
@@ -900,11 +900,11 @@ describe("validateIsoImage hardening", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.directory_identifier.characters",
-          message: expect.stringMatching(/Level 1 d-characters/i),
+          message: expect.stringMatching(/primary d-characters/i),
         }),
         expect.objectContaining({
           code: "directory.file_identifier.characters",
-          message: expect.stringMatching(/Level 1 file identifier/i),
+          message: expect.stringMatching(/primary file identifier/i),
         }),
       ]),
     );
@@ -921,7 +921,7 @@ describe("validateIsoImage hardening", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_identifier.characters",
-          message: expect.stringMatching(/Level 1 file identifier/i),
+          message: expect.stringMatching(/primary file identifier/i),
         }),
       ]),
     );

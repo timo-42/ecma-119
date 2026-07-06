@@ -1,7 +1,7 @@
 import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { decodeFileIdentifier, isLevelOneDirectoryIdentifier, isLevelOneFileIdentifier, stripVersion } from "./identifiers.js";
+import { decodeFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
   type IsoDirectoryEntry,
@@ -574,10 +574,10 @@ function validatePathTableReference(
       });
     }
     if (descriptor.kind === "primary" && !isRoot) {
-      if (!isLevelOneDirectoryIdentifier(record.identifier)) {
+      if (!isSupportedPrimaryDirectoryIdentifier(record.identifier)) {
         issues.push({
           code: `${codePrefix}.${endian}.identifier.characters`,
-          message: `${label} path table record ${index + 1} directory identifier contains invalid ECMA-119 Level 1 d-characters`,
+          message: `${label} path table record ${index + 1} directory identifier contains invalid ECMA-119 primary d-characters`,
         });
       }
     }
@@ -1139,12 +1139,12 @@ function validateOrdinaryFileExtendedAttributeFlags(record: DecodedDirectoryReco
 
 function validatePrimaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
   const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
-  if (isDirectory ? isLevelOneDirectoryIdentifier(record.identifier) : isLevelOneFileIdentifier(record.identifier)) {
+  if (isDirectory ? isSupportedPrimaryDirectoryIdentifier(record.identifier) : isSupportedPrimaryFileIdentifier(record.identifier)) {
     return [];
   }
   return [{
     code: isDirectory ? "directory.directory_identifier.characters" : "directory.file_identifier.characters",
-    message: `primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 Level 1 d-characters" : "file identifier contains invalid ECMA-119 Level 1 file identifier"}`,
+    message: `primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 primary d-characters" : "file identifier contains invalid ECMA-119 primary file identifier"}`,
     path,
   }];
 }
@@ -1320,7 +1320,7 @@ function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boo
   if (kind === "d") {
     return isDString(value);
   }
-  return value === "" || isLevelOneFileIdentifier(new TextEncoder().encode(value));
+  return value === "" || isSupportedPrimaryFileIdentifier(new TextEncoder().encode(value));
 }
 
 function validateSecondaryEscapeSequences(

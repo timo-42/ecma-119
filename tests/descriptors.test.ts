@@ -123,6 +123,42 @@ describe("volume descriptor sequence parsing", () => {
     expect(primary.applicationUse.subarray(applicationUse.byteLength).every((byte) => byte === 0)).toBe(true);
   });
 
+  test("writes, validates, and reads Level 2 primary identifiers", () => {
+    const payload = "level two primary identifiers\n";
+    const image = createIsoImage([{
+      path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
+      data: payload,
+    }], {
+      identifierLevel: 2,
+      copyrightFileIdentifier: "LONGCOPYRIGHTFILENAME.TXT",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor.copyrightFileIdentifier).toBe("LONGCOPYRIGHTFILENAME.TXT;1");
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
+      identifier: "LONGFILENAME1234567890.TXT;1",
+      size: payload.length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe(payload);
+    expect(parsed.root.children[0]).toMatchObject({
+      path: "LONGDIRECTORYNAME",
+      identifier: "LONGDIRECTORYNAME",
+    });
+  });
+
+  test("keeps Level 1 identifier authoring as the default", () => {
+    expect(() => createIsoImage([{
+      path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
+      data: "default level\n",
+    }])).toThrow(/directory identifier exceeds 8 d-characters/i);
+    expect(() => createIsoImage([], { identifierLevel: 3 as 1 })).toThrow(/identifierLevel must be 1 or 2/i);
+  });
+
   test("writes optional primary Type L and Type M path table copies", () => {
     const image = createIsoImage([{
       path: "DIR/README.TXT",

@@ -1,5 +1,7 @@
 import { normalizeDCharacters } from "./binary.js";
 
+export type IdentifierLevel = 1 | 2;
+
 export type NormalizedPath = {
   parts: string[];
   fileName: string;
@@ -10,7 +12,7 @@ export type NormalizedDirectoryPath = {
   parts: string[];
 };
 
-export function normalizeFilePath(path: string): NormalizedPath {
+export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel = 1): NormalizedPath {
   const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) {
     throw new Error("file path must not be empty");
@@ -21,22 +23,23 @@ export function normalizeFilePath(path: string): NormalizedPath {
 
   const rawParts = cleaned.split("/");
   if (rawParts.length > 8) {
-    throw new Error("ECMA-119 Level 1 directory hierarchy depth must not exceed 8");
+    throw new Error("ECMA-119 directory hierarchy depth must not exceed 8");
   }
 
   const directoryParts = rawParts.slice(0, -1).map((part) => normalizeDCharacters(part.toUpperCase(), "path segment"));
+  const directoryLimit = identifierLevel === 1 ? 8 : 31;
   for (const directory of directoryParts) {
-    if (directory.length > 8) {
-      throw new Error(`directory identifier exceeds 8 d-characters: ${directory}`);
+    if (directory.length > directoryLimit) {
+      throw new Error(`directory identifier exceeds ${directoryLimit} d-characters: ${directory}`);
     }
   }
 
   const fileName = rawParts.at(-1)!;
-  const isoIdentifier = toLevelOneFileIdentifier(fileName);
+  const isoIdentifier = identifierLevel === 1 ? toLevelOneFileIdentifier(fileName) : toLevelTwoFileIdentifier(fileName);
   return { parts: [...directoryParts, isoIdentifier], fileName, isoIdentifier };
 }
 
-export function normalizeDirectoryPath(path: string): NormalizedDirectoryPath {
+export function normalizeDirectoryPath(path: string, identifierLevel: IdentifierLevel = 1): NormalizedDirectoryPath {
   const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) {
     return { parts: [] };
@@ -46,11 +49,12 @@ export function normalizeDirectoryPath(path: string): NormalizedDirectoryPath {
   }
   const parts = cleaned.split("/").map((part) => normalizeDCharacters(part.toUpperCase(), "directory path segment"));
   if (parts.length > 7) {
-    throw new Error("ECMA-119 Level 1 directory hierarchy depth must not exceed 8");
+    throw new Error("ECMA-119 directory hierarchy depth must not exceed 8");
   }
+  const directoryLimit = identifierLevel === 1 ? 8 : 31;
   for (const directory of parts) {
-    if (directory.length > 8) {
-      throw new Error(`directory identifier exceeds 8 d-characters: ${directory}`);
+    if (directory.length > directoryLimit) {
+      throw new Error(`directory identifier exceeds ${directoryLimit} d-characters: ${directory}`);
     }
   }
   return { parts };
@@ -74,6 +78,20 @@ export function toLevelOneFileIdentifier(name: string): string {
   return extension ? `${base}.${extension};1` : `${upper};1`;
 }
 
+export function toLevelTwoFileIdentifier(name: string): string {
+  const original = name.toUpperCase();
+  const pieces = original.split(".");
+  if (pieces.length > 2 || pieces[0]!.length === 0 || (pieces.length === 2 && pieces[1]!.length === 0)) {
+    throw new Error(`invalid ECMA-119 Level 2 file name: ${name}`);
+  }
+  const base = normalizeDCharacters(pieces[0]!, "file name");
+  const extension = pieces.length === 2 ? normalizeDCharacters(pieces[1]!, "file extension") : "";
+  if (base.length + extension.length > 30) {
+    throw new Error(`file name and extension exceed 30 d-characters: ${name}`);
+  }
+  return extension ? `${base}.${extension};1` : `${base};1`;
+}
+
 export function isLevelOneDirectoryIdentifier(identifier: Uint8Array): boolean {
   return identifier.byteLength >= 1
     && identifier.byteLength <= 8
@@ -87,6 +105,32 @@ export function isLevelOneFileIdentifier(identifier: Uint8Array): boolean {
   }
   const match = /^([A-Z0-9_]{1,8})(?:\.([A-Z0-9_]{1,3}))?;([1-9][0-9]{0,4})$/u.exec(text);
   return match !== null && Number(match[3]) <= 32767;
+}
+
+export function isLevelTwoDirectoryIdentifier(identifier: Uint8Array): boolean {
+  return identifier.byteLength >= 1
+    && identifier.byteLength <= 31
+    && identifier.every(isDCharacterByte);
+}
+
+export function isLevelTwoFileIdentifier(identifier: Uint8Array): boolean {
+  const text = asciiString(identifier);
+  if (text === undefined) {
+    return false;
+  }
+  const match = /^([A-Z0-9_]{1,30})(?:\.([A-Z0-9_]{1,30}))?;([1-9][0-9]{0,4})$/u.exec(text);
+  if (match === null || Number(match[3]) > 32767) {
+    return false;
+  }
+  return match[1]!.length + (match[2]?.length ?? 0) <= 30;
+}
+
+export function isSupportedPrimaryDirectoryIdentifier(identifier: Uint8Array): boolean {
+  return isLevelTwoDirectoryIdentifier(identifier);
+}
+
+export function isSupportedPrimaryFileIdentifier(identifier: Uint8Array): boolean {
+  return isLevelTwoFileIdentifier(identifier);
 }
 
 export function decodeFileIdentifier(identifier: Uint8Array): string {

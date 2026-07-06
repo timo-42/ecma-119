@@ -11,7 +11,7 @@ import {
 } from "./binary.js";
 import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
+import { type IdentifierLevel, normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
 import { type BootRecordOptions, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
@@ -75,7 +75,8 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
   const now = options.createdAt ?? new Date();
   const timeZoneOffsetMinutes = options.timeZoneOffsetMinutes ?? 0;
-  const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes);
+  const identifierLevel = checkedIdentifierLevel(options.identifierLevel ?? 1);
+  const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes, identifierLevel);
   const directories = collectDirectories(root);
   const pathRecords: PathTableRecord[] = directories.map((directory) => ({
     identifier: directory === root ? Uint8Array.of(0) : asciiBytes(directory.isoIdentifier),
@@ -213,6 +214,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   let descriptorSector = SYSTEM_AREA_SECTORS;
   image.set(encodePrimaryVolumeDescriptor({
     options,
+    identifierLevel,
     now,
     volumeSpaceSize: nextSector,
     pathTableSize: pathTableBytesL.length,
@@ -229,6 +231,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     image.set(encodeSupplementaryLikeVolumeDescriptor({
       options: descriptor.options,
       baseOptions: options,
+      identifierLevel,
       now,
       volumeSpaceSize: nextSector,
       pathTableSize: descriptor.pathTableBytesL.length,
@@ -248,7 +251,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   return image;
 }
 
-function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date, defaultTimeZoneOffsetMinutes: number): DirectoryNode {
+function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date, defaultTimeZoneOffsetMinutes: number, identifierLevel: IdentifierLevel): DirectoryNode {
   const root: DirectoryNode = {
     kind: "directory",
     name: "",
@@ -264,7 +267,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   };
 
   for (const file of files) {
-    const normalized = normalizeFilePath(file.path);
+    const normalized = normalizeFilePath(file.path, identifierLevel);
     const fileTimeZoneOffsetMinutes = file.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     let directory = root;
     for (const part of normalized.parts.slice(0, -1)) {
@@ -334,7 +337,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
 
   for (const input of directories) {
     const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
-    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
+    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path, identifierLevel).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
     directory.date = input.date ?? directory.date;
     directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
     directory.flags = inputDirectoryFlags(directory.flags, input);
@@ -522,6 +525,7 @@ function nextRecordOffset(offset: number, recordLength: number): number {
 
 function encodePrimaryVolumeDescriptor(input: {
   options: CreateIsoOptions;
+  identifierLevel: IdentifierLevel;
   now: Date;
   volumeSpaceSize: number;
   pathTableSize: number;
@@ -551,9 +555,9 @@ function encodePrimaryVolumeDescriptor(input: {
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? "");
   writeAField(bytes, 574, 128, input.options.applicationIdentifier ?? "ECMA-119");
-  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? "");
-  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? "");
-  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? "");
+  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? "", input.identifierLevel);
+  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? "", input.identifierLevel);
+  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? "", input.identifierLevel);
   const timeZoneOffsetMinutes = input.options.timeZoneOffsetMinutes ?? 0;
   bytes.set(encodeVolumeDate(input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 813);
   bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
@@ -567,6 +571,7 @@ function encodePrimaryVolumeDescriptor(input: {
 function encodeSupplementaryLikeVolumeDescriptor(input: {
   options: SupplementaryVolumeDescriptorOptions;
   baseOptions: CreateIsoOptions;
+  identifierLevel: IdentifierLevel;
   now: Date;
   volumeSpaceSize: number;
   pathTableSize: number;
@@ -603,9 +608,9 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? input.baseOptions.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? input.baseOptions.dataPreparerIdentifier ?? "");
   writeAField(bytes, 574, 128, input.options.applicationIdentifier ?? input.baseOptions.applicationIdentifier ?? "ECMA-119");
-  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? input.baseOptions.copyrightFileIdentifier ?? "");
-  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? input.baseOptions.abstractFileIdentifier ?? "");
-  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? input.baseOptions.bibliographicFileIdentifier ?? "");
+  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? input.baseOptions.copyrightFileIdentifier ?? "", input.identifierLevel);
+  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? input.baseOptions.abstractFileIdentifier ?? "", input.identifierLevel);
+  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? input.baseOptions.bibliographicFileIdentifier ?? "", input.identifierLevel);
   const timeZoneOffsetMinutes = input.baseOptions.timeZoneOffsetMinutes ?? 0;
   bytes.set(encodeVolumeDate(input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 813);
   bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
@@ -758,9 +763,16 @@ function writeAField(bytes: Uint8Array, offset: number, length: number, value: s
   writeAsciiPadded(bytes, offset, length, normalizeACharacters(value, "a-character field"));
 }
 
-function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: string): void {
-  const identifier = value === "" ? "" : normalizeFilePath(value).isoIdentifier;
+function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: string, identifierLevel: IdentifierLevel): void {
+  const identifier = value === "" ? "" : normalizeFilePath(value, identifierLevel).isoIdentifier;
   writeAsciiPadded(bytes, offset, 37, identifier);
+}
+
+function checkedIdentifierLevel(value: number): IdentifierLevel {
+  if (value !== 1 && value !== 2) {
+    throw new RangeError("identifierLevel must be 1 or 2");
+  }
+  return value;
 }
 
 function writeApplicationUse(bytes: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {
