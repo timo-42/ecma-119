@@ -92,6 +92,67 @@ describe("volume descriptor sequence parsing", () => {
     }])).toThrow(/smaller than the file data length/i);
   });
 
+  test("writes, validates, and reads interleaved regular files", () => {
+    const payload = new Uint8Array(SECTOR_SIZE + 11);
+    payload.fill(0x31, 0, SECTOR_SIZE);
+    payload.set(new TextEncoder().encode("second unit"), SECTOR_SIZE);
+    const image = createIsoImage([{
+      path: "INTER.BIN",
+      data: payload,
+      interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+    }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(file).toMatchObject({
+      path: "INTER.BIN",
+      identifier: "INTER.BIN;1",
+      size: payload.byteLength,
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(file?.data).toEqual(payload);
+
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const self = readDirectoryRecord(rootDirectory, 0);
+    const parent = readDirectoryRecord(rootDirectory, self.length);
+    const record = readDirectoryRecord(rootDirectory, self.length + parent.length);
+    const gap = image.subarray((record.extent + 1) * SECTOR_SIZE, (record.extent + 2) * SECTOR_SIZE);
+    const secondUnit = image.subarray((record.extent + 2) * SECTOR_SIZE, (record.extent + 2) * SECTOR_SIZE + 11);
+
+    expect(record.fileUnitSize).toBe(1);
+    expect(record.interleaveGapSize).toBe(1);
+    expect(gap.every((byte) => byte === 0)).toBe(true);
+    expect(new TextDecoder("ascii").decode(secondUnit)).toBe("second unit");
+  });
+
+  test("rejects invalid interleaved file authoring options", () => {
+    const file = { path: "BAD.BIN", data: "interleaved" };
+    expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 0, interleaveGapSize: 0 } }])).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 256, interleaveGapSize: 0 } }])).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 1.5, interleaveGapSize: 0 } }])).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 1, interleaveGapSize: -1 } }])).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 1, interleaveGapSize: 256 } }])).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 1, interleaveGapSize: 1.5 } }])).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([{ path: "EMPTY.BIN", data: "", interleave: { fileUnitSize: 1, interleaveGapSize: 0 } }])).toThrow(/at least one byte/i);
+  });
+
+  test("rejects interleaved files with extended attribute records", () => {
+    expect(() => createIsoImage([{
+      path: "EAR.BIN",
+      data: "interleaved ear",
+      interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+      extendedAttributeRecord: {
+        ownerIdentification: 1,
+        groupIdentification: 1,
+      },
+    }])).toThrow(/extended attribute records/i);
+  });
+
   test("writes supplementary volume descriptors with separate path tables and directory hierarchy", () => {
     const image = createIsoImage([{
       path: "README.TXT",

@@ -36,6 +36,8 @@ type FileSectionNode = {
   dataOffset: number;
   dataLength: number;
   extendedAttributeRecordLength: number;
+  fileUnitSize: number;
+  interleaveGapSize: number;
 };
 
 type DirectoryNode = {
@@ -168,7 +170,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
         file.extent = section.extent;
       }
       nextSector += section.extendedAttributeRecordLength;
-      nextSector += Math.max(1, sectorsForBytes(section.dataLength));
+      nextSector += fileSectionStorageSectors(section);
     }
   }
   const preparedPartitions: PreparedVolumePartition[] = [];
@@ -219,10 +221,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       image.set(file.extendedAttributeRecord, sectorOffset(file.extent));
     }
     for (const section of file.sections) {
-      image.set(
-        file.data.subarray(section.dataOffset, section.dataOffset + section.dataLength),
-        sectorOffset(section.extent + section.extendedAttributeRecordLength),
-      );
+      writeFileSectionPayload(image, file.data, section);
     }
   }
   for (const partition of preparedPartitions) {
@@ -325,7 +324,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       name: normalized.fileName,
       isoIdentifier: normalized.isoIdentifier,
       data,
-      sections: fileSectionsFor(data, file.multiExtent),
+      sections: fileSectionsFor(data, file.multiExtent, file.interleave),
       extendedAttributeRecordLength: 0,
       date: file.date ?? now,
       timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
@@ -333,6 +332,9 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       flags: inputFileFlags(file),
     };
     if (file.extendedAttributeRecord !== undefined) {
+      if (file.interleave !== undefined) {
+        throw new Error("interleaved files with extended attribute records are not supported by the writer");
+      }
       fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
         ? encodeExtendedAttributeRecord(file.extendedAttributeRecord, {
           defaultDate: file.date ?? now,
@@ -422,9 +424,13 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
   return directory;
 }
 
-function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExtent"]): FileSectionNode[] {
+function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExtent"], interleave: IsoInputFile["interleave"]): FileSectionNode[] {
+  const interleaveOptions = checkedInterleaveOptions(interleave);
+  if (interleave !== undefined && data.byteLength === 0) {
+    throw new Error("interleaved files must contain at least one byte");
+  }
   if (multiExtent === undefined || multiExtent === false) {
-    return [fileSection(0, data.byteLength)];
+    return [fileSection(0, data.byteLength, interleaveOptions)];
   }
 
   const sectionSize = checkedFileSectionSize(typeof multiExtent === "object"
@@ -434,23 +440,71 @@ function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExten
     if (typeof multiExtent === "object" && multiExtent.sectionSize !== undefined) {
       throw new Error("multi-extent sectionSize must be smaller than the file data length");
     }
-    return [fileSection(0, data.byteLength)];
+    return [fileSection(0, data.byteLength, interleaveOptions)];
   }
 
   const sections: FileSectionNode[] = [];
   for (let offset = 0; offset < data.byteLength; offset += sectionSize) {
-    sections.push(fileSection(offset, Math.min(sectionSize, data.byteLength - offset)));
+    sections.push(fileSection(offset, Math.min(sectionSize, data.byteLength - offset), interleaveOptions));
   }
   return sections;
 }
 
-function fileSection(dataOffset: number, dataLength: number): FileSectionNode {
+function fileSection(
+  dataOffset: number,
+  dataLength: number,
+  interleave: { fileUnitSize: number; interleaveGapSize: number },
+): FileSectionNode {
   return {
     extent: 0,
     dataOffset,
     dataLength,
     extendedAttributeRecordLength: 0,
+    fileUnitSize: interleave.fileUnitSize,
+    interleaveGapSize: interleave.interleaveGapSize,
   };
+}
+
+function fileSectionStorageSectors(section: Pick<FileSectionNode, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (section.fileUnitSize === 0) {
+    return Math.max(1, sectorsForBytes(section.dataLength));
+  }
+  return sectorsForBytes(fileSectionStorageByteLength(section));
+}
+
+function fileSectionStorageByteLength(section: Pick<FileSectionNode, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (section.fileUnitSize === 0) {
+    return section.dataLength;
+  }
+  const unitBytes = section.fileUnitSize * SECTOR_SIZE;
+  const units = Math.ceil(section.dataLength / unitBytes);
+  if (units === 0) {
+    return 0;
+  }
+  const fullStrides = (units - 1) * (section.fileUnitSize + section.interleaveGapSize) * SECTOR_SIZE;
+  const finalUnitBytes = section.dataLength - (units - 1) * unitBytes;
+  return fullStrides + finalUnitBytes;
+}
+
+function writeFileSectionPayload(image: Uint8Array, data: Uint8Array, section: FileSectionNode): void {
+  const dataStart = sectorOffset(section.extent + section.extendedAttributeRecordLength);
+  if (section.fileUnitSize === 0) {
+    image.set(data.subarray(section.dataOffset, section.dataOffset + section.dataLength), dataStart);
+    return;
+  }
+
+  const unitBytes = section.fileUnitSize * SECTOR_SIZE;
+  const strideBytes = (section.fileUnitSize + section.interleaveGapSize) * SECTOR_SIZE;
+  let remaining = section.dataLength;
+  let sourceOffset = section.dataOffset;
+  let targetOffset = dataStart;
+  while (remaining > 0) {
+    const chunk = Math.min(unitBytes, remaining);
+    image.set(data.subarray(sourceOffset, sourceOffset + chunk), targetOffset);
+    sourceOffset += chunk;
+    targetOffset += strideBytes;
+    remaining -= chunk;
+  }
 }
 
 function collectDirectories(root: DirectoryNode): DirectoryNode[] {
@@ -523,6 +577,8 @@ function directoryRecordForFileSection(file: FileNode, section: FileSectionNode,
     extendedAttributeRecordLength: section.extendedAttributeRecordLength,
     dataLength: section.dataLength,
     flags: isFinalSection ? file.flags : file.flags | FILE_FLAG_MULTI_EXTENT,
+    fileUnitSize: section.fileUnitSize,
+    interleaveGapSize: section.interleaveGapSize,
     identifier,
     date: file.date,
     timeZoneOffsetMinutes: file.timeZoneOffsetMinutes,
@@ -843,6 +899,19 @@ function checkedIdentifierLevel(value: number): IdentifierLevel {
 function checkedFileSectionSize(value: number): number {
   if (!Number.isInteger(value) || value < 1 || value > MAX_FILE_SECTION_SIZE) {
     throw new RangeError(`multi-extent sectionSize must be an integer from 1 to ${MAX_FILE_SECTION_SIZE}`);
+  }
+  return value;
+}
+
+function checkedInterleaveOptions(value: IsoInputFile["interleave"]): { fileUnitSize: number; interleaveGapSize: number } {
+  if (value === undefined) {
+    return { fileUnitSize: 0, interleaveGapSize: 0 };
+  }
+  if (!Number.isInteger(value.fileUnitSize) || value.fileUnitSize < 1 || value.fileUnitSize > 0xff) {
+    throw new RangeError("interleave fileUnitSize must be an integer from 1 to 255");
+  }
+  if (!Number.isInteger(value.interleaveGapSize) || value.interleaveGapSize < 0 || value.interleaveGapSize > 0xff) {
+    throw new RangeError("interleave interleaveGapSize must be an integer from 0 to 255");
   }
   return value;
 }
