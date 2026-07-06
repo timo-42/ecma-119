@@ -254,6 +254,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   }
   issues.push(...validateSingleVolumeDescriptor(pvd, "pvd", "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryReservedFileFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
@@ -860,6 +861,7 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   }
   issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryReservedFileFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
@@ -1015,6 +1017,10 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   if (descriptor.rootDirectoryRecord.size === 0) {
     return descriptor;
   }
+  assertSupportedDirectoryEntry(
+    descriptor.rootDirectoryRecord,
+    descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`,
+  );
   return {
     ...descriptor,
     rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, "", includeData, new Set()),
@@ -1204,6 +1210,7 @@ function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttribu
 }
 
 function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: string): void {
+  assertSupportedDirectoryFileFlags(record.flags, path);
   if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
@@ -1214,6 +1221,7 @@ function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: st
 }
 
 function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): void {
+  assertSupportedDirectoryFileFlags(entry.flags, path);
   if (entry.fileUnitSize !== 0 || entry.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
@@ -1221,6 +1229,12 @@ function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): 
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
   }
   assertSupportedVolumeSequence(entry.volumeSequenceNumber, path);
+}
+
+function assertSupportedDirectoryFileFlags(flags: number, path: string): void {
+  if ((flags & 0x60) !== 0) {
+    throw new Error(`directory record has reserved file flag bits set at ${path}`);
+  }
 }
 
 function assertSupportedVolumeSequence(volumeSequenceNumber: number, path: string): void {
@@ -1252,6 +1266,17 @@ function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: stri
   return [{
     code: "directory.interleaving_unsupported",
     message: `directory record at ${path} uses unsupported interleaved file section fields`,
+    path,
+  }];
+}
+
+function validateDirectoryEntryReservedFileFlags(entry: Pick<IsoDirectoryEntry, "flags">, path: string): ValidationIssue[] {
+  if ((entry.flags & 0x60) === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.file_flags_reserved",
+    message: `directory record has reserved file flag bits set at ${path}`,
     path,
   }];
 }
