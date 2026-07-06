@@ -92,6 +92,13 @@ describe("volume descriptor sequence parsing", () => {
       ? enhanced.rootDirectoryRecord.extent
       : 0).not.toBe(primary?.kind === "primary" ? primary.rootDirectoryRecord.extent : 0);
     expect(parsed.files.map((file) => file.path)).toEqual(["DIR/README.TXT"]);
+    expect(parsed.root.fileUnitSize).toBe(0);
+    expect(parsed.root.interleaveGapSize).toBe(0);
+    expect(parsed.files[0]).toMatchObject({
+      fileUnitSize: 0,
+      interleaveGapSize: 0,
+      volumeSequenceNumber: 1,
+    });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("enhanced descriptor\n");
   });
 

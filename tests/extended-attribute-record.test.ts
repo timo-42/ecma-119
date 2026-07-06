@@ -408,6 +408,24 @@ describe("extended attribute records", () => {
       date,
     })).toThrow(/0 to 255 logical blocks/i);
 
+    expect(() => encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      fileUnitSize: 256,
+      identifier,
+      date,
+    })).toThrow(/file unit size/i);
+
+    expect(() => encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      interleaveGapSize: -1,
+      identifier,
+      date,
+    })).toThrow(/interleave gap size/i);
+
     expect(() => encodePathTable([{
       identifier: Uint8Array.of(0),
       extent: 20,

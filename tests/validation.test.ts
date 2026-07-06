@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, validateIsoImage } from "../src/index";
+import { createIsoImage, parseIsoImage, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import { readBothEndianUint32, readUint32BE, readUint32LE } from "./helpers";
 
@@ -170,6 +170,32 @@ describe("validateIsoImage hardening", () => {
           code: "extended_attribute_record.parse",
           path: "DIR/FILE.TXT",
           message: expect.stringMatching(/reserved bytes/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports unsupported interleaved directory record fields without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "interleaved metadata\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    image[fileRecordOffset + 26] = 1;
+    image[fileRecordOffset + 27] = 2;
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported interleaved file section fields/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.interleaving_unsupported",
+          path: "README.TXT",
+          message: expect.stringMatching(/unsupported interleaved/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
