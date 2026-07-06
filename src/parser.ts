@@ -457,6 +457,12 @@ function validatePathTableReference(
   }
   for (const [index, record] of pathTable.entries()) {
     const isRoot = index === 0;
+    if (record.parentDirectoryNumber < 1) {
+      issues.push({
+        code: `${codePrefix}.${endian}.parent_directory_number.range`,
+        message: `${label} path table record ${index + 1} parent directory number must be at least 1`,
+      });
+    }
     const invalidParent = isRoot
       ? record.parentDirectoryNumber !== 1
       : record.parentDirectoryNumber < 1 || record.parentDirectoryNumber >= index + 1;
@@ -891,11 +897,7 @@ function validateDirectoryHierarchy(
       });
     }
     if (record.volumeSequenceNumber !== 1) {
-      issues.push({
-        code: "directory.volume_sequence_unsupported",
-        message: `directory record at ${recordPath || "."} uses unsupported volume sequence number ${record.volumeSequenceNumber}`,
-        path: recordPath || ".",
-      });
+      issues.push(...validateDirectoryRecordVolumeSequence(record, recordPath || "."));
     }
     if ((record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
       issues.push({
@@ -1392,25 +1394,47 @@ function assertSupportedDirectoryFileFlags(flags: number, path: string): void {
 }
 
 function assertSupportedVolumeSequence(volumeSequenceNumber: number, path: string): void {
+  if (volumeSequenceNumber < 1) {
+    throw new Error(`directory record at ${path} has invalid volume sequence number ${volumeSequenceNumber}`);
+  }
   if (volumeSequenceNumber !== 1) {
     throw new Error(`directory record at ${path} uses unsupported volume sequence number ${volumeSequenceNumber}`);
   }
 }
 
 function assertSingleVolumeDescriptor(descriptor: PathTableValidationInput, label: string): void {
+  if (descriptor.volumeSetSize < 1) {
+    throw new Error(`${label} volume set size must be at least 1`);
+  }
+  if (descriptor.volumeSequenceNumber < 1) {
+    throw new Error(`${label} volume sequence number must be at least 1`);
+  }
   if (descriptor.volumeSetSize !== 1 || descriptor.volumeSequenceNumber !== 1) {
     throw new Error(`${label} uses unsupported multi-volume fields`);
   }
 }
 
 function validateSingleVolumeDescriptor(descriptor: PathTableValidationInput, codePrefix: string, label: string): ValidationIssue[] {
-  if (descriptor.volumeSetSize === 1 && descriptor.volumeSequenceNumber === 1) {
-    return [];
+  const issues: ValidationIssue[] = [];
+  if (descriptor.volumeSetSize < 1) {
+    issues.push({
+      code: `${codePrefix}.volume_set_size.range`,
+      message: `${label} volume set size must be at least 1`,
+    });
   }
-  return [{
-    code: `${codePrefix}.single_volume_profile`,
-    message: `${label} uses unsupported multi-volume fields`,
-  }];
+  if (descriptor.volumeSequenceNumber < 1) {
+    issues.push({
+      code: `${codePrefix}.volume_sequence_number.range`,
+      message: `${label} volume sequence number must be at least 1`,
+    });
+  }
+  if (issues.length === 0 && (descriptor.volumeSetSize !== 1 || descriptor.volumeSequenceNumber !== 1)) {
+    issues.push({
+      code: `${codePrefix}.single_volume_profile`,
+      message: `${label} uses unsupported multi-volume fields`,
+    });
+  }
+  return issues;
 }
 
 function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
@@ -1439,9 +1463,34 @@ function validateDirectoryEntryVolumeSequence(entry: IsoDirectoryEntry, path: st
   if (entry.volumeSequenceNumber === 1) {
     return [];
   }
+  if (entry.volumeSequenceNumber < 1) {
+    return [{
+      code: "directory.volume_sequence_number.range",
+      message: `directory record at ${path} has invalid volume sequence number ${entry.volumeSequenceNumber}`,
+      path,
+    }];
+  }
   return [{
     code: "directory.volume_sequence_unsupported",
     message: `directory record at ${path} uses unsupported volume sequence number ${entry.volumeSequenceNumber}`,
+    path,
+  }];
+}
+
+function validateDirectoryRecordVolumeSequence(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
+  if (record.volumeSequenceNumber === 1) {
+    return [];
+  }
+  if (record.volumeSequenceNumber < 1) {
+    return [{
+      code: "directory.volume_sequence_number.range",
+      message: `directory record at ${path} has invalid volume sequence number ${record.volumeSequenceNumber}`,
+      path,
+    }];
+  }
+  return [{
+    code: "directory.volume_sequence_unsupported",
+    message: `directory record at ${path} uses unsupported volume sequence number ${record.volumeSequenceNumber}`,
     path,
   }];
 }

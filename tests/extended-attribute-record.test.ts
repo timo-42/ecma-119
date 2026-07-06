@@ -495,12 +495,27 @@ describe("extended attribute records", () => {
       date,
     })).toThrow(/interleave gap size/i);
 
+    expect(() => encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      volumeSequenceNumber: 0,
+      identifier,
+      date,
+    })).toThrow(/volume sequence number/i);
+
     expect(() => encodePathTable([{
       identifier: Uint8Array.of(0),
       extent: 20,
       parentDirectoryNumber: 1,
       extendedAttributeRecordLength: 1.5,
     }], "little")).toThrow(/0 to 255 logical blocks/i);
+
+    expect(() => encodePathTable([{
+      identifier: Uint8Array.of(0),
+      extent: 20,
+      parentDirectoryNumber: 0,
+    }], "little")).toThrow(/parent directory number/i);
   });
 
   test("low-level encoders reject invalid identifier lengths", () => {
