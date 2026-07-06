@@ -9,7 +9,7 @@ import {
   writeUint32Both,
   writeUint32LE,
 } from "./binary.js";
-import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN } from "./directory-record.js";
+import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN, FILE_FLAG_MULTI_EXTENT } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { type IdentifierLevel, normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
@@ -21,6 +21,7 @@ type FileNode = {
   name: string;
   isoIdentifier: string;
   data: Uint8Array;
+  sections: FileSectionNode[];
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordLength: number;
   date: Date;
@@ -28,6 +29,13 @@ type FileNode = {
   extent: number;
   flags: number;
   systemUse?: Uint8Array;
+};
+
+type FileSectionNode = {
+  extent: number;
+  dataOffset: number;
+  dataLength: number;
+  extendedAttributeRecordLength: number;
 };
 
 type DirectoryNode = {
@@ -46,6 +54,8 @@ type DirectoryNode = {
   pathTableIndex: number;
   systemUse?: Uint8Array;
 };
+
+const MAX_FILE_SECTION_SIZE = 0xffffffff;
 
 type PreparedVolumePartition = {
   options: VolumePartitionOptions;
@@ -152,9 +162,14 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
 
   const fileNodes = collectFiles(root);
   for (const file of fileNodes) {
-    file.extent = nextSector;
-    nextSector += file.extendedAttributeRecordLength;
-    nextSector += Math.max(1, sectorsForBytes(file.data.byteLength));
+    for (const [index, section] of file.sections.entries()) {
+      section.extent = nextSector;
+      if (index === 0) {
+        file.extent = section.extent;
+      }
+      nextSector += section.extendedAttributeRecordLength;
+      nextSector += Math.max(1, sectorsForBytes(section.dataLength));
+    }
   }
   const preparedPartitions: PreparedVolumePartition[] = [];
   for (const partition of volumePartitions) {
@@ -203,7 +218,12 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     if (file.extendedAttributeRecord) {
       image.set(file.extendedAttributeRecord, sectorOffset(file.extent));
     }
-    image.set(file.data, sectorOffset(file.extent + file.extendedAttributeRecordLength));
+    for (const section of file.sections) {
+      image.set(
+        file.data.subarray(section.dataOffset, section.dataOffset + section.dataLength),
+        sectorOffset(section.extent + section.extendedAttributeRecordLength),
+      );
+    }
   }
   for (const partition of preparedPartitions) {
     if (partition.data) {
@@ -299,11 +319,13 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     if (directory.children.has(normalized.isoIdentifier)) {
       throw new Error(`duplicate ISO identifier: ${file.path}`);
     }
+    const data = toBytes(file.data);
     const fileNode: FileNode = {
       kind: "file",
       name: normalized.fileName,
       isoIdentifier: normalized.isoIdentifier,
-      data: toBytes(file.data),
+      data,
+      sections: fileSectionsFor(data, file.multiExtent),
       extendedAttributeRecordLength: 0,
       date: file.date ?? now,
       timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
@@ -324,6 +346,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       if (fileNode.extendedAttributeRecordLength > 0xff) {
         throw new Error("extended attribute record exceeds 255 logical blocks");
       }
+      fileNode.sections[0]!.extendedAttributeRecordLength = fileNode.extendedAttributeRecordLength;
       const fields = decodeOptionalExtendedAttributeRecord(fileNode.extendedAttributeRecord);
       if (fields) {
         fileNode.flags |= extendedAttributeRecordFileFlags(fields);
@@ -399,6 +422,37 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
   return directory;
 }
 
+function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExtent"]): FileSectionNode[] {
+  if (multiExtent === undefined || multiExtent === false) {
+    return [fileSection(0, data.byteLength)];
+  }
+
+  const sectionSize = checkedFileSectionSize(typeof multiExtent === "object"
+    ? multiExtent.sectionSize ?? MAX_FILE_SECTION_SIZE
+    : MAX_FILE_SECTION_SIZE);
+  if (data.byteLength <= sectionSize) {
+    if (typeof multiExtent === "object" && multiExtent.sectionSize !== undefined) {
+      throw new Error("multi-extent sectionSize must be smaller than the file data length");
+    }
+    return [fileSection(0, data.byteLength)];
+  }
+
+  const sections: FileSectionNode[] = [];
+  for (let offset = 0; offset < data.byteLength; offset += sectionSize) {
+    sections.push(fileSection(offset, Math.min(sectionSize, data.byteLength - offset)));
+  }
+  return sections;
+}
+
+function fileSection(dataOffset: number, dataLength: number): FileSectionNode {
+  return {
+    extent: 0,
+    dataOffset,
+    dataLength,
+    extendedAttributeRecordLength: 0,
+  };
+}
+
 function collectDirectories(root: DirectoryNode): DirectoryNode[] {
   const directories: DirectoryNode[] = [root];
   root.pathTableIndex = 1;
@@ -433,7 +487,10 @@ function directoryDataLength(directory: DirectoryNode): number {
   offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
   for (const child of [...directory.children.values()].sort(compareNode)) {
     const recordLength = directoryRecordLengthForNode(child, asciiBytes(child.isoIdentifier));
-    offset = nextRecordOffset(offset, recordLength);
+    const recordCount = child.kind === "file" ? child.sections.length : 1;
+    for (let index = 0; index < recordCount; index += 1) {
+      offset = nextRecordOffset(offset, recordLength);
+    }
   }
   return offset;
 }
@@ -448,21 +505,29 @@ function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecond
     let record: Uint8Array;
     if (child.kind === "directory") {
       record = directoryRecordForDirectory(child, identifier, layout);
+      offset = appendRecord(bytes, offset, record);
     } else {
-      const input = {
-        extent: child.extent,
-        extendedAttributeRecordLength: child.extendedAttributeRecordLength,
-        dataLength: child.data.byteLength,
-        flags: child.flags,
-        identifier,
-        date: child.date,
-        timeZoneOffsetMinutes: child.timeZoneOffsetMinutes,
-      };
-      record = child.systemUse ? encodeDirectoryRecord({ ...input, systemUse: child.systemUse }) : encodeDirectoryRecord(input);
+      for (const [sectionIndex, section] of child.sections.entries()) {
+        record = directoryRecordForFileSection(child, section, sectionIndex, identifier);
+        offset = appendRecord(bytes, offset, record);
+      }
     }
-    offset = appendRecord(bytes, offset, record);
   }
   return bytes;
+}
+
+function directoryRecordForFileSection(file: FileNode, section: FileSectionNode, sectionIndex: number, identifier: Uint8Array): Uint8Array {
+  const isFinalSection = sectionIndex === file.sections.length - 1;
+  const input = {
+    extent: section.extent,
+    extendedAttributeRecordLength: section.extendedAttributeRecordLength,
+    dataLength: section.dataLength,
+    flags: isFinalSection ? file.flags : file.flags | FILE_FLAG_MULTI_EXTENT,
+    identifier,
+    date: file.date,
+    timeZoneOffsetMinutes: file.timeZoneOffsetMinutes,
+  };
+  return file.systemUse ? encodeDirectoryRecord({ ...input, systemUse: file.systemUse }) : encodeDirectoryRecord(input);
 }
 
 function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, layout?: PreparedSecondaryDescriptor): Uint8Array {
@@ -771,6 +836,13 @@ function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: stri
 function checkedIdentifierLevel(value: number): IdentifierLevel {
   if (value !== 1 && value !== 2) {
     throw new RangeError("identifierLevel must be 1 or 2");
+  }
+  return value;
+}
+
+function checkedFileSectionSize(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > MAX_FILE_SECTION_SIZE) {
+    throw new RangeError(`multi-extent sectionSize must be an integer from 1 to ${MAX_FILE_SECTION_SIZE}`);
   }
   return value;
 }

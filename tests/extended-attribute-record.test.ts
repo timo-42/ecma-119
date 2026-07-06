@@ -608,10 +608,15 @@ describe("extended attribute records", () => {
       flags: 0x40,
     })).toThrow(/reserved/i);
 
-    expect(() => encodeDirectoryRecord({
+    expect(encodeDirectoryRecord({
       ...input,
       flags: 0x80,
-    })).toThrow(/multi-extent/i);
+    })[25]).toBe(0x80);
+
+    expect(() => encodeDirectoryRecord({
+      ...input,
+      flags: 0x82,
+    })).toThrow(/multi-extent directory/i);
   });
 
   test("low-level directory record codec preserves interleave metadata bytes", () => {
