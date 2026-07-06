@@ -1013,6 +1013,7 @@ function validateDirectoryHierarchy(
     }
     if (index >= 2) {
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
+      issues.push(...validateOrdinaryFileExtendedAttributeFlags(record, recordPath || "."));
       if (previousOrdinaryRecord && compareDirectoryRecordOrder(previousOrdinaryRecord, record) > 0) {
         issues.push({
           code: "directory.record_order",
@@ -1073,6 +1074,17 @@ function validateOrdinaryDirectoryRecordIdentifier(record: DecodedDirectoryRecor
   return [{
     code: "directory.record_identifier.special",
     message: `directory record at ${path} must not use special identifier ${record.identifier[0]} outside self/parent records`,
+    path,
+  }];
+}
+
+function validateOrdinaryFileExtendedAttributeFlags(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
+  if ((record.flags & FILE_FLAG_DIRECTORY) !== 0 || record.extendedAttributeRecordLength !== 0 || (record.flags & 0x18) === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.file_flags_extended_attribute_missing",
+    message: `file record at ${path} sets Record or Protection flags without an extended attribute record`,
     path,
   }];
 }

@@ -1352,6 +1352,78 @@ describe("validateIsoImage hardening", () => {
     });
   });
 
+  test.each([
+    { flag: 0x08, label: "Record" },
+    { flag: 0x10, label: "Protection" },
+    { flag: 0x18, label: "Record and Protection" },
+  ])("reports file $label flags without an extended attribute record", ({ flag }) => {
+    const image = baselineImage([{ path: "README.TXT", data: "missing file ear\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    image[fileRecordOffset + 25] |= flag;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_extended_attribute_missing",
+          path: "README.TXT",
+          message: "file record at README.TXT sets Record or Protection flags without an extended attribute record",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+    expect(parseIsoImage(image).files[0]).toMatchObject({
+      path: "README.TXT",
+      flags: flag,
+      extendedAttributeRecordLength: 0,
+    });
+  });
+
+  test("allows file Record and Protection flags when they match an extended attribute record", () => {
+    const image = baselineImage([{
+      path: "README.TXT",
+      data: "matching file ear\n",
+      extendedAttributeRecord: {
+        ownerIdentification: 1,
+        groupIdentification: 1,
+        recordFormat: 1,
+        recordAttributes: 1,
+        recordLength: 1,
+        systemIdentifier: "VALIDATION",
+      },
+    }]);
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files[0]).toMatchObject({
+      path: "README.TXT",
+      flags: 0x18,
+      extendedAttributeRecordLength: 1,
+    });
+  });
+
+  test("reports nested file Record flags without an extended attribute record", () => {
+    const image = baselineImage([{ path: "DIR/README.TXT", data: "nested missing ear\n" }]);
+    const fileRecordOffset = findDirectoryRecordOffsetByPath(image, ["DIR", "README.TXT;1"]);
+    image[fileRecordOffset + 25] |= 0x08;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_extended_attribute_missing",
+          path: "DIR/README.TXT",
+          message: "file record at DIR/README.TXT sets Record or Protection flags without an extended attribute record",
+        }),
+      ]),
+    );
+  });
+
   test("reports associated directory record flags", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "associated directory flag\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
