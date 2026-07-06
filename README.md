@@ -56,6 +56,8 @@ The root package entry intentionally exposes these API groups:
 
 `timeZoneOffsetMinutes` is signed minutes east of UTC, must be divisible by 15, supports -720 through 780, and defaults to 0. File, directory, and structured Extended Attribute Record inputs can override the global value for their own ECMA-119 date/time fields.
 
+`systemArea` may be supplied as up to 32,768 bytes copied into logical sectors 0 through 15. Shorter values are zero-padded by the writer, omitted values leave the System Area all zeroes, and `parseIsoImage(image).systemArea` exposes the 16-sector byte range.
+
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
@@ -66,6 +68,7 @@ Implemented support is intentionally explicit:
 - primary volume descriptor and descriptor set terminator
 - volume descriptor metadata and file identifier fields
 - optional boot record volume descriptor
+- opaque System Area authoring and parsing
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
 - optional raw volume partition descriptor and payload
