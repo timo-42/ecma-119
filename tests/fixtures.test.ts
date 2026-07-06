@@ -151,6 +151,97 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
     expect(ascii(parsed.files[0]?.data ?? new Uint8Array())).toBe("hello ecma-119\n");
   });
 
+  test("round-trips a generated image with directories, descriptors, and partitions", async ({ skip }) => {
+    if (!createImage || !parseIsoImage || !validateIsoImage) {
+      skip("cannot run generated write-read fixture until writer, parser, and validator APIs are exported");
+    }
+
+    const module = await loadEcma119Module();
+    const createIsoImage = module?.createIsoImage as ((input: unknown) => Uint8Array) | undefined;
+    if (!createIsoImage) {
+      skip("cannot run comprehensive fixture until createIsoImage is exported");
+    }
+
+    const binaryPayload = Uint8Array.of(0x00, 0x01, 0xfe, 0xff);
+    const partitionPayload = new TextEncoder().encode("partition payload\n");
+    const generated = createIsoImage!({
+      files: [
+        { path: "README.TXT", data: "hello generated\n" },
+        { path: "DIR/EMPTY.BIN", data: new Uint8Array() },
+        { path: "DIR/BINARY.BIN", data: binaryPayload },
+      ],
+      volumeIdentifier: "ROUNDTRIP",
+      bootRecord: {
+        bootSystemIdentifier: "BOOT SYSTEM",
+        bootIdentifier: "BOOT ID",
+        bootSystemUse: Uint8Array.of(0xba, 0xad),
+      },
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP_RT" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH_RT" }],
+      volumePartition: {
+        volumePartitionIdentifier: "PART_RT",
+        data: partitionPayload,
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    expect(validateIsoImage!(generated)).toEqual([]);
+
+    const parsed = parseIsoImage!(generated, { includeData: true }) as {
+      descriptors: Array<{
+        kind: string;
+        volumeIdentifier?: string;
+        bootSystemIdentifier?: string;
+        volumePartitionIdentifier?: string;
+        data?: Uint8Array;
+        rootDirectoryRecord?: {
+          children: Array<{ path: string; identifier: string; size?: number; data?: Uint8Array; children?: unknown[] }>;
+        };
+      }>;
+      files: Array<{ path: string; identifier: string; size: number; data?: Uint8Array }>;
+    };
+
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual([
+      "primary",
+      "boot",
+      "supplementary",
+      "enhanced",
+      "partition",
+      "terminator",
+    ]);
+    expect(parsed.descriptors.find((descriptor) => descriptor.kind === "boot")).toMatchObject({
+      bootSystemIdentifier: "BOOT SYSTEM",
+      bootIdentifier: "BOOT ID",
+    });
+    expect(parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary")).toMatchObject({
+      volumeIdentifier: "SUPP_RT",
+    });
+    expect(parsed.descriptors.find((descriptor) => descriptor.kind === "enhanced")).toMatchObject({
+      volumeIdentifier: "ENH_RT",
+    });
+    const partition = parsed.descriptors.find((descriptor) => descriptor.kind === "partition");
+    expect(partition).toMatchObject({
+      volumePartitionIdentifier: "PART_RT",
+    });
+    expect(partition?.data?.subarray(0, partitionPayload.byteLength)).toEqual(partitionPayload);
+
+    const readme = parsed.files.find((file) => file.path === "README.TXT");
+    const empty = parsed.files.find((file) => file.path === "DIR/EMPTY.BIN");
+    const binary = parsed.files.find((file) => file.path === "DIR/BINARY.BIN");
+    expect(parsed.files.map((file) => file.path).sort()).toEqual(["DIR/BINARY.BIN", "DIR/EMPTY.BIN", "README.TXT"]);
+    expect(ascii(readme?.data ?? new Uint8Array())).toBe("hello generated\n");
+    expect(empty).toMatchObject({ identifier: "EMPTY.BIN;1", size: 0 });
+    expect(empty?.data).toEqual(new Uint8Array());
+    expect(binary?.data).toEqual(binaryPayload);
+
+    for (const descriptor of parsed.descriptors.filter(
+      (candidate) => candidate.kind === "supplementary" || candidate.kind === "enhanced",
+    )) {
+      const childPaths = descriptor.rootDirectoryRecord?.children.map((child) => child.path).sort();
+      expect(childPaths).toEqual(["DIR", "README.TXT"]);
+    }
+  });
+
   test("sizes large directories with sector padding between records", async () => {
     expect(createImage).toBeTypeOf("function");
     const files = Array.from({ length: 132 }, (_, index) => ({
