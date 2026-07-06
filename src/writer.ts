@@ -101,9 +101,10 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const pathTableBytesM = encodePathTable(pathRecords, "big");
   const pathTableSectors = sectorsForBytes(pathTableBytesL.length);
   const optionalPathTables = normalizeOptionalPathTables(options.optionalPathTables);
+  const bootRecords = normalizeBootRecords(options);
   const volumePartitions = normalizeVolumePartitions(options);
   const secondaryDescriptors = normalizeSecondaryDescriptors(options, directories);
-  const descriptorSectorCount = 2 + (options.bootRecord ? 1 : 0) + secondaryDescriptors.length + volumePartitions.length;
+  const descriptorSectorCount = 2 + bootRecords.length + secondaryDescriptors.length + volumePartitions.length;
 
   let nextSector = SYSTEM_AREA_SECTORS + descriptorSectorCount;
   const typeLPathTableSector = nextSector;
@@ -244,8 +245,8 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     optionalTypeMPathTableSector,
     root,
   }), sectorOffset(descriptorSector++));
-  if (options.bootRecord) {
-    image.set(encodeBootVolumeDescriptor(options.bootRecord), sectorOffset(descriptorSector++));
+  for (const bootRecord of bootRecords) {
+    image.set(encodeBootVolumeDescriptor(bootRecord), sectorOffset(descriptorSector++));
   }
   for (const descriptor of secondaryDescriptors) {
     image.set(encodeSupplementaryLikeVolumeDescriptor({
@@ -766,6 +767,14 @@ function encodeBootVolumeDescriptor(options: BootRecordOptions): Uint8Array {
     bytes.set(bootSystemUse, 71);
   }
   return bytes;
+}
+
+function normalizeBootRecords(options: CreateIsoOptions): BootRecordOptions[] {
+  const records = [...(options.bootRecords ?? [])];
+  if (options.bootRecord) {
+    records.unshift(options.bootRecord);
+  }
+  return records;
 }
 
 function encodeVolumePartitionDescriptor(options: VolumePartitionOptions, location: number, size: number): Uint8Array {

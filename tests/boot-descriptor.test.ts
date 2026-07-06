@@ -98,6 +98,42 @@ describe("boot volume descriptor writing", () => {
       },
     })).toThrow(/a-characters/i);
   });
+
+  test("writes multiple boot descriptors", () => {
+    const image = createIsoImage(
+      [{ path: "BOOT.TXT", data: "multiple boot records\n" }],
+      {
+        bootRecord: {
+          bootSystemIdentifier: "LEGACY_BOOT",
+          bootIdentifier: "LEGACY",
+          bootSystemUse: Uint8Array.of(0x01),
+        },
+        bootRecords: [
+          {
+            bootSystemIdentifier: "SECOND_BOOT",
+            bootIdentifier: "SECOND",
+            bootSystemUse: Uint8Array.of(0x02, 0x03),
+          },
+          {
+            bootSystemIdentifier: "THIRD_BOOT",
+            bootIdentifier: "THIRD",
+          },
+        ],
+      },
+    );
+    const descriptors = parseVolumeDescriptors(image);
+    const bootDescriptors = descriptors.filter((descriptor) => descriptor.kind === "boot");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "boot", "boot", "terminator"]);
+    expect(bootDescriptors).toHaveLength(3);
+    expect(bootDescriptors[0]).toMatchObject({ bootSystemIdentifier: "LEGACY_BOOT", bootIdentifier: "LEGACY" });
+    expect(bootDescriptors[1]).toMatchObject({ bootSystemIdentifier: "SECOND_BOOT", bootIdentifier: "SECOND" });
+    expect(bootDescriptors[2]).toMatchObject({ bootSystemIdentifier: "THIRD_BOOT", bootIdentifier: "THIRD" });
+    expect(bootDescriptors[0]?.kind === "boot" ? bootDescriptors[0].bootSystemUse[0] : undefined).toBe(0x01);
+    expect(bootDescriptors[1]?.kind === "boot" ? bootDescriptors[1].bootSystemUse.subarray(0, 2) : undefined).toEqual(Uint8Array.of(0x02, 0x03));
+    expect(parseIsoImage(image, { includeData: true }).files[0]?.path).toBe("BOOT.TXT");
+  });
 });
 
 function ascii(bytes: Uint8Array, start: number, end: number): string {
