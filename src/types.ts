@@ -10,6 +10,12 @@ export type IsoInputFile = {
   systemUse?: Uint8Array | Buffer | string;
 };
 
+export type IsoInputDirectory = {
+  path: string;
+  date?: Date;
+  extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
+};
+
 export type ExtendedAttributeRecordInput = {
   ownerIdentification?: number;
   groupIdentification?: number;
@@ -47,6 +53,7 @@ export type ExtendedAttributeRecord = {
 };
 
 export type CreateIsoOptions = {
+  directories?: IsoInputDirectory[];
   volumeIdentifier?: string;
   systemIdentifier?: string;
   volumeSetIdentifier?: string;

@@ -53,7 +53,7 @@ Implemented support is intentionally explicit:
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
 - opaque directory record System Use bytes
-- raw and structured file Extended Attribute Records
+- raw and structured file and directory Extended Attribute Records
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
