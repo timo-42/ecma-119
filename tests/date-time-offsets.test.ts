@@ -129,6 +129,36 @@ describe("ECMA-119 date/time zone offsets", () => {
       timeZoneOffsetMinutes: 7,
     })).toThrow(/divisible by 15/i);
   });
+
+  test("rejects unrepresentable volume descriptor date years", () => {
+    const validCreatedAt = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+    const unrepresentable = new Date(Date.UTC(10000, 0, 1, 0, 0, 0));
+
+    expect(() => createIsoImage([{ path: "DATE.TXT", data: "date\n" }], {
+      createdAt: validCreatedAt,
+      modifiedAt: unrepresentable,
+    })).toThrow(/year.*1 to 9999/i);
+
+    expect(() => encodeExtendedAttributeRecord({
+      createdAt: unrepresentable,
+    })).toThrow(/year.*1 to 9999/i);
+  });
+
+  test("writes and parses the maximum volume descriptor date year", () => {
+    const createdAt = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+    const date = new Date(Date.UTC(9999, 11, 31, 23, 59, 59));
+    const image = createIsoImage([{ path: "MAXYEAR.TXT", data: "max year\n" }], {
+      createdAt,
+      modifiedAt: date,
+      effectiveAt: date,
+      expiresAt: date,
+    });
+    const primary = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "primary");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(primary?.kind === "primary" ? primary.modifiedAt?.toISOString() : undefined).toBe("9999-12-31T23:59:59.000Z");
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["MAXYEAR.TXT"]);
+  });
 });
 
 function getRootDirectoryBytes(image: Uint8Array): Uint8Array {

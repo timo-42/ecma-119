@@ -144,6 +144,52 @@ describe('ECMA-119 binary helpers', () => {
     expect(readVolumeDescriptorDateTime(bytes, 0)).toEqual(value);
   });
 
+  test('enforces four-digit volume descriptor date/time years', () => {
+    const bytes = new Uint8Array(17);
+    const boundary = {
+      year: 9999,
+      month: 12,
+      day: 31,
+      hour: 23,
+      minute: 59,
+      second: 59,
+      hundredths: 99,
+      timeZoneOffsetMinutes: 780,
+    };
+
+    writeVolumeDescriptorDateTime(bytes, 0, boundary);
+    expect(String.fromCharCode(...bytes.slice(0, 16))).toBe('9999123123595999');
+    expect(readVolumeDescriptorDateTime(bytes, 0)).toEqual(boundary);
+
+    writeVolumeDescriptorDateTime(bytes, 0, {
+      ...boundary,
+      year: 1,
+      month: 1,
+      day: 1,
+    });
+    expect(String.fromCharCode(...bytes.slice(0, 16))).toBe('0001010123595999');
+    expect(readVolumeDescriptorDateTime(bytes, 0)).toEqual({
+      ...boundary,
+      year: 1,
+      month: 1,
+      day: 1,
+    });
+    expect(dateTimeToDate(readVolumeDescriptorDateTime(bytes, 0)!).toISOString()).toBe('0001-01-01T10:59:59.990Z');
+
+    expect(() => writeVolumeDescriptorDateTime(new Uint8Array(17), 0, {
+      ...boundary,
+      year: 0,
+    })).toThrow(/year.*1 to 9999/i);
+    expect(() => readVolumeDescriptorDateTime(Uint8Array.from([
+      ...'0000010100000000'.split('').map((char) => char.charCodeAt(0)),
+      0,
+    ]), 0)).toThrow(/year.*1 to 9999/i);
+    expect(() => writeVolumeDescriptorDateTime(new Uint8Array(17), 0, {
+      ...boundary,
+      year: 10000,
+    })).toThrow(/year.*1 to 9999/i);
+  });
+
   test('handles unspecified volume descriptor date/time fields', () => {
     const bytes = new Uint8Array(17);
 
