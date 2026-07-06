@@ -169,7 +169,9 @@ export type PrimaryVolumeDescriptor = BaseVolumeDescriptor & {
   logicalBlockSize: number;
   pathTableSize: number;
   typeLPathTableLocation: number;
+  optionalTypeLPathTableLocation: number;
   typeMPathTableLocation: number;
+  optionalTypeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
   volumeSetIdentifier: string;
   publisherIdentifier: string;
@@ -197,7 +199,9 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   logicalBlockSize: number;
   pathTableSize: number;
   typeLPathTableLocation: number;
+  optionalTypeLPathTableLocation: number;
   typeMPathTableLocation: number;
+  optionalTypeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;
@@ -218,7 +222,9 @@ export type EnhancedVolumeDescriptor = BaseVolumeDescriptor & {
   logicalBlockSize: number;
   pathTableSize: number;
   typeLPathTableLocation: number;
+  optionalTypeLPathTableLocation: number;
   typeMPathTableLocation: number;
+  optionalTypeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;

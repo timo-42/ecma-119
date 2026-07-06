@@ -67,6 +67,20 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports optional Type L path table issues when the optional location is present", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
+    writeUint32LE(image, PVD_OFFSET + 144, 0xffff);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.optional.little.bounds",
+          message: expect.stringMatching(/Type L path table extent is out of bounds/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports a path table record that points to itself as parent", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
@@ -368,6 +382,27 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports supplementary optional Type M path table issues when the optional location is present", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint32BE(image, supplementaryDescriptorOffset + 152, 0xffff);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.optional.big.bounds",
+          message: expect.stringMatching(/Type M path table extent is out of bounds/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports enhanced path table parent issues", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
@@ -534,6 +569,20 @@ function writeUint32Both(bytes: Uint8Array, offset: number, value: number): void
   bytes[offset + 5] = (value >>> 16) & 0xff;
   bytes[offset + 6] = (value >>> 8) & 0xff;
   bytes[offset + 7] = value & 0xff;
+}
+
+function writeUint32LE(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+  bytes[offset + 2] = (value >>> 16) & 0xff;
+  bytes[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function writeUint32BE(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = (value >>> 24) & 0xff;
+  bytes[offset + 1] = (value >>> 16) & 0xff;
+  bytes[offset + 2] = (value >>> 8) & 0xff;
+  bytes[offset + 3] = value & 0xff;
 }
 
 function writeUint16Both(bytes: Uint8Array, offset: number, value: number): void {

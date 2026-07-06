@@ -71,6 +71,8 @@ describe("volume descriptor sequence parsing", () => {
       copyrightFileIdentifier: "COPY.TXT;1",
       abstractFileIdentifier: "ABSTRACT.TXT;1",
       bibliographicFileIdentifier: "BIBLIO.TXT;1",
+      optionalTypeLPathTableLocation: 0,
+      optionalTypeMPathTableLocation: 0,
     });
   });
 
