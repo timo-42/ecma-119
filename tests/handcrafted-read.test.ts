@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { parseIsoImage, validateIsoImage } from "../src/index";
+import { parseIsoImage, parseVolumeDescriptors, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 describe("handcrafted ISO reader fixture", () => {
@@ -44,6 +44,58 @@ describe("handcrafted ISO reader fixture", () => {
       size: 13,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hello nested\n");
+  });
+
+  test.each([
+    { kind: "supplementary" as const, descriptorVersion: 1, fileStructureVersion: 1, volumeIdentifier: "SUP_HAND" },
+    { kind: "enhanced" as const, descriptorVersion: 2, fileStructureVersion: 2, volumeIdentifier: "ENH_HAND" },
+  ])("reads a handcrafted $kind descriptor hierarchy and path tables", ({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier }) => {
+    const image = handcraftedSecondaryDescriptorIso({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier });
+    const volumeDescriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const parsedDescriptor = parsed.descriptors.find((descriptor) => descriptor.kind === kind);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(volumeDescriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", kind, "terminator"]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", kind, "terminator"]);
+    expect(parsed.files).toEqual([]);
+    expect(volumeDescriptors.find((descriptor) => descriptor.kind === kind)).toMatchObject({
+      kind,
+      type: 2,
+      version: descriptorVersion,
+      volumeIdentifier,
+      pathTableSize: 22,
+      typeLPathTableLocation: 23,
+      typeMPathTableLocation: 24,
+    });
+    expect(parsedDescriptor).toMatchObject({
+      kind,
+      type: 2,
+      version: descriptorVersion,
+      volumeIdentifier,
+      fileStructureVersion,
+      typeLPathTableLocation: 23,
+      typeMPathTableLocation: 24,
+    });
+    expect(parsedDescriptor?.kind === kind ? parsedDescriptor.rootDirectoryRecord.extent : undefined).toBe(25);
+    expect(parsedDescriptor?.kind === kind ? parsedDescriptor.rootDirectoryRecord.children[0] : undefined).toMatchObject({
+      path: "ALT",
+      identifier: "ALT",
+      extent: 26,
+    });
+
+    const childDirectory = parsedDescriptor?.kind === kind && "children" in parsedDescriptor.rootDirectoryRecord.children[0]!
+      ? parsedDescriptor.rootDirectoryRecord.children[0]
+      : undefined;
+    expect(childDirectory && "children" in childDirectory ? childDirectory.children[0] : undefined).toMatchObject({
+      path: "ALT/SECOND.TXT",
+      identifier: "SECOND.TXT;1",
+      extent: 27,
+      size: "hello secondary\n".length,
+    });
+    expect(childDirectory && "children" in childDirectory && !("children" in childDirectory.children[0]!)
+      ? new TextDecoder("ascii").decode(childDirectory.children[0].data)
+      : undefined).toBe("hello secondary\n");
   });
 });
 
@@ -168,6 +220,155 @@ function handcraftedNestedIso(): Uint8Array {
   terminator[6] = 1;
 
   return image;
+}
+
+function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enhanced"; descriptorVersion: 1 | 2; fileStructureVersion: 1 | 2; volumeIdentifier: string }): Uint8Array {
+  const image = new Uint8Array(30 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const secondaryDescriptor = sector(image, 17);
+  const terminator = sector(image, 18);
+  const primaryPathTableL = sector(image, 19);
+  const primaryPathTableM = sector(image, 20);
+  const primaryRootDirectory = sector(image, 21);
+  const secondaryPathTableL = sector(image, 23);
+  const secondaryPathTableM = sector(image, 24);
+  const secondaryRootDirectory = sector(image, 25);
+  const secondaryChildDirectory = sector(image, 26);
+  const secondaryFileData = sector(image, 27);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const filePayload = new TextEncoder().encode("hello secondary\n");
+
+  secondaryFileData.set(filePayload);
+
+  writePathTableRoot(primaryPathTableL, "little", 21);
+  writePathTableRoot(primaryPathTableM, "big", 21);
+  writePathTableRoot(secondaryPathTableL, "little", 25);
+  writePathTableDirectory(secondaryPathTableL, 10, "little", asciiBytes("ALT"), 26, 1);
+  writePathTableRoot(secondaryPathTableM, "big", 25);
+  writePathTableDirectory(secondaryPathTableM, 10, "big", asciiBytes("ALT"), 26, 1);
+
+  const primaryRootSelf = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const primaryRootParent = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  primaryRootDirectory.set(primaryRootSelf, 0);
+  primaryRootDirectory.set(primaryRootParent, primaryRootSelf.byteLength);
+
+  const secondaryRootSelf = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const secondaryRootParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const secondaryChild = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("ALT"), date });
+  secondaryRootDirectory.set(secondaryRootSelf, 0);
+  secondaryRootDirectory.set(secondaryRootParent, secondaryRootSelf.byteLength);
+  secondaryRootDirectory.set(secondaryChild, secondaryRootSelf.byteLength + secondaryRootParent.byteLength);
+
+  const childSelf = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const childParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const childFile = directoryRecord({ extent: 27, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("SECOND.TXT;1"), date });
+  secondaryChildDirectory.set(childSelf, 0);
+  secondaryChildDirectory.set(childParent, childSelf.byteLength);
+  secondaryChildDirectory.set(childFile, childSelf.byteLength + childParent.byteLength);
+
+  writePrimaryDescriptor(pvd, {
+    volumeIdentifier: "PRIMARY",
+    rootDirectoryRecord: primaryRootSelf,
+    pathTableSize: 10,
+    typeLPathTableLocation: 19,
+    typeMPathTableLocation: 20,
+    volumeSpaceSize: 30,
+    date,
+  });
+
+  writeSecondaryDescriptor(secondaryDescriptor, {
+    descriptorVersion: input.descriptorVersion,
+    fileStructureVersion: input.fileStructureVersion,
+    volumeIdentifier: input.volumeIdentifier,
+    rootDirectoryRecord: secondaryRootSelf,
+    pathTableSize: 22,
+    typeLPathTableLocation: 23,
+    typeMPathTableLocation: 24,
+    volumeSpaceSize: 30,
+    date,
+  });
+
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
+function writePrimaryDescriptor(
+  bytes: Uint8Array,
+  input: {
+    volumeIdentifier: string;
+    rootDirectoryRecord: Uint8Array;
+    pathTableSize: number;
+    typeLPathTableLocation: number;
+    typeMPathTableLocation: number;
+    volumeSpaceSize: number;
+    date: Date;
+  },
+): void {
+  bytes[0] = 1;
+  writeAscii(bytes, 1, 5, "CD001", 0);
+  bytes[6] = 1;
+  writeAscii(bytes, 8, 32, "HANDMADE_SYSTEM", 0x20);
+  writeAscii(bytes, 40, 32, input.volumeIdentifier, 0x20);
+  writeBoth32(bytes, 80, input.volumeSpaceSize);
+  writeBoth16(bytes, 120, 1);
+  writeBoth16(bytes, 124, 1);
+  writeBoth16(bytes, 128, SECTOR_SIZE);
+  writeBoth32(bytes, 132, input.pathTableSize);
+  writeUint32LE(bytes, 140, input.typeLPathTableLocation);
+  writeUint32BE(bytes, 148, input.typeMPathTableLocation);
+  bytes.set(input.rootDirectoryRecord, 156);
+  writeDescriptorTextFields(bytes, input.date);
+  bytes[881] = 1;
+}
+
+function writeSecondaryDescriptor(
+  bytes: Uint8Array,
+  input: {
+    descriptorVersion: 1 | 2;
+    fileStructureVersion: 1 | 2;
+    volumeIdentifier: string;
+    rootDirectoryRecord: Uint8Array;
+    pathTableSize: number;
+    typeLPathTableLocation: number;
+    typeMPathTableLocation: number;
+    volumeSpaceSize: number;
+    date: Date;
+  },
+): void {
+  bytes[0] = 2;
+  writeAscii(bytes, 1, 5, "CD001", 0);
+  bytes[6] = input.descriptorVersion;
+  bytes[7] = 0;
+  writeAscii(bytes, 8, 32, "HANDMADE_SYSTEM", 0x20);
+  writeAscii(bytes, 40, 32, input.volumeIdentifier, 0x20);
+  writeBoth32(bytes, 80, input.volumeSpaceSize);
+  bytes.set(input.descriptorVersion === 2 ? Uint8Array.of(0x25, 0x2f, 0x45) : Uint8Array.of(0x25, 0x2f, 0x40), 88);
+  writeBoth16(bytes, 120, 1);
+  writeBoth16(bytes, 124, 1);
+  writeBoth16(bytes, 128, SECTOR_SIZE);
+  writeBoth32(bytes, 132, input.pathTableSize);
+  writeUint32LE(bytes, 140, input.typeLPathTableLocation);
+  writeUint32BE(bytes, 148, input.typeMPathTableLocation);
+  bytes.set(input.rootDirectoryRecord, 156);
+  writeDescriptorTextFields(bytes, input.date);
+  bytes[881] = input.fileStructureVersion;
+}
+
+function writeDescriptorTextFields(bytes: Uint8Array, date: Date): void {
+  writeAscii(bytes, 190, 128, "", 0x20);
+  writeAscii(bytes, 318, 128, "", 0x20);
+  writeAscii(bytes, 446, 128, "", 0x20);
+  writeAscii(bytes, 574, 128, "HANDCRAFTED TEST", 0x20);
+  writeAscii(bytes, 702, 37, "", 0x20);
+  writeAscii(bytes, 739, 37, "", 0x20);
+  writeAscii(bytes, 776, 37, "", 0x20);
+  bytes.set(volumeDate(date), 813);
+  bytes.set(volumeDate(date), 830);
+  bytes.set(volumeDate(null), 847);
+  bytes.set(volumeDate(date), 864);
 }
 
 function sector(image: Uint8Array, sectorNumber: number): Uint8Array {
