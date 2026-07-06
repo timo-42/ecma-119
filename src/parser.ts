@@ -69,7 +69,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
-      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", new Set()));
+      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", new Set(), true));
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
           issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor));
@@ -227,6 +227,13 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
     { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
     { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
   ]));
+  if (pvd.rootDirectoryRecord.identifier !== ".") {
+    issues.push({
+      code: "pvd.root_directory_record.identifier",
+      message: "primary volume descriptor root directory record must use identifier 0",
+      path: ".",
+    });
+  }
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
   }
@@ -686,6 +693,7 @@ function validateDirectoryHierarchy(
   parent: IsoDirectoryEntry,
   path: string,
   visited: Set<number>,
+  validatePrimaryIdentifiers = false,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const key = directory.extent;
@@ -732,6 +740,9 @@ function validateDirectoryHierarchy(
     if (index < 2) {
       issues.push(...validateDotDirectoryRecord(record, index, directory, parent, path));
     }
+    if (index >= 2 && validatePrimaryIdentifiers) {
+      issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
+    }
     if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
       issues.push({
         code: "directory.interleaving_unsupported",
@@ -757,9 +768,51 @@ function validateDirectoryHierarchy(
       continue;
     }
     const childPath = joinPath(path === "." ? "" : path, identifier);
-    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, new Set(visited)));
+    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, new Set(visited), validatePrimaryIdentifiers));
   }
   return issues;
+}
+
+function validatePrimaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
+  const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
+  if (isDirectory ? isLevelOneDirectoryIdentifier(record.identifier) : isLevelOneFileIdentifier(record.identifier)) {
+    return [];
+  }
+  return [{
+    code: isDirectory ? "directory.directory_identifier.characters" : "directory.file_identifier.characters",
+    message: `primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 Level 1 d-characters" : "file identifier contains invalid ECMA-119 Level 1 file identifier"}`,
+    path,
+  }];
+}
+
+function isLevelOneDirectoryIdentifier(identifier: Uint8Array): boolean {
+  return identifier.byteLength >= 1
+    && identifier.byteLength <= 8
+    && identifier.every(isDCharacterByte);
+}
+
+function isLevelOneFileIdentifier(identifier: Uint8Array): boolean {
+  const text = asciiString(identifier);
+  if (text === undefined) {
+    return false;
+  }
+  const match = /^([A-Z0-9_]{1,8})(?:\.([A-Z0-9_]{1,3}))?;([1-9][0-9]{0,4})$/u.exec(text);
+  return match !== null && Number(match[3]) <= 32767;
+}
+
+function isDCharacterByte(byte: number): boolean {
+  return (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x30 && byte <= 0x39) || byte === 0x5f;
+}
+
+function asciiString(bytes: Uint8Array): string | undefined {
+  let value = "";
+  for (const byte of bytes) {
+    if (byte > 0x7f) {
+      return undefined;
+    }
+    value += String.fromCharCode(byte);
+  }
+  return value;
 }
 
 function validateDotDirectoryRecord(
