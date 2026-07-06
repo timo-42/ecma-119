@@ -39,7 +39,10 @@ describe("ECMA-119 date/time zone offsets", () => {
     expect(rootDirectory[18 + 6]).toBe(8);
     expect(fileRecord[18 + 6]).toBe(8);
     expect(primary?.kind === "primary" ? primary.createdAt?.toISOString() : undefined).toBe("2026-07-05T23:02:03.450Z");
-    expect(supplementary?.kind).toBe("supplementary");
+    expect(supplementary?.kind === "supplementary" ? supplementary.createdAt?.toISOString() : undefined).toBe("2026-07-05T23:02:03.450Z");
+    expect(supplementary?.kind === "supplementary" ? supplementary.modifiedAt?.toISOString() : undefined).toBe("2026-07-05T23:02:03.450Z");
+    expect(supplementary?.kind === "supplementary" ? supplementary.effectiveAt?.toISOString() : undefined).toBe("2026-07-05T23:02:03.450Z");
+    expect(supplementary?.kind === "supplementary" ? supplementary.expiresAt : undefined).toBeNull();
     expect(parsed.files[0]?.date.toISOString()).toBe("2026-07-05T23:02:03.000Z");
   });
 

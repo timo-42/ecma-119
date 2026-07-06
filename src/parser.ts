@@ -1145,16 +1145,32 @@ function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sec
     typeMPathTableLocation: readUint32BEAt(image, offset + 148),
     optionalTypeMPathTableLocation: readUint32BEAt(image, offset + 152),
     rootDirectoryRecord: rootRecord ? directoryEntryFromRecord(rootRecord, "", []) : emptyDirectoryEntry(),
+    volumeSetIdentifier: readAsciiTrimmed(image, offset + 190, 128),
+    publisherIdentifier: readAsciiTrimmed(image, offset + 318, 128),
+    dataPreparerIdentifier: readAsciiTrimmed(image, offset + 446, 128),
+    applicationIdentifier: readAsciiTrimmed(image, offset + 574, 128),
     copyrightFileIdentifier: readAsciiTrimmed(image, offset + 702, 37),
     abstractFileIdentifier: readAsciiTrimmed(image, offset + 739, 37),
     bibliographicFileIdentifier: readAsciiTrimmed(image, offset + 776, 37),
     fileStructureVersion: image[offset + 881]!,
     applicationUse: image.slice(offset + 883, offset + 1395),
+    createdAt: decodeSecondaryVolumeDate(image, offset + 813),
+    modifiedAt: decodeSecondaryVolumeDate(image, offset + 830),
+    expiresAt: decodeSecondaryVolumeDate(image, offset + 847),
+    effectiveAt: decodeSecondaryVolumeDate(image, offset + 864),
     escapeSequences: image.slice(offset + 88, offset + 120),
   };
   return image[offset + 6] === 2
     ? { ...common, kind: "enhanced", version: 2 }
     : { ...common, kind: "supplementary", version: 1 };
+}
+
+function decodeSecondaryVolumeDate(image: Uint8Array, offset: number): Date | null {
+  const bytes = image.subarray(offset, offset + 17);
+  if (allZero(bytes)) {
+    return null;
+  }
+  return decodeVolumeDate(image, offset);
 }
 
 function emptyDirectoryEntry(): IsoDirectoryEntry {

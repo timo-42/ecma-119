@@ -216,11 +216,19 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   typeMPathTableLocation: number;
   optionalTypeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
+  volumeSetIdentifier: string;
+  publisherIdentifier: string;
+  dataPreparerIdentifier: string;
+  applicationIdentifier: string;
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;
   bibliographicFileIdentifier: string;
   fileStructureVersion: number;
   applicationUse: Uint8Array;
+  createdAt: Date | null;
+  modifiedAt: Date | null;
+  expiresAt: Date | null;
+  effectiveAt: Date | null;
   escapeSequences: Uint8Array;
 };
 
@@ -241,11 +249,19 @@ export type EnhancedVolumeDescriptor = BaseVolumeDescriptor & {
   typeMPathTableLocation: number;
   optionalTypeMPathTableLocation: number;
   rootDirectoryRecord: IsoDirectoryEntry;
+  volumeSetIdentifier: string;
+  publisherIdentifier: string;
+  dataPreparerIdentifier: string;
+  applicationIdentifier: string;
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;
   bibliographicFileIdentifier: string;
   fileStructureVersion: number;
   applicationUse: Uint8Array;
+  createdAt: Date | null;
+  modifiedAt: Date | null;
+  expiresAt: Date | null;
+  effectiveAt: Date | null;
   escapeSequences: Uint8Array;
 };
 
