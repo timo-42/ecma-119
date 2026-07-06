@@ -16,6 +16,8 @@ export type CreateIsoOptions = {
   dataPreparerIdentifier?: string;
   applicationIdentifier?: string;
   bootRecord?: BootRecordOptions;
+  volumePartition?: VolumePartitionOptions;
+  volumePartitions?: VolumePartitionOptions[];
   createdAt?: Date;
   modifiedAt?: Date;
   effectiveAt?: Date;
@@ -26,6 +28,14 @@ export type BootRecordOptions = {
   bootSystemIdentifier?: string;
   bootIdentifier?: string;
   bootSystemUse?: Uint8Array | Buffer | string;
+};
+
+export type VolumePartitionOptions = {
+  systemIdentifier?: string;
+  volumePartitionIdentifier?: string;
+  systemUse?: Uint8Array | Buffer | string;
+  data?: Uint8Array | Buffer | string;
+  size?: number;
 };
 
 export type IsoFileEntry = {

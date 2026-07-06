@@ -12,7 +12,7 @@ import {
 import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
 import { normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, CreateIsoOptions, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS } from "./types.js";
+import { type BootRecordOptions, CreateIsoOptions, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -36,6 +36,13 @@ type DirectoryNode = {
   pathTableIndex: number;
 };
 
+type PreparedVolumePartition = {
+  options: VolumePartitionOptions;
+  data?: Uint8Array | undefined;
+  location: number;
+  size: number;
+};
+
 export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInputFile[] } & CreateIsoOptions), maybeOptions: CreateIsoOptions = {}): Uint8Array {
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
@@ -51,7 +58,8 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const pathTableBytesL = encodePathTable(pathRecords, "little");
   const pathTableBytesM = encodePathTable(pathRecords, "big");
   const pathTableSectors = sectorsForBytes(pathTableBytesL.length);
-  const descriptorSectorCount = 2 + (options.bootRecord ? 1 : 0);
+  const volumePartitions = normalizeVolumePartitions(options);
+  const descriptorSectorCount = 2 + (options.bootRecord ? 1 : 0) + volumePartitions.length;
 
   let nextSector = SYSTEM_AREA_SECTORS + descriptorSectorCount;
   const typeLPathTableSector = nextSector;
@@ -75,6 +83,12 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     file.extent = nextSector;
     nextSector += Math.max(1, sectorsForBytes(file.data.byteLength));
   }
+  const preparedPartitions: PreparedVolumePartition[] = [];
+  for (const partition of volumePartitions) {
+    const prepared = prepareVolumePartition(partition, nextSector);
+    preparedPartitions.push(prepared);
+    nextSector += prepared.size;
+  }
 
   const image = new Uint8Array(nextSector * SECTOR_SIZE);
   image.set(padToSector(encodePathTable(pathRecords, "little")), sectorOffset(typeLPathTableSector));
@@ -86,6 +100,11 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
 
   for (const file of fileNodes) {
     image.set(file.data, sectorOffset(file.extent));
+  }
+  for (const partition of preparedPartitions) {
+    if (partition.data) {
+      image.set(partition.data, sectorOffset(partition.location));
+    }
   }
 
   let descriptorSector = SYSTEM_AREA_SECTORS;
@@ -100,6 +119,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }), sectorOffset(descriptorSector++));
   if (options.bootRecord) {
     image.set(encodeBootVolumeDescriptor(options.bootRecord), sectorOffset(descriptorSector++));
+  }
+  for (const partition of preparedPartitions) {
+    image.set(encodeVolumePartitionDescriptor(partition.options, partition.location, partition.size), sectorOffset(descriptorSector++));
   }
   image.set(encodeTerminator(), sectorOffset(descriptorSector));
 
@@ -307,6 +329,65 @@ function encodeBootVolumeDescriptor(options: BootRecordOptions): Uint8Array {
     bytes.set(bootSystemUse, 71);
   }
   return bytes;
+}
+
+function encodeVolumePartitionDescriptor(options: VolumePartitionOptions, location: number, size: number): Uint8Array {
+  const bytes = new Uint8Array(SECTOR_SIZE);
+  bytes[0] = 3;
+  writeAsciiPadded(bytes, 1, 5, STANDARD_IDENTIFIER, 0x00);
+  bytes[6] = 1;
+  bytes[7] = 0;
+  writeAField(bytes, 8, 32, options.systemIdentifier ?? "");
+  writeDField(bytes, 40, 32, options.volumePartitionIdentifier ?? "");
+  writeUint32Both(bytes, 72, location);
+  writeUint32Both(bytes, 80, size);
+  if (options.systemUse) {
+    const systemUse = toBytes(options.systemUse);
+    if (systemUse.byteLength > 1960) {
+      throw new Error("volume partition system use field exceeds 1960 bytes");
+    }
+    bytes.set(systemUse, 88);
+  }
+  return bytes;
+}
+
+function normalizeVolumePartitions(options: CreateIsoOptions): VolumePartitionOptions[] {
+  const partitions = [...(options.volumePartitions ?? [])];
+  if (options.volumePartition) {
+    partitions.unshift(options.volumePartition);
+  }
+  return partitions;
+}
+
+function prepareVolumePartition(options: VolumePartitionOptions, location: number): PreparedVolumePartition {
+  assertVolumePartitionOptions(options);
+  const data = options.data === undefined ? undefined : toBytes(options.data);
+  const dataSectors = data === undefined ? 0 : sectorsForBytes(data.byteLength);
+  const size = options.size ?? dataSectors;
+  if (!Number.isInteger(size) || size < 1 || size > 0xffffffff) {
+    throw new RangeError("volume partition size must be an integer from 1 to 4294967295 logical blocks");
+  }
+  if (data === undefined && options.size === undefined) {
+    throw new Error("volume partition requires data or an explicit size");
+  }
+  if (data !== undefined && data.byteLength === 0 && options.size === undefined) {
+    throw new Error("empty volume partition data requires an explicit size");
+  }
+  if (data !== undefined && data.byteLength > size * SECTOR_SIZE) {
+    throw new Error("volume partition data exceeds declared size");
+  }
+  if (location + size > 0xffffffff) {
+    throw new RangeError("volume partition location and size exceed uint32 range");
+  }
+  return { options, data, location, size };
+}
+
+function assertVolumePartitionOptions(options: VolumePartitionOptions): void {
+  writeAField(new Uint8Array(32), 0, 32, options.systemIdentifier ?? "");
+  writeDField(new Uint8Array(32), 0, 32, options.volumePartitionIdentifier ?? "");
+  if (options.systemUse && toBytes(options.systemUse).byteLength > 1960) {
+    throw new Error("volume partition system use field exceeds 1960 bytes");
+  }
 }
 
 function writeDField(bytes: Uint8Array, offset: number, length: number, value: string): void {

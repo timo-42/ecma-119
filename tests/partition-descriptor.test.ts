@@ -1,0 +1,185 @@
+import { describe, expect, test } from "vitest";
+
+import {
+  createIsoImage,
+  parseIsoImage,
+  parseVolumeDescriptors,
+  readUint32Both,
+  SECTOR_SIZE,
+  type CreateIsoOptions,
+  type IsoInputFile,
+  type VolumePartitionDescriptor,
+} from "../src/index";
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder("ascii");
+
+type ExpectedVolumePartitionOptions = {
+  systemIdentifier?: string;
+  volumePartitionIdentifier?: string;
+  data?: Uint8Array | Buffer | string;
+  systemUse?: Uint8Array | Buffer | string;
+  size?: number;
+};
+
+describe("volume partition descriptor writing", () => {
+  test("writes an optional partition descriptor with sector-aligned partition data", () => {
+    const systemIdentifier = "PARTITION SYSTEM";
+    const volumePartitionIdentifier = "PARTITION_DATA";
+    const partitionData = encoder.encode("opaque partition payload\n");
+    const systemUse = Uint8Array.of(0xde, 0xad, 0xbe, 0xef);
+    const fileContents = encoder.encode("regular file contents\n");
+
+    const image = createWithVolumePartition(
+      [{ path: "README.TXT", data: fileContents }],
+      {
+        systemIdentifier,
+        volumePartitionIdentifier,
+        data: partitionData,
+        systemUse,
+      },
+    );
+
+    const descriptors = parseVolumeDescriptors(image);
+    const terminatorIndex = descriptors.findIndex((descriptor) => descriptor.kind === "terminator");
+    const partitionIndex = descriptors.findIndex((descriptor) => descriptor.kind === "partition");
+
+    expect(terminatorIndex).toBeGreaterThan(-1);
+    expect(partitionIndex).toBeGreaterThan(-1);
+    expect(partitionIndex).toBeLessThan(terminatorIndex);
+
+    const partition = descriptors[partitionIndex] as VolumePartitionDescriptor;
+    expect(partition).toMatchObject({
+      type: 3,
+      kind: "partition",
+      identifier: "CD001",
+      version: 1,
+      systemIdentifier,
+      volumePartitionIdentifier,
+      volumePartitionSize: 1,
+    });
+    expect(partition.volumePartitionLocation).toBeGreaterThan(partition.sector);
+    expect(partition.volumePartitionLocation + partition.volumePartitionSize).toBeLessThanOrEqual(image.byteLength / SECTOR_SIZE);
+
+    expect(partition.raw.byteLength).toBe(SECTOR_SIZE);
+    expect(partition.raw[0]).toBe(3);
+    expect(ascii(partition.raw, 1, 6)).toBe("CD001");
+    expect(partition.raw[6]).toBe(1);
+    expect(ascii(partition.raw, 8, 40)).toBe(systemIdentifier.padEnd(32, " "));
+    expect(ascii(partition.raw, 40, 72)).toBe(volumePartitionIdentifier.padEnd(32, " "));
+    expect(readUint32Both(partition.raw, 72)).toBe(partition.volumePartitionLocation);
+    expect(readUint32Both(partition.raw, 80)).toBe(partition.volumePartitionSize);
+    expect(partition.raw.subarray(88, 88 + systemUse.byteLength)).toEqual(systemUse);
+    expect(partition.systemUse.subarray(0, systemUse.byteLength)).toEqual(systemUse);
+
+    const partitionOffset = partition.volumePartitionLocation * SECTOR_SIZE;
+    expect(partitionOffset % SECTOR_SIZE).toBe(0);
+    const partitionBytes = image.subarray(partitionOffset, partitionOffset + partition.volumePartitionSize * SECTOR_SIZE);
+    expect(partitionBytes.subarray(0, partitionData.byteLength)).toEqual(partitionData);
+    expect(partitionBytes.subarray(partitionData.byteLength).every((byte) => byte === 0)).toBe(true);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      size: fileContents.byteLength,
+    });
+    expect(parsed.files[0]?.data).toEqual(fileContents);
+  });
+
+  test("rejects invalid partition descriptor identifiers", () => {
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      systemIdentifier: "S".repeat(33),
+      volumePartitionIdentifier: "PARTITION",
+    })).toThrow(/32-byte|too long|system identifier/i);
+
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      systemIdentifier: "SYSTEM",
+      volumePartitionIdentifier: "P".repeat(33),
+    })).toThrow(/32-byte|too long|partition identifier/i);
+
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      systemIdentifier: "invalid#identifier",
+      volumePartitionIdentifier: "PARTITION",
+    })).toThrow(/a-characters|system identifier/i);
+
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      systemIdentifier: "SYSTEM",
+      volumePartitionIdentifier: "PARTITION DATA",
+    })).toThrow(/d-characters|partition identifier/i);
+  });
+
+  test("writes multiple partition descriptors with distinct payload extents", () => {
+    const image = createIsoImage(
+      [{ path: "README.TXT", data: "regular\n" }],
+      {
+        volumePartitions: [
+          {
+            systemIdentifier: "SYSTEM",
+            volumePartitionIdentifier: "PART_A",
+            data: encoder.encode("first partition\n"),
+          },
+          {
+            systemIdentifier: "SYSTEM",
+            volumePartitionIdentifier: "PART_B",
+            size: 2,
+          },
+        ],
+      },
+    );
+
+    const partitions = parseVolumeDescriptors(image).filter(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+
+    expect(partitions).toHaveLength(2);
+    expect(partitions[0]?.volumePartitionIdentifier).toBe("PART_A");
+    expect(partitions[0]?.volumePartitionSize).toBe(1);
+    expect(partitions[1]?.volumePartitionIdentifier).toBe("PART_B");
+    expect(partitions[1]?.volumePartitionSize).toBe(2);
+    expect(partitions[1]?.volumePartitionLocation).toBe((partitions[0]?.volumePartitionLocation ?? 0) + 1);
+
+    const secondOffset = partitions[1]!.volumePartitionLocation * SECTOR_SIZE;
+    const secondBytes = image.subarray(secondOffset, secondOffset + partitions[1]!.volumePartitionSize * SECTOR_SIZE);
+    expect(secondBytes.every((byte) => byte === 0)).toBe(true);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+  });
+
+  test("validates partition payload sizing and system use bounds", () => {
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      volumePartitionIdentifier: "EMPTY",
+      data: new Uint8Array(),
+    })).toThrow(/empty|size/i);
+
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      volumePartitionIdentifier: "TOO_SMALL",
+      data: new Uint8Array(SECTOR_SIZE + 1),
+      size: 1,
+    })).toThrow(/exceeds declared size/i);
+
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      volumePartitionIdentifier: "BAD_SIZE",
+      size: 0,
+    })).toThrow(/size/i);
+
+    expect(() => createWithVolumePartition([{ path: "BAD.TXT", data: "x" }], {
+      volumePartitionIdentifier: "SYSUSE",
+      data: "x",
+      systemUse: new Uint8Array(1961),
+    })).toThrow(/system use/i);
+  });
+});
+
+function createWithVolumePartition(
+  files: IsoInputFile[],
+  volumePartition: ExpectedVolumePartitionOptions,
+): Uint8Array {
+  return createIsoImage(files, {
+    volumePartition,
+  } as CreateIsoOptions & { volumePartition: ExpectedVolumePartitionOptions });
+}
+
+function ascii(bytes: Uint8Array, start: number, end: number): string {
+  return decoder.decode(bytes.subarray(start, end));
+}
