@@ -170,6 +170,9 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector:
     publisherIdentifier: readAsciiTrimmed(image, offset + 318, 128),
     dataPreparerIdentifier: readAsciiTrimmed(image, offset + 446, 128),
     applicationIdentifier: readAsciiTrimmed(image, offset + 574, 128),
+    copyrightFileIdentifier: readAsciiTrimmed(image, offset + 702, 37),
+    abstractFileIdentifier: readAsciiTrimmed(image, offset + 739, 37),
+    bibliographicFileIdentifier: readAsciiTrimmed(image, offset + 776, 37),
     createdAt: decodeVolumeDate(image, offset + 813),
     modifiedAt: decodeVolumeDate(image, offset + 830),
     expiresAt: decodeVolumeDate(image, offset + 847),
@@ -417,6 +420,9 @@ function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sec
     typeLPathTableLocation: readUint32LEAt(image, offset + 140),
     typeMPathTableLocation: readUint32BEAt(image, offset + 148),
     rootDirectoryRecord: rootRecord ? directoryEntryFromRecord(rootRecord, "", []) : emptyDirectoryEntry(),
+    copyrightFileIdentifier: readAsciiTrimmed(image, offset + 702, 37),
+    abstractFileIdentifier: readAsciiTrimmed(image, offset + 739, 37),
+    bibliographicFileIdentifier: readAsciiTrimmed(image, offset + 776, 37),
     escapeSequences: image.slice(offset + 88, offset + 120),
   };
   return image[offset + 6] === 2
