@@ -5,12 +5,17 @@ export const STANDARD_IDENTIFIER = "CD001";
 export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
+  multiExtent?: boolean | IsoInputFileMultiExtentOptions;
   date?: Date;
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;
   associated?: boolean;
   extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
   systemUse?: Uint8Array | Buffer | string;
+};
+
+export type IsoInputFileMultiExtentOptions = {
+  sectionSize?: number;
 };
 
 export type IsoInputDirectory = {

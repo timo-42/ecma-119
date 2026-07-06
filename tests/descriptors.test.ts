@@ -8,6 +8,7 @@ import {
   createFixtureImage,
   findImageCreator,
   loadEcma119Module,
+  readDirectoryRecord,
   sector,
 } from "./helpers";
 
@@ -30,6 +31,65 @@ describe("volume descriptor sequence parsing", () => {
       size: 0,
     });
     expect(parsed.files[0]?.data).toEqual(new Uint8Array());
+  });
+
+  test("writes, validates, and reads non-interleaved multi-extent files", () => {
+    const payload = new TextEncoder().encode("abcdefghijklmn");
+    const image = createIsoImage([{
+      path: "MULTI.TXT",
+      data: payload,
+      multiExtent: { sectionSize: 5 },
+    }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(file).toMatchObject({
+      path: "MULTI.TXT",
+      identifier: "MULTI.TXT;1",
+      size: payload.byteLength,
+      flags: 0x80,
+      sections: [
+        expect.objectContaining({ size: 5, flags: 0x80, fileUnitSize: 0, interleaveGapSize: 0 }),
+        expect.objectContaining({ size: 5, flags: 0x80, fileUnitSize: 0, interleaveGapSize: 0 }),
+        expect.objectContaining({ size: 4, flags: 0x00, fileUnitSize: 0, interleaveGapSize: 0 }),
+      ],
+    });
+    expect(file?.data).toEqual(payload);
+
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const self = readDirectoryRecord(rootDirectory, 0);
+    const parent = readDirectoryRecord(rootDirectory, self.length);
+    const first = readDirectoryRecord(rootDirectory, self.length + parent.length);
+    const second = readDirectoryRecord(rootDirectory, self.length + parent.length + first.length);
+    const third = readDirectoryRecord(rootDirectory, self.length + parent.length + first.length + second.length);
+    const decoder = new TextDecoder("ascii");
+
+    expect([first, second, third].map((record) => decoder.decode(record.fileIdentifier))).toEqual([
+      "MULTI.TXT;1",
+      "MULTI.TXT;1",
+      "MULTI.TXT;1",
+    ]);
+    expect([first.dataLength, second.dataLength, third.dataLength]).toEqual([5, 5, 4]);
+    expect([first.flags, second.flags, third.flags]).toEqual([0x80, 0x80, 0x00]);
+    expect(first.extent).toBeLessThan(second.extent);
+    expect(second.extent).toBeLessThan(third.extent);
+  });
+
+  test("rejects invalid multi-extent authoring options", () => {
+    expect(() => createIsoImage([{
+      path: "BAD.TXT",
+      data: "abcdef",
+      multiExtent: { sectionSize: 0 },
+    }])).toThrow(/sectionSize/i);
+    expect(() => createIsoImage([{
+      path: "BAD.TXT",
+      data: "abcdef",
+      multiExtent: { sectionSize: 6 },
+    }])).toThrow(/smaller than the file data length/i);
   });
 
   test("writes supplementary volume descriptors with separate path tables and directory hierarchy", () => {
