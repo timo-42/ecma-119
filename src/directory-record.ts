@@ -11,6 +11,7 @@ export const FILE_FLAG_DIRECTORY = 0x02;
 
 export type DirectoryRecordInput = {
   extent: number;
+  extendedAttributeRecordLength?: number;
   dataLength: number;
   flags: number;
   identifier: Uint8Array;
@@ -22,6 +23,7 @@ export type DirectoryRecordInput = {
 export type DecodedDirectoryRecord = {
   length: number;
   extent: number;
+  extendedAttributeRecordLength: number;
   dataLength: number;
   date: Date;
   flags: number;
@@ -45,7 +47,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
 
   const bytes = new Uint8Array(length);
   bytes[0] = length;
-  bytes[1] = 0;
+  bytes[1] = input.extendedAttributeRecordLength ?? 0;
   writeUint32Both(bytes, 2, input.extent);
   writeUint32Both(bytes, 10, input.dataLength);
   bytes.set(encodeDirectoryDate(input.date), 18);
@@ -69,6 +71,7 @@ export function decodeDirectoryRecord(bytes: Uint8Array, offset: number): Decode
   return {
     length,
     extent: readUint32Both(bytes, offset + 2),
+    extendedAttributeRecordLength: bytes[offset + 1]!,
     dataLength: readUint32Both(bytes, offset + 10),
     date: decodeDirectoryDate(bytes, offset + 18),
     flags: bytes[offset + 25]!,

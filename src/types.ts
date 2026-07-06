@@ -6,6 +6,7 @@ export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
   date?: Date;
+  extendedAttributeRecord?: Uint8Array | Buffer | string;
   systemUse?: Uint8Array | Buffer | string;
 };
 
@@ -43,9 +44,11 @@ export type IsoFileEntry = {
   path: string;
   identifier: string;
   extent: number;
+  extendedAttributeRecordLength: number;
   size: number;
   date: Date;
   flags: number;
+  extendedAttributeRecord?: Uint8Array;
   data?: Uint8Array;
   systemUse?: Uint8Array;
 };
@@ -54,10 +57,12 @@ export type IsoDirectoryEntry = {
   path: string;
   identifier: string;
   extent: number;
+  extendedAttributeRecordLength: number;
   size: number;
   date: Date;
   flags: number;
   children: IsoNode[];
+  extendedAttributeRecord?: Uint8Array;
   systemUse?: Uint8Array;
 };
 
