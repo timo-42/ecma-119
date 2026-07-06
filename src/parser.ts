@@ -1,5 +1,6 @@
 import { decodeVolumeDate, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, type DecodedDirectoryRecord } from "./directory-record.js";
+import { decodeExtendedAttributeRecord } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
@@ -354,6 +355,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       const child = directoryEntryFromRecord(record, childPath, []);
       if (record.extendedAttributeRecordLength > 0) {
         child.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+        child.extendedAttributeRecordFields = decodeExtendedAttributeRecord(child.extendedAttributeRecord);
       }
       children.push(readDirectoryTree(image, child, childPath, includeData, new Set(visited)));
     } else {
@@ -371,6 +373,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       };
       if (record.extendedAttributeRecordLength > 0) {
         file.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+        file.extendedAttributeRecordFields = decodeExtendedAttributeRecord(file.extendedAttributeRecord);
       }
       if (record.systemUse.byteLength > 0) {
         file.systemUse = record.systemUse;
@@ -386,6 +389,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
   const entry = { ...directory, children };
   if (entry.extendedAttributeRecordLength > 0 && !entry.extendedAttributeRecord) {
     entry.extendedAttributeRecord = image.slice(directory.extent * SECTOR_SIZE, (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE);
+    entry.extendedAttributeRecordFields = decodeExtendedAttributeRecord(entry.extendedAttributeRecord);
   }
   return entry;
 }

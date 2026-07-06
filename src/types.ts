@@ -6,8 +6,44 @@ export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
   date?: Date;
-  extendedAttributeRecord?: Uint8Array | Buffer | string;
+  extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
   systemUse?: Uint8Array | Buffer | string;
+};
+
+export type ExtendedAttributeRecordInput = {
+  ownerIdentification?: number;
+  groupIdentification?: number;
+  permissions?: number;
+  createdAt?: Date;
+  modifiedAt?: Date;
+  expiresAt?: Date | null;
+  effectiveAt?: Date | null;
+  recordFormat?: number;
+  recordAttributes?: number;
+  recordLength?: number;
+  systemIdentifier?: string;
+  systemUse?: Uint8Array | Buffer | string;
+  version?: number;
+  applicationUse?: Uint8Array | Buffer | string;
+  escapeSequences?: Uint8Array | Buffer | string;
+};
+
+export type ExtendedAttributeRecord = {
+  ownerIdentification: number;
+  groupIdentification: number;
+  permissions: number;
+  createdAt: Date;
+  modifiedAt: Date;
+  expiresAt: Date | null;
+  effectiveAt: Date | null;
+  recordFormat: number;
+  recordAttributes: number;
+  recordLength: number;
+  systemIdentifier: string;
+  systemUse: Uint8Array;
+  version: number;
+  applicationUse: Uint8Array;
+  escapeSequences: Uint8Array;
 };
 
 export type CreateIsoOptions = {
@@ -49,6 +85,7 @@ export type IsoFileEntry = {
   date: Date;
   flags: number;
   extendedAttributeRecord?: Uint8Array;
+  extendedAttributeRecordFields?: ExtendedAttributeRecord;
   data?: Uint8Array;
   systemUse?: Uint8Array;
 };
@@ -63,6 +100,7 @@ export type IsoDirectoryEntry = {
   flags: number;
   children: IsoNode[];
   extendedAttributeRecord?: Uint8Array;
+  extendedAttributeRecordFields?: ExtendedAttributeRecord;
   systemUse?: Uint8Array;
 };
 
