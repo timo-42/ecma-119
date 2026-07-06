@@ -216,6 +216,34 @@ describe("volume partition descriptor writing", () => {
       ]),
     );
   });
+
+  test.each([
+    { fieldOffset: 72, code: "partition.volume_partition_location.endian_mismatch", label: "volume partition location" },
+    { fieldOffset: 80, code: "partition.volume_partition_size.endian_mismatch", label: "volume partition size" },
+  ])("validateIsoImage reports partition descriptor both-endian mismatch for $label", ({ fieldOffset, code, label }) => {
+    const image = createWithVolumePartition([{ path: "README.TXT", data: "x" }], {
+      volumePartitionIdentifier: "PARTITION",
+      data: "partition\n",
+    });
+    const partition = parseVolumeDescriptors(image).find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+    expect(partition).toBeDefined();
+    image[partition!.offset + fieldOffset + 7] ^= 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          message: expect.stringContaining(`volume partition descriptor ${label} must store matching little- and big-endian values`),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/both-endian uint32 mismatch/i),
+        }),
+      ]),
+    );
+  });
 });
 
 function createWithVolumePartition(
