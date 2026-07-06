@@ -35,4 +35,26 @@ describe("package entry", () => {
       Object.keys(sourceEntry).sort((left, right) => left.localeCompare(right)),
     );
   });
+
+  maybeTest("built package entry writes validates and reads an image", async () => {
+    const builtEntry = await import(pathToFileURL(builtEntryPath).href) as typeof sourceEntry;
+    const image = builtEntry.createIsoImage([{
+      path: "PACKAGE.TXT",
+      data: "package entry roundtrip\n",
+    }], {
+      volumeIdentifier: "PACKAGE_ENTRY",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = builtEntry.parseIsoImage(image, { includeData: true });
+
+    expect(builtEntry.validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor.volumeIdentifier).toBe("PACKAGE_ENTRY");
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "PACKAGE.TXT",
+      identifier: "PACKAGE.TXT;1",
+      size: "package entry roundtrip\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("package entry roundtrip\n");
+  });
 });

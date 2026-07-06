@@ -46,6 +46,24 @@ describe("handcrafted ISO reader fixture", () => {
     expect(parsed.files[0]?.data).toEqual(new Uint8Array());
   });
 
+  test("reads a multi-sector file from an image not produced by createIsoImage", () => {
+    const filePayload = new Uint8Array(SECTOR_SIZE + 17);
+    for (let index = 0; index < filePayload.byteLength; index += 1) {
+      filePayload[index] = index % 251;
+    }
+    const image = handcraftedIso({ filePayload, fileIdentifier: "LARGE.BIN;1" });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "LARGE.BIN",
+      identifier: "LARGE.BIN;1",
+      size: filePayload.byteLength,
+    });
+    expect(parsed.files[0]?.data).toEqual(filePayload);
+  });
+
   test("reads a nested directory hierarchy and path tables from an image not produced by createIsoImage", () => {
     const image = handcraftedNestedIso();
     const parsed = parseIsoImage(image);
@@ -58,6 +76,39 @@ describe("handcrafted ISO reader fixture", () => {
       size: 13,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hello nested\n");
+  });
+
+  test("reads boot and partition descriptors from an image not produced by createIsoImage", () => {
+    const image = handcraftedBootPartitionIso();
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const partition = parsed.descriptors.find((descriptor) => descriptor.kind === "partition");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "partition", "terminator"]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "partition", "terminator"]);
+    expect(descriptors.find((descriptor) => descriptor.kind === "boot")).toMatchObject({
+      kind: "boot",
+      bootSystemIdentifier: "HAND BOOT SYSTEM",
+      bootIdentifier: "HAND BOOT ID",
+    });
+    expect(partition).toMatchObject({
+      kind: "partition",
+      systemIdentifier: "HAND PART SYSTEM",
+      volumePartitionIdentifier: "HAND_PART",
+      volumePartitionLocation: 24,
+      volumePartitionSize: 1,
+    });
+    expect(partition?.kind === "partition" ? partition.data?.subarray(0, "hand partition\n".length) : undefined).toEqual(
+      new TextEncoder().encode("hand partition\n"),
+    );
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "HAND.TXT",
+      identifier: "HAND.TXT;1",
+      size: "hand file\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hand file\n");
   });
 
   test.each([
@@ -117,14 +168,13 @@ function handcraftedIso(options: { fileFlags?: number; fileIdentifier?: string; 
   const image = new Uint8Array(24 * SECTOR_SIZE);
   const pvd = sector(image, 16);
   const rootDirectory = sector(image, 20);
-  const fileData = sector(image, 21);
   const pathTableL = sector(image, 18);
   const pathTableM = sector(image, 19);
   const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
   const filePayload = options.filePayload ?? new TextEncoder().encode("hello handmade\n");
   const fileIdentifier = options.fileIdentifier ?? "HELLO.TXT;1";
 
-  fileData.set(filePayload);
+  image.subarray(21 * SECTOR_SIZE, 21 * SECTOR_SIZE + filePayload.byteLength).set(filePayload);
   writePathTableRoot(pathTableL, "little", 20);
   writePathTableRoot(pathTableM, "big", 20);
 
@@ -165,6 +215,66 @@ function handcraftedIso(options: { fileFlags?: number; fileIdentifier?: string; 
   pvd[881] = 1;
 
   const terminator = sector(image, 17);
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
+function handcraftedBootPartitionIso(): Uint8Array {
+  const image = new Uint8Array(25 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const boot = sector(image, 17);
+  const partition = sector(image, 18);
+  const terminator = sector(image, 19);
+  const pathTableL = sector(image, 20);
+  const pathTableM = sector(image, 21);
+  const rootDirectory = sector(image, 22);
+  const fileData = sector(image, 23);
+  const partitionData = sector(image, 24);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const filePayload = new TextEncoder().encode("hand file\n");
+  const partitionPayload = new TextEncoder().encode("hand partition\n");
+
+  fileData.set(filePayload);
+  partitionData.set(partitionPayload);
+  writePathTableRoot(pathTableL, "little", 22);
+  writePathTableRoot(pathTableM, "big", 22);
+
+  const self = directoryRecord({ extent: 22, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const parent = directoryRecord({ extent: 22, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const file = directoryRecord({ extent: 23, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("HAND.TXT;1"), date });
+  rootDirectory.set(self, 0);
+  rootDirectory.set(parent, self.byteLength);
+  rootDirectory.set(file, self.byteLength + parent.byteLength);
+
+  writePrimaryDescriptor(pvd, {
+    volumeIdentifier: "HAND_BOOT_PART",
+    rootDirectoryRecord: self,
+    pathTableSize: 10,
+    typeLPathTableLocation: 20,
+    typeMPathTableLocation: 21,
+    volumeSpaceSize: 25,
+    date,
+  });
+
+  boot[0] = 0;
+  writeAscii(boot, 1, 5, "CD001", 0);
+  boot[6] = 1;
+  writeAscii(boot, 7, 32, "HAND BOOT SYSTEM", 0x20);
+  writeAscii(boot, 39, 32, "HAND BOOT ID", 0x20);
+  boot.set(Uint8Array.of(0xca, 0xfe), 71);
+
+  partition[0] = 3;
+  writeAscii(partition, 1, 5, "CD001", 0);
+  partition[6] = 1;
+  writeAscii(partition, 8, 32, "HAND PART SYSTEM", 0x20);
+  writeAscii(partition, 40, 32, "HAND_PART", 0x20);
+  writeBoth32(partition, 72, 24);
+  writeBoth32(partition, 80, 1);
+  partition.set(Uint8Array.of(0xde, 0xad), 88);
+
   terminator[0] = 255;
   writeAscii(terminator, 1, 5, "CD001", 0);
   terminator[6] = 1;
