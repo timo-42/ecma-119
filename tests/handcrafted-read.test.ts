@@ -31,6 +31,20 @@ describe("handcrafted ISO reader fixture", () => {
       flags: 0x05,
     });
   });
+
+  test("reads a nested directory hierarchy and path tables from an image not produced by createIsoImage", () => {
+    const image = handcraftedNestedIso();
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "DIR/CHILD.TXT",
+      identifier: "CHILD.TXT;1",
+      size: 13,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hello nested\n");
+  });
 });
 
 function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
@@ -91,6 +105,71 @@ function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
   return image;
 }
 
+function handcraftedNestedIso(): Uint8Array {
+  const image = new Uint8Array(24 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const pathTableL = sector(image, 18);
+  const pathTableM = sector(image, 19);
+  const rootDirectory = sector(image, 20);
+  const childDirectory = sector(image, 21);
+  const fileData = sector(image, 22);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const filePayload = new TextEncoder().encode("hello nested\n");
+
+  fileData.set(filePayload);
+  writePathTableRoot(pathTableL, "little", 20);
+  writePathTableDirectory(pathTableL, 10, "little", asciiBytes("DIR"), 21, 1);
+  writePathTableRoot(pathTableM, "big", 20);
+  writePathTableDirectory(pathTableM, 10, "big", asciiBytes("DIR"), 21, 1);
+
+  const rootSelf = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const rootParent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const dir = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("DIR"), date });
+  rootDirectory.set(rootSelf, 0);
+  rootDirectory.set(rootParent, rootSelf.byteLength);
+  rootDirectory.set(dir, rootSelf.byteLength + rootParent.byteLength);
+
+  const childSelf = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const childParent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const childFile = directoryRecord({ extent: 22, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("CHILD.TXT;1"), date });
+  childDirectory.set(childSelf, 0);
+  childDirectory.set(childParent, childSelf.byteLength);
+  childDirectory.set(childFile, childSelf.byteLength + childParent.byteLength);
+
+  pvd[0] = 1;
+  writeAscii(pvd, 1, 5, "CD001", 0);
+  pvd[6] = 1;
+  writeAscii(pvd, 8, 32, "HANDMADE_SYSTEM", 0x20);
+  writeAscii(pvd, 40, 32, "NESTED", 0x20);
+  writeBoth32(pvd, 80, 24);
+  writeBoth16(pvd, 120, 1);
+  writeBoth16(pvd, 124, 1);
+  writeBoth16(pvd, 128, SECTOR_SIZE);
+  writeBoth32(pvd, 132, 22);
+  writeUint32LE(pvd, 140, 18);
+  writeUint32BE(pvd, 148, 19);
+  pvd.set(rootSelf, 156);
+  writeAscii(pvd, 190, 128, "", 0x20);
+  writeAscii(pvd, 318, 128, "", 0x20);
+  writeAscii(pvd, 446, 128, "", 0x20);
+  writeAscii(pvd, 574, 128, "HANDCRAFTED TEST", 0x20);
+  writeAscii(pvd, 702, 37, "", 0x20);
+  writeAscii(pvd, 739, 37, "", 0x20);
+  writeAscii(pvd, 776, 37, "", 0x20);
+  pvd.set(volumeDate(date), 813);
+  pvd.set(volumeDate(date), 830);
+  pvd.set(volumeDate(null), 847);
+  pvd.set(volumeDate(date), 864);
+  pvd[881] = 1;
+
+  const terminator = sector(image, 17);
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
 function sector(image: Uint8Array, sectorNumber: number): Uint8Array {
   return image.subarray(sectorNumber * SECTOR_SIZE, (sectorNumber + 1) * SECTOR_SIZE);
 }
@@ -121,6 +200,19 @@ function writePathTableRoot(bytes: Uint8Array, endian: "little" | "big", extent:
     writeUint16BE(bytes, 6, 1);
   }
   bytes[8] = 0;
+}
+
+function writePathTableDirectory(bytes: Uint8Array, offset: number, endian: "little" | "big", identifier: Uint8Array, extent: number, parentDirectoryNumber: number): void {
+  bytes[offset] = identifier.byteLength;
+  bytes[offset + 1] = 0;
+  if (endian === "little") {
+    writeUint32LE(bytes, offset + 2, extent);
+    writeUint16LE(bytes, offset + 6, parentDirectoryNumber);
+  } else {
+    writeUint32BE(bytes, offset + 2, extent);
+    writeUint16BE(bytes, offset + 6, parentDirectoryNumber);
+  }
+  bytes.set(identifier, offset + 8);
 }
 
 function directoryDate(date: Date): Uint8Array {
