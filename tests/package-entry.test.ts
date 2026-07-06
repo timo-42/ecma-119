@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, normalize, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, test } from "vitest";
@@ -19,6 +20,16 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
 };
 const builtEntryPath = resolve(root, "dist/index.js");
 const maybeTest = existsSync(builtEntryPath) ? test : test.skip;
+
+type PackDryRunOutput = Array<{
+  files: Array<{
+    path: string;
+  }>;
+}>;
+
+type SourceMap = {
+  sources?: unknown;
+};
 
 describe("package entry", () => {
   test("points root exports at the built entry and declarations", () => {
@@ -56,5 +67,34 @@ describe("package entry", () => {
       size: "package entry roundtrip\n".length,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("package entry roundtrip\n");
+  });
+
+  maybeTest("published package contains files referenced by emitted source maps", () => {
+    const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    const [{ files }] = JSON.parse(packOutput) as PackDryRunOutput;
+    const packedFiles = new Set(files.map((file) => normalize(file.path)));
+    const mapFiles = files
+      .map((file) => normalize(file.path))
+      .filter((path) => path.startsWith("dist/") && path.endsWith(".map"));
+
+    expect(mapFiles.length).toBeGreaterThan(0);
+    for (const mapFile of mapFiles) {
+      const map = JSON.parse(readFileSync(resolve(root, mapFile), "utf8")) as SourceMap;
+      expect(Array.isArray(map.sources), `${mapFile} must declare source paths`).toBe(true);
+
+      for (const source of map.sources as string[]) {
+        if (/^(?:[a-z]+:)?\/\//iu.test(source) || source.startsWith("data:")) {
+          continue;
+        }
+        const referencedPath = normalize(`${dirname(mapFile)}/${source}`).replace(/\\/gu, "/");
+        expect(
+          packedFiles.has(referencedPath),
+          `${mapFile} references ${source}, but ${referencedPath} is not included in the package`,
+        ).toBe(true);
+      }
+    }
   });
 });
