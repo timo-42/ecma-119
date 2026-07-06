@@ -1399,6 +1399,38 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    { flag: 0x01, label: "Hidden" },
+    { flag: 0x08, label: "Record" },
+  ])("reports multi-extent file records followed by a section with mismatched $label flag", ({ flag }) => {
+    const image = baselineImage([{ path: "README.TXT", data: "first section\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    const fileRecordLength = image[fileRecordOffset]!;
+    const continuationRecordOffset = fileRecordOffset + fileRecordLength;
+    image.copyWithin(continuationRecordOffset, fileRecordOffset, fileRecordOffset + fileRecordLength);
+    image[fileRecordOffset + 25] |= 0x80;
+    image[continuationRecordOffset + 25] |= flag;
+
+    expect(() => parseIsoImage(image)).toThrow(/not followed by a matching file section/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.multi_extent_sequence",
+          path: "README.TXT",
+          message: expect.stringMatching(/not followed by a matching file section/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported multi-extent descriptor root records without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root multi extent flag\n" }]);
     image[PVD_OFFSET + 156 + 25] |= 0x80;
