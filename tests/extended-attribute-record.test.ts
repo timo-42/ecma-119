@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, validateIsoImage } from "../src/index";
+import { createIsoImage, encodeDirectoryRecord, encodePathTable, parseIsoImage, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 describe("extended attribute records", () => {
@@ -79,6 +79,27 @@ describe("extended attribute records", () => {
       data: "x",
       extendedAttributeRecord: new Uint8Array(256 * SECTOR_SIZE),
     }])).toThrow(/255 logical blocks/i);
+  });
+
+  test("low-level encoders reject extended attribute lengths outside the 8-bit field", () => {
+    const identifier = asciiBytes("TOO_BIG.TXT;1");
+    const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+
+    expect(() => encodeDirectoryRecord({
+      extent: 20,
+      extendedAttributeRecordLength: 256,
+      dataLength: 1,
+      flags: 0,
+      identifier,
+      date,
+    })).toThrow(/0 to 255 logical blocks/i);
+
+    expect(() => encodePathTable([{
+      identifier: Uint8Array.of(0),
+      extent: 20,
+      parentDirectoryNumber: 1,
+      extendedAttributeRecordLength: 1.5,
+    }], "little")).toThrow(/0 to 255 logical blocks/i);
   });
 });
 
