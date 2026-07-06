@@ -58,9 +58,13 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
   let descriptorSequenceFailed = false;
   try {
     descriptors = parseVolumeDescriptors(image);
-    const terminator = descriptors.find((descriptor) => descriptor.kind === "terminator");
-    if (terminator && !allZero(terminator.raw.subarray(7))) {
-      issues.push({ code: "descriptor.terminator_reserved", message: "volume descriptor set terminator reserved bytes must be zero" });
+    for (const terminator of descriptors.filter((descriptor) => descriptor.kind === "terminator")) {
+      if (!allZero(terminator.raw.subarray(7))) {
+        issues.push({
+          code: "descriptor.terminator_reserved",
+          message: `volume descriptor set terminator reserved bytes must be zero at sector ${terminator.sector}`,
+        });
+      }
     }
     issues.push(...validateDescriptorSequenceProfile(descriptors));
     for (const descriptor of descriptors) {
@@ -138,12 +142,23 @@ export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): Vo
     }
     descriptors.push(descriptor);
     if (descriptor.type === 255) {
+      sector += 1;
+      while (sectorOffset(sector + 1) <= image.byteLength && isVolumeDescriptorSetTerminatorAt(image, sectorOffset(sector))) {
+        descriptors.push(parseVolumeDescriptorAt(image, sectorOffset(sector), sector));
+        sector += 1;
+      }
       return descriptors;
     }
     sector += 1;
   }
 
   throw new Error("missing volume descriptor set terminator");
+}
+
+function isVolumeDescriptorSetTerminatorAt(image: Uint8Array, offset: number): boolean {
+  return image[offset] === 255
+    && readAscii(image, offset + 1, 5) === STANDARD_IDENTIFIER
+    && image[offset + 6] === 1;
 }
 
 function parseVolumeDescriptorAt(image: Uint8Array, offset: number, sector: number): VolumeDescriptor {

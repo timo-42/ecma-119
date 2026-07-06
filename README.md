@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents including read-side multi-extent file sections, path tables, Level 1 primary identifier authoring by default, and optional Level 2 primary identifiers.
+This package is in initial development. The supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents including read-side multi-extent file sections, path tables, Level 1 primary identifier authoring by default, and optional Level 2 primary identifiers.
 
 ## Install
 
@@ -60,6 +60,8 @@ The root package entry intentionally exposes these API groups:
 
 Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes, but executable boot semantics are left to consuming systems.
 
+`terminatorCount` defaults to 1 and may be used to emit multiple Volume Descriptor Set Terminators.
+
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
@@ -67,7 +69,7 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 Implemented support is intentionally explicit:
 
 - ECMA-119 logical sectors of 2,048 bytes
-- primary volume descriptor and descriptor set terminator
+- primary volume descriptor and one or more descriptor set terminators
 - volume descriptor metadata and file identifier fields
 - optional boot record volume descriptors
 - opaque System Area authoring and parsing

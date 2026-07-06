@@ -122,17 +122,24 @@ describe("boot volume descriptor writing", () => {
       },
     );
     const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
     const bootDescriptors = descriptors.filter((descriptor) => descriptor.kind === "boot");
+    const parsedBootDescriptors = parsed.descriptors.filter((descriptor) => descriptor.kind === "boot");
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "boot", "boot", "terminator"]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "boot", "boot", "terminator"]);
     expect(bootDescriptors).toHaveLength(3);
+    expect(parsedBootDescriptors).toHaveLength(3);
     expect(bootDescriptors[0]).toMatchObject({ bootSystemIdentifier: "LEGACY_BOOT", bootIdentifier: "LEGACY" });
     expect(bootDescriptors[1]).toMatchObject({ bootSystemIdentifier: "SECOND_BOOT", bootIdentifier: "SECOND" });
     expect(bootDescriptors[2]).toMatchObject({ bootSystemIdentifier: "THIRD_BOOT", bootIdentifier: "THIRD" });
+    expect(parsedBootDescriptors[0]).toMatchObject({ bootSystemIdentifier: "LEGACY_BOOT", bootIdentifier: "LEGACY" });
+    expect(parsedBootDescriptors[1]).toMatchObject({ bootSystemIdentifier: "SECOND_BOOT", bootIdentifier: "SECOND" });
+    expect(parsedBootDescriptors[2]).toMatchObject({ bootSystemIdentifier: "THIRD_BOOT", bootIdentifier: "THIRD" });
     expect(bootDescriptors[0]?.kind === "boot" ? bootDescriptors[0].bootSystemUse[0] : undefined).toBe(0x01);
     expect(bootDescriptors[1]?.kind === "boot" ? bootDescriptors[1].bootSystemUse.subarray(0, 2) : undefined).toEqual(Uint8Array.of(0x02, 0x03));
-    expect(parseIsoImage(image, { includeData: true }).files[0]?.path).toBe("BOOT.TXT");
+    expect(parsed.files[0]?.path).toBe("BOOT.TXT");
   });
 });
 

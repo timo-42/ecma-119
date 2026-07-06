@@ -130,6 +130,39 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(secondUnit)).toBe("second unit");
   });
 
+  test("writes, validates, and reads files that are both multi-extent and interleaved", () => {
+    const payload = new Uint8Array(SECTOR_SIZE * 2 + 11);
+    payload.fill(0x41, 0, SECTOR_SIZE);
+    payload.fill(0x42, SECTOR_SIZE, SECTOR_SIZE * 2);
+    payload.set(new TextEncoder().encode("final bytes"), SECTOR_SIZE * 2);
+    const image = createIsoImage([{
+      path: "MIXED.BIN",
+      data: payload,
+      multiExtent: { sectionSize: SECTOR_SIZE + 3 },
+      interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+    }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(file).toMatchObject({
+      path: "MIXED.BIN",
+      identifier: "MIXED.BIN;1",
+      size: payload.byteLength,
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+      sections: [
+        expect.objectContaining({ size: SECTOR_SIZE + 3, flags: 0x80, fileUnitSize: 1, interleaveGapSize: 1 }),
+        expect.objectContaining({ size: SECTOR_SIZE + 3, flags: 0x80, fileUnitSize: 1, interleaveGapSize: 1 }),
+        expect.objectContaining({ size: 5, flags: 0x00, fileUnitSize: 1, interleaveGapSize: 1 }),
+      ],
+    });
+    expect(file?.data).toEqual(payload);
+  });
+
   test("rejects invalid interleaved file authoring options", () => {
     const file = { path: "BAD.BIN", data: "interleaved" };
     expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 0, interleaveGapSize: 0 } }])).toThrow(/fileUnitSize/i);
@@ -612,6 +645,36 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("both descriptors\n");
   });
 
+  test("writes, validates, and reads multiple descriptor set terminators", () => {
+    const image = createIsoImage([{
+      path: "TERM.TXT",
+      data: "multiple terminators\n",
+    }], {
+      terminatorCount: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "terminator", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "terminator", "terminator"]);
+    expect(parsed.files[0]).toMatchObject({
+      path: "TERM.TXT",
+      identifier: "TERM.TXT;1",
+      size: "multiple terminators\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("multiple terminators\n");
+  });
+
+  test("rejects invalid descriptor set terminator counts", () => {
+    expect(() => createIsoImage([], { terminatorCount: 0 })).toThrow(/terminatorCount/i);
+    expect(() => createIsoImage([], { terminatorCount: 1.5 })).toThrow(/terminatorCount/i);
+    expect(() => createIsoImage([], { terminatorCount: 256 })).toThrow(/terminatorCount/i);
+  });
+
   test("validates supplementary descriptor option bounds", () => {
     expect(() => createIsoImage([], {
       supplementaryVolumeDescriptors: [{
@@ -696,6 +759,34 @@ describe("volume descriptor sequence parsing", () => {
       expect.objectContaining({
         code: "descriptor.sequence",
         message: expect.stringMatching(/terminator/i),
+      }),
+    ]);
+  });
+
+  test("parses consecutive handcrafted descriptor set terminators", async () => {
+    const module = await loadEcma119Module();
+    const createImage = findImageCreator(module!);
+    expect(createImage).toBeTypeOf("function");
+
+    const base = await createFixtureImage(createImage!);
+    const image = descriptorSequenceFrom(base, [sector(base, TERMINATOR_SECTOR)]);
+
+    const descriptors = parseVolumeDescriptors(image);
+
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "terminator", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18]);
+  });
+
+  test("validateIsoImage checks reserved bytes in every descriptor set terminator", () => {
+    const image = createIsoImage([{ path: "TERM.TXT", data: "reserved terminator\n" }], {
+      terminatorCount: 2,
+    });
+    const mutated = imageWithDescriptorByte(image, 18, 7, 0xff);
+
+    expect(validateIsoImage(mutated)).toEqual([
+      expect.objectContaining({
+        code: "descriptor.terminator_reserved",
+        message: expect.stringMatching(/sector 18/i),
       }),
     ]);
   });
