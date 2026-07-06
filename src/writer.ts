@@ -478,6 +478,7 @@ function encodePrimaryVolumeDescriptor(input: {
   bytes.set(encodeVolumeDate(input.options.expiresAt), 847);
   bytes.set(encodeVolumeDate(input.options.effectiveAt ?? input.options.createdAt ?? input.now), 864);
   bytes[881] = 1;
+  writeApplicationUse(bytes, input.options.volumeDescriptorApplicationUse);
   return bytes;
 }
 
@@ -526,6 +527,7 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   bytes.set(encodeVolumeDate(input.baseOptions.expiresAt), 847);
   bytes.set(encodeVolumeDate(input.baseOptions.effectiveAt ?? input.baseOptions.createdAt ?? input.now), 864);
   bytes[881] = 1;
+  writeApplicationUse(bytes, input.options.volumeDescriptorApplicationUse ?? input.baseOptions.volumeDescriptorApplicationUse);
   return bytes;
 }
 
@@ -657,6 +659,17 @@ function writeAField(bytes: Uint8Array, offset: number, length: number, value: s
 function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: string): void {
   const identifier = value === "" ? "" : normalizeFilePath(value).isoIdentifier;
   writeAsciiPadded(bytes, offset, 37, identifier);
+}
+
+function writeApplicationUse(bytes: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {
+  if (value === undefined) {
+    return;
+  }
+  const applicationUse = toBytes(value);
+  if (applicationUse.byteLength > 512) {
+    throw new Error("volume descriptor application use field exceeds 512 bytes");
+  }
+  bytes.set(applicationUse, 883);
 }
 
 function checkedByte(value: number, name: string): number {

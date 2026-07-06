@@ -54,6 +54,7 @@ describe("volume descriptor sequence parsing", () => {
   });
 
   test("writes primary volume descriptor file identifier fields", () => {
+    const applicationUse = Uint8Array.of(1, 2, 3, 4);
     const image = createIsoImage([{
       path: "README.TXT",
       data: "descriptor file identifiers\n",
@@ -61,6 +62,7 @@ describe("volume descriptor sequence parsing", () => {
       copyrightFileIdentifier: "COPY.TXT",
       abstractFileIdentifier: "ABSTRACT.TXT",
       bibliographicFileIdentifier: "BIBLIO.TXT",
+      volumeDescriptorApplicationUse: applicationUse,
     });
 
     const parsed = parseIsoImage(image);
@@ -73,7 +75,10 @@ describe("volume descriptor sequence parsing", () => {
       bibliographicFileIdentifier: "BIBLIO.TXT;1",
       optionalTypeLPathTableLocation: 0,
       optionalTypeMPathTableLocation: 0,
+      fileStructureVersion: 1,
     });
+    expect(primary.applicationUse.subarray(0, applicationUse.byteLength)).toEqual(applicationUse);
+    expect(primary.applicationUse.subarray(applicationUse.byteLength).every((byte) => byte === 0)).toBe(true);
   });
 
   test("writes enhanced volume descriptors with separate path tables and directory hierarchy", () => {
@@ -85,6 +90,7 @@ describe("volume descriptor sequence parsing", () => {
       copyrightFileIdentifier: "COPY.TXT",
       abstractFileIdentifier: "ABSTRACT.TXT",
       bibliographicFileIdentifier: "BIBLIO.TXT",
+      volumeDescriptorApplicationUse: Uint8Array.of(9, 9),
       enhancedVolumeDescriptors: [{
         volumeIdentifier: "ENHANCED",
         systemIdentifier: "ENH_SYS",
@@ -92,6 +98,7 @@ describe("volume descriptor sequence parsing", () => {
         escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
         applicationIdentifier: "ENH_APP",
         abstractFileIdentifier: "ENHABS.TXT",
+        volumeDescriptorApplicationUse: Uint8Array.of(5, 6, 7),
       }],
     });
 
@@ -115,7 +122,9 @@ describe("volume descriptor sequence parsing", () => {
       copyrightFileIdentifier: "COPY.TXT;1",
       abstractFileIdentifier: "ENHABS.TXT;1",
       bibliographicFileIdentifier: "BIBLIO.TXT;1",
+      fileStructureVersion: 1,
     });
+    expect(enhanced?.kind === "enhanced" ? enhanced.applicationUse.subarray(0, 3) : undefined).toEqual(Uint8Array.of(5, 6, 7));
     expect(enhanced?.kind === "enhanced" ? enhanced.escapeSequences.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
     expect(primary?.kind === "primary" && enhanced?.kind === "enhanced"
       ? enhanced.typeLPathTableLocation
@@ -184,6 +193,16 @@ describe("volume descriptor sequence parsing", () => {
         abstractFileIdentifier: "BAD-NAME.TXT",
       }],
     })).toThrow(/d-characters/i);
+
+    expect(() => createIsoImage([], {
+      volumeDescriptorApplicationUse: new Uint8Array(513),
+    })).toThrow(/application use field exceeds 512 bytes/i);
+
+    expect(() => createIsoImage([], {
+      supplementaryVolumeDescriptors: [{
+        volumeDescriptorApplicationUse: new Uint8Array(513),
+      }],
+    })).toThrow(/application use field exceeds 512 bytes/i);
   });
 
   test("scans descriptors until the terminator instead of requiring it at sector 17", async () => {
