@@ -31,6 +31,62 @@ describe("validateIsoImage hardening", () => {
     ]);
   });
 
+  test("accepts the deepest valid primary directory hierarchy with write-read validation", () => {
+    const path = "A/B/C/D/E/F/G/README.TXT";
+    const image = baselineImage([{ path, data: "valid depth\n" }]);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parseIsoImage(image).files[0]).toMatchObject({ path });
+  });
+
+  test("rejects explicit directory inputs that exceed primary hierarchy depth", () => {
+    expect(() => createIsoImage({
+      files: [],
+      directories: [{ path: "A/B/C/D/E/F/G/H" }],
+      volumeIdentifier: "DEPTH",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    })).toThrow(/hierarchy depth must not exceed 8/i);
+  });
+
+  test("reports primary hierarchy depth violations in external images", () => {
+    const image = baselineImage([{ path: "A/B/C/D/E/F/G/H.TXT", data: "mutated directory\n" }]);
+    const recordOffset = findDirectoryRecordOffsetByPath(image, ["A", "B", "C", "D", "E", "F", "G", "H.TXT;1"]);
+    image[recordOffset + 25] |= 0x02;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.hierarchy_depth",
+          path: "A/B/C/D/E/F/G/H.TXT",
+          message: "primary directory hierarchy depth must not exceed 8 levels",
+        }),
+      ]),
+    );
+  });
+
+  test("does not apply the primary hierarchy depth rule to supplementary descriptors", () => {
+    const image = createIsoImage([{ path: "A/B/C/D/E/F/G/H.TXT", data: "supplementary depth\n" }], {
+      volumeIdentifier: "DEPTH",
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const recordOffset = findDirectoryRecordOffsetByPath(
+      image,
+      ["A", "B", "C", "D", "E", "F", "G", "H.TXT;1"],
+      supplementaryDescriptorOffset + 156,
+    );
+    image[recordOffset + 25] |= 0x02;
+
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.hierarchy_depth",
+        }),
+      ]),
+    );
+  });
+
   test("reports a path table parent directory number outside the record range", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
@@ -1225,6 +1281,20 @@ function findDirectoryRecordOffset(image: Uint8Array, directoryOffset: number, d
     offset += length;
   }
   throw new Error(`missing directory record ${identifier}`);
+}
+
+function findDirectoryRecordOffsetByPath(image: Uint8Array, identifiers: string[], rootRecordOffset = PVD_OFFSET + 156): number {
+  let directoryOffset = readBothEndianUint32(image, rootRecordOffset + 2) * SECTOR_SIZE;
+  let directorySize = readBothEndianUint32(image, rootRecordOffset + 10);
+  for (const [index, identifier] of identifiers.entries()) {
+    const recordOffset = findDirectoryRecordOffset(image, directoryOffset, directorySize, identifier);
+    if (index === identifiers.length - 1) {
+      return recordOffset;
+    }
+    directoryOffset = readBothEndianUint32(image, recordOffset + 2) * SECTOR_SIZE;
+    directorySize = readBothEndianUint32(image, recordOffset + 10);
+  }
+  throw new Error("directory path must contain at least one identifier");
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

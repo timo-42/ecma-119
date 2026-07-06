@@ -69,7 +69,9 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
-      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", new Set(), true));
+      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", new Set(), {
+        validatePrimaryLevelOne: true,
+      }));
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
           issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor));
@@ -692,9 +694,18 @@ function validateDirectoryHierarchy(
   parent: IsoDirectoryEntry,
   path: string,
   visited: Set<number>,
-  validatePrimaryIdentifiers = false,
+  options: { validatePrimaryLevelOne?: boolean; depth?: number } = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const validatePrimaryLevelOne = options.validatePrimaryLevelOne ?? false;
+  const depth = options.depth ?? 1;
+  if (validatePrimaryLevelOne && depth > 8) {
+    issues.push({
+      code: "directory.hierarchy_depth",
+      message: "primary directory hierarchy depth must not exceed 8 levels",
+      path,
+    });
+  }
   const key = directory.extent;
   if (visited.has(key)) {
     return [{ code: "directory.cycle", message: `directory cycle detected at ${path}`, path }];
@@ -739,7 +750,7 @@ function validateDirectoryHierarchy(
     if (index < 2) {
       issues.push(...validateDotDirectoryRecord(record, index, directory, parent, path));
     }
-    if (index >= 2 && validatePrimaryIdentifiers) {
+    if (index >= 2 && validatePrimaryLevelOne) {
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
     }
     if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
@@ -766,8 +777,11 @@ function validateDirectoryHierarchy(
     if (index < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
       continue;
     }
-    const childPath = joinPath(path === "." ? "" : path, identifier);
-    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, new Set(visited), validatePrimaryIdentifiers));
+    const childPath = recordPath || ".";
+    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, new Set(visited), {
+      depth: depth + 1,
+      validatePrimaryLevelOne,
+    }));
   }
   return issues;
 }
