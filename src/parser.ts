@@ -28,6 +28,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   }
   validatePrimaryDescriptorReferences(image, pvd);
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".");
+  assertSingleVolumeDescriptor(pvd, "primary volume descriptor");
   const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true, new Set());
   return {
     descriptors,
@@ -198,7 +199,9 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
     issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
   }
+  issues.push(...validateSingleVolumeDescriptor(pvd, "pvd", "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
 }
@@ -351,6 +354,13 @@ function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEn
         path: recordPath || ".",
       });
     }
+    if (record.volumeSequenceNumber !== 1) {
+      issues.push({
+        code: "directory.volume_sequence_unsupported",
+        message: `directory record at ${recordPath || "."} uses unsupported volume sequence number ${record.volumeSequenceNumber}`,
+        path: recordPath || ".",
+      });
+    }
     if (index < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
       continue;
     }
@@ -369,7 +379,9 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
+  issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   if (descriptor.rootDirectoryRecord.size > 0) {
     issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
@@ -645,12 +657,36 @@ function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: st
   if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
+  assertSupportedVolumeSequence(record.volumeSequenceNumber, path);
 }
 
 function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): void {
   if (entry.fileUnitSize !== 0 || entry.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
+  assertSupportedVolumeSequence(entry.volumeSequenceNumber, path);
+}
+
+function assertSupportedVolumeSequence(volumeSequenceNumber: number, path: string): void {
+  if (volumeSequenceNumber !== 1) {
+    throw new Error(`directory record at ${path} uses unsupported volume sequence number ${volumeSequenceNumber}`);
+  }
+}
+
+function assertSingleVolumeDescriptor(descriptor: PathTableValidationInput, label: string): void {
+  if (descriptor.volumeSetSize !== 1 || descriptor.volumeSequenceNumber !== 1) {
+    throw new Error(`${label} uses unsupported multi-volume fields`);
+  }
+}
+
+function validateSingleVolumeDescriptor(descriptor: PathTableValidationInput, codePrefix: string, label: string): ValidationIssue[] {
+  if (descriptor.volumeSetSize === 1 && descriptor.volumeSequenceNumber === 1) {
+    return [];
+  }
+  return [{
+    code: `${codePrefix}.single_volume_profile`,
+    message: `${label} uses unsupported multi-volume fields`,
+  }];
 }
 
 function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
@@ -660,6 +696,17 @@ function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: stri
   return [{
     code: "directory.interleaving_unsupported",
     message: `directory record at ${path} uses unsupported interleaved file section fields`,
+    path,
+  }];
+}
+
+function validateDirectoryEntryVolumeSequence(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  if (entry.volumeSequenceNumber === 1) {
+    return [];
+  }
+  return [{
+    code: "directory.volume_sequence_unsupported",
+    message: `directory record at ${path} uses unsupported volume sequence number ${entry.volumeSequenceNumber}`,
     path,
   }];
 }

@@ -225,6 +225,77 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports unsupported primary descriptor multi-volume fields without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "multi-volume descriptor\n" }]);
+    writeUint16Both(image, PVD_OFFSET + 120, 2);
+    writeUint16Both(image, PVD_OFFSET + 124, 2);
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported multi-volume fields/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.single_volume_profile",
+          message: "primary volume descriptor uses unsupported multi-volume fields",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("reports unsupported descriptor root volume sequence numbers without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root sequence\n" }]);
+    writeUint16Both(image, PVD_OFFSET + 156 + 28, 2);
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported volume sequence number 2/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.volume_sequence_unsupported",
+          path: ".",
+          message: expect.stringMatching(/volume sequence number 2/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("reports unsupported child directory record volume sequence numbers without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "child sequence\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    writeUint16Both(image, fileRecordOffset + 28, 2);
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported volume sequence number 2/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.volume_sequence_unsupported",
+          path: "README.TXT",
+          message: expect.stringMatching(/volume sequence number 2/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports supplementary path table parent issues", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
@@ -328,6 +399,27 @@ describe("validateIsoImage hardening", () => {
       ]),
     );
   });
+
+  test("reports unsupported supplementary descriptor multi-volume fields", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint16Both(image, supplementaryDescriptorOffset + 120, 2);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary.single_volume_profile",
+          message: "supplementary volume descriptor uses unsupported multi-volume fields",
+        }),
+      ]),
+    );
+  });
 });
 
 function baselineImage(files = [{ path: "README.TXT", data: "hello ecma-119\n" }]): Uint8Array {
@@ -378,4 +470,11 @@ function writeUint32Both(bytes: Uint8Array, offset: number, value: number): void
   bytes[offset + 5] = (value >>> 16) & 0xff;
   bytes[offset + 6] = (value >>> 8) & 0xff;
   bytes[offset + 7] = value & 0xff;
+}
+
+function writeUint16Both(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+  bytes[offset + 2] = (value >>> 8) & 0xff;
+  bytes[offset + 3] = value & 0xff;
 }
