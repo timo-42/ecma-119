@@ -780,6 +780,69 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports reserved descriptor root file flag bits without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root reserved flags\n" }]);
+    image[PVD_OFFSET + 156 + 25] |= 0x20;
+
+    expect(() => parseIsoImage(image)).toThrow(/reserved file flag bits/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_reserved",
+          path: ".",
+          message: expect.stringMatching(/reserved file flag bits/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      path: "supplementary:.",
+    },
+    {
+      kind: "enhanced",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      path: "enhanced:.",
+    },
+  ])("reports reserved $kind descriptor root file flag bits", ({ descriptorOffset, options, path }) => {
+    const image = createIsoImage([{ path: "README.TXT", data: "secondary root reserved flags\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image[descriptorOffset + 156 + 25] |= 0x40;
+
+    expect(() => parseIsoImage(image)).toThrow(/reserved file flag bits/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_reserved",
+          path,
+          message: expect.stringMatching(/reserved file flag bits/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported multi-extent file records without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "multi extent flag\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
