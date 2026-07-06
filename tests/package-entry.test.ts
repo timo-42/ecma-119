@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, normalize, resolve } from "node:path";
+import { dirname, posix as pathPosix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, test } from "vitest";
@@ -75,9 +75,9 @@ describe("package entry", () => {
       encoding: "utf8",
     });
     const [{ files }] = JSON.parse(packOutput) as PackDryRunOutput;
-    const packedFiles = new Set(files.map((file) => normalize(file.path)));
+    const packedFiles = new Set(files.map((file) => pathPosix.normalize(file.path)));
     const mapFiles = files
-      .map((file) => normalize(file.path))
+      .map((file) => pathPosix.normalize(file.path))
       .filter((path) => path.startsWith("dist/") && path.endsWith(".map"));
 
     expect(mapFiles.length).toBeGreaterThan(0);
@@ -89,7 +89,7 @@ describe("package entry", () => {
         if (/^(?:[a-z]+:)?\/\//iu.test(source) || source.startsWith("data:")) {
           continue;
         }
-        const referencedPath = normalize(`${dirname(mapFile)}/${source}`).replace(/\\/gu, "/");
+        const referencedPath = pathPosix.normalize(`${pathPosix.dirname(mapFile)}/${source}`);
         expect(
           packedFiles.has(referencedPath),
           `${mapFile} references ${source}, but ${referencedPath} is not included in the package`,
