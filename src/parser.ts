@@ -466,7 +466,7 @@ function directoryExtentEndSector(directory: IsoDirectoryEntry): number {
 }
 
 function fileExtentEndSector(record: DecodedDirectoryRecord): number {
-  return extentEndSector(record.extent, record.extendedAttributeRecordLength, fileSectionStorageSectors(record));
+  return record.extent + fileSectionExtentSectors(record);
 }
 
 function extentEndSector(extent: number, extendedAttributeRecordLength: number, dataSectors: number): number {
@@ -1083,6 +1083,17 @@ function validateDirectoryHierarchy(
         message: `directory record at ${recordPath || "."} has invalid interleaved file section fields`,
         path: recordPath || ".",
       });
+    } else if (
+      (record.flags & FILE_FLAG_DIRECTORY) === 0
+      && record.fileUnitSize !== 0
+      && record.extendedAttributeRecordLength !== 0
+      && record.extendedAttributeRecordLength !== record.fileUnitSize
+    ) {
+      issues.push({
+        code: "directory.interleaved_ear_length",
+        message: `interleaved file record at ${recordPath || "."} has extended attribute record length ${record.extendedAttributeRecordLength}; expected file unit size ${record.fileUnitSize}`,
+        path: recordPath || ".",
+      });
     }
     if (record.volumeSequenceNumber !== 1) {
       issues.push(...validateDirectoryRecordVolumeSequence(record, recordPath || "."));
@@ -1643,7 +1654,7 @@ function readFileSectionData(image: Uint8Array, records: DecodedDirectoryRecord[
 }
 
 function readFileSectionPayload(image: Uint8Array, record: DecodedDirectoryRecord, target: Uint8Array, targetOffset: number): number {
-  const dataStart = (record.extent + record.extendedAttributeRecordLength) * SECTOR_SIZE;
+  const dataStart = fileSectionDataStartSector(record) * SECTOR_SIZE;
   if (record.fileUnitSize === 0) {
     target.set(image.subarray(dataStart, dataStart + record.dataLength), targetOffset);
     return targetOffset + record.dataLength;
@@ -1780,7 +1791,7 @@ function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttribu
 }
 
 function assertFileSectionInBounds(image: Uint8Array, record: DecodedDirectoryRecord, path: string): void {
-  assertExtentInBounds(image, record.extent, record.extendedAttributeRecordLength, fileSectionStorageByteLength(record), path);
+  assertExtentInBounds(image, record.extent, 0, fileSectionExtentSectors(record) * SECTOR_SIZE, path);
 }
 
 function fileSectionStorageByteLength(record: Pick<DecodedDirectoryRecord, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
@@ -1804,6 +1815,20 @@ function fileSectionStorageSectors(record: Pick<DecodedDirectoryRecord, "dataLen
   return sectorsForBytes(fileSectionStorageByteLength(record));
 }
 
+function fileSectionExtentSectors(record: Pick<DecodedDirectoryRecord, "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (record.fileUnitSize === 0 || record.extendedAttributeRecordLength === 0) {
+    return record.extendedAttributeRecordLength + fileSectionStorageSectors(record);
+  }
+  return record.extendedAttributeRecordLength + record.interleaveGapSize + fileSectionStorageSectors(record);
+}
+
+function fileSectionDataStartSector(record: Pick<DecodedDirectoryRecord, "extent" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (record.fileUnitSize !== 0 && record.extendedAttributeRecordLength !== 0) {
+    return record.extent + record.extendedAttributeRecordLength + record.interleaveGapSize;
+  }
+  return record.extent + record.extendedAttributeRecordLength;
+}
+
 function assertSupportedDirectoryRecord(
   record: DecodedDirectoryRecord,
   path: string,
@@ -1815,6 +1840,15 @@ function assertSupportedDirectoryRecord(
   }
   if (options.allowInterleaving && record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
+  }
+  if (
+    options.allowInterleaving
+    && (record.flags & FILE_FLAG_DIRECTORY) === 0
+    && record.fileUnitSize !== 0
+    && record.extendedAttributeRecordLength !== 0
+    && record.extendedAttributeRecordLength !== record.fileUnitSize
+  ) {
+    throw new Error(`interleaved file record at ${path} has extended attribute record length ${record.extendedAttributeRecordLength}; expected file unit size ${record.fileUnitSize}`);
   }
   if (!options.allowMultiExtent && (record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);

@@ -171,8 +171,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       if (index === 0) {
         file.extent = section.extent;
       }
-      nextSector += section.extendedAttributeRecordLength;
-      nextSector += fileSectionStorageSectors(section);
+      nextSector += fileSectionExtentSectors(section);
     }
   }
   const preparedPartitions: PreparedVolumePartition[] = [];
@@ -337,9 +336,6 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       flags: inputFileFlags(file),
     };
     if (file.extendedAttributeRecord !== undefined) {
-      if (file.interleave !== undefined) {
-        throw new Error("interleaved files with extended attribute records are not supported by the writer");
-      }
       fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
         ? encodeExtendedAttributeRecord(file.extendedAttributeRecord, {
           defaultDate: file.date ?? now,
@@ -349,7 +345,9 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       if (fileNode.extendedAttributeRecord.byteLength === 0) {
         throw new Error("extended attribute record must contain at least one byte");
       }
-      fileNode.extendedAttributeRecordLength = sectorsForBytes(fileNode.extendedAttributeRecord.byteLength);
+      fileNode.extendedAttributeRecordLength = file.interleave === undefined
+        ? sectorsForBytes(fileNode.extendedAttributeRecord.byteLength)
+        : checkedInterleavedExtendedAttributeRecordLength(fileNode.extendedAttributeRecord, fileNode.sections[0]!);
       if (fileNode.extendedAttributeRecordLength > 0xff) {
         throw new Error("extended attribute record exceeds 255 logical blocks");
       }
@@ -477,6 +475,13 @@ function fileSectionStorageSectors(section: Pick<FileSectionNode, "dataLength" |
   return sectorsForBytes(fileSectionStorageByteLength(section));
 }
 
+function fileSectionExtentSectors(section: Pick<FileSectionNode, "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (section.fileUnitSize === 0 || section.extendedAttributeRecordLength === 0) {
+    return section.extendedAttributeRecordLength + fileSectionStorageSectors(section);
+  }
+  return section.extendedAttributeRecordLength + section.interleaveGapSize + fileSectionStorageSectors(section);
+}
+
 function fileSectionStorageByteLength(section: Pick<FileSectionNode, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
   if (section.fileUnitSize === 0) {
     return section.dataLength;
@@ -492,7 +497,7 @@ function fileSectionStorageByteLength(section: Pick<FileSectionNode, "dataLength
 }
 
 function writeFileSectionPayload(image: Uint8Array, data: Uint8Array, section: FileSectionNode): void {
-  const dataStart = sectorOffset(section.extent + section.extendedAttributeRecordLength);
+  const dataStart = sectorOffset(fileSectionDataStartSector(section));
   if (section.fileUnitSize === 0) {
     image.set(data.subarray(section.dataOffset, section.dataOffset + section.dataLength), dataStart);
     return;
@@ -510,6 +515,13 @@ function writeFileSectionPayload(image: Uint8Array, data: Uint8Array, section: F
     targetOffset += strideBytes;
     remaining -= chunk;
   }
+}
+
+function fileSectionDataStartSector(section: Pick<FileSectionNode, "extent" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (section.fileUnitSize !== 0 && section.extendedAttributeRecordLength !== 0) {
+    return section.extent + section.extendedAttributeRecordLength + section.interleaveGapSize;
+  }
+  return section.extent + section.extendedAttributeRecordLength;
 }
 
 function collectDirectories(root: DirectoryNode): DirectoryNode[] {
@@ -934,6 +946,17 @@ function checkedInterleaveOptions(value: IsoInputFile["interleave"]): { fileUnit
     throw new RangeError("interleave interleaveGapSize must be an integer from 0 to 255");
   }
   return value;
+}
+
+function checkedInterleavedExtendedAttributeRecordLength(
+  extendedAttributeRecord: Uint8Array,
+  section: Pick<FileSectionNode, "fileUnitSize">,
+): number {
+  const requiredSectors = sectorsForBytes(extendedAttributeRecord.byteLength);
+  if (requiredSectors > section.fileUnitSize) {
+    throw new Error("interleaved extended attribute record exceeds the file unit size");
+  }
+  return section.fileUnitSize;
 }
 
 function writeSystemArea(image: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {

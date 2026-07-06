@@ -1267,6 +1267,36 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports interleaved extended attribute record lengths that do not match the file unit size", () => {
+    const image = baselineImage([{
+      path: "EAR.TXT",
+      data: "invalid interleaved ear length\n",
+      extendedAttributeRecord: new Uint8Array(SECTOR_SIZE),
+    }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "EAR.TXT;1");
+    image[fileRecordOffset + 26] = 2;
+    image[fileRecordOffset + 27] = 1;
+
+    expect(() => parseIsoImage(image)).toThrow(/expected file unit size 2/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.interleaved_ear_length",
+          path: "EAR.TXT",
+          message: expect.stringMatching(/expected file unit size 2/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported interleaved descriptor root directory fields without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root interleaved metadata\n" }]);
     image[PVD_OFFSET + 156 + 26] = 1;
