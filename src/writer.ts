@@ -420,6 +420,17 @@ function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8
   return directory.systemUse ? encodeDirectoryRecord({ ...input, systemUse: directory.systemUse }) : encodeDirectoryRecord(input);
 }
 
+function directoryRecordForDescriptorRoot(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
+  return encodeDirectoryRecord({
+    extent: directoryExtentFor(directory, layout),
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+    dataLength: directoryDataLengthFor(directory, layout),
+    flags: directory.flags,
+    identifier: Uint8Array.of(0),
+    date: directory.date,
+  });
+}
+
 function directoryRecordLengthForNode(node: DirectoryNode | FileNode, identifier: Uint8Array): number {
   return directoryRecordLength(identifier.byteLength, node.systemUse?.byteLength ?? 0);
 }
@@ -477,7 +488,7 @@ function encodePrimaryVolumeDescriptor(input: {
   writeUint32LE(bytes, 144, 0);
   writeUint32BE(bytes, 148, input.typeMPathTableSector);
   writeUint32BE(bytes, 152, 0);
-  bytes.set(directoryRecordForDirectory(input.root, Uint8Array.of(0)), 156);
+  bytes.set(directoryRecordForDescriptorRoot(input.root), 156);
   writeDField(bytes, 190, 128, input.options.volumeSetIdentifier ?? "");
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? "");
@@ -526,7 +537,7 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   writeUint32LE(bytes, 144, 0);
   writeUint32BE(bytes, 148, input.typeMPathTableSector);
   writeUint32BE(bytes, 152, 0);
-  bytes.set(directoryRecordForDirectory(input.root, Uint8Array.of(0), input.layout), 156);
+  bytes.set(directoryRecordForDescriptorRoot(input.root, input.layout), 156);
   writeDField(bytes, 190, 128, input.options.volumeSetIdentifier ?? input.baseOptions.volumeSetIdentifier ?? "");
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? input.baseOptions.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? input.baseOptions.dataPreparerIdentifier ?? "");

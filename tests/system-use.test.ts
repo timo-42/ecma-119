@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, validateIsoImage } from "../src/index";
+import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 describe("directory record System Use", () => {
@@ -65,6 +65,33 @@ describe("directory record System Use", () => {
     });
     expect(directory?.systemUse).toEqual(systemUse);
     expect(parsed.files[0]?.path).toBe("DIR/FILE.TXT");
+  });
+
+  test("keeps root directory System Use out of fixed descriptor root records", () => {
+    const systemUse = Uint8Array.of(0x52, 0x4f, 0x4f, 0x54, 0x01);
+    const image = createIsoImage([], {
+      directories: [{
+        path: "",
+        systemUse,
+      }],
+      volumeSetIdentifier: "ROOTSYS",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const primary = descriptors.find((descriptor) => descriptor.kind === "primary");
+    const supplementary = descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    const rootDirectory = getRootDirectoryBytes(image);
+    const rootSelfRecord = rootDirectory.slice(0, rootDirectory[0]);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(image[16 * SECTOR_SIZE + 156]).toBe(34);
+    expect(image[17 * SECTOR_SIZE + 156]).toBe(34);
+    expect(primary?.kind === "primary" ? primary.volumeSetIdentifier : undefined).toBe("ROOTSYS");
+    expect(supplementary?.kind).toBe("supplementary");
+    expect(rootSelfRecord.subarray(34)).toEqual(systemUse);
   });
 
   test("rejects file System Use bytes that would make a directory record exceed 255 bytes", () => {
