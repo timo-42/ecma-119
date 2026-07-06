@@ -22,6 +22,7 @@ type FileNode = {
   data: Uint8Array;
   date: Date;
   extent: number;
+  systemUse?: Uint8Array;
 };
 
 type DirectoryNode = {
@@ -169,14 +170,18 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
     if (directory.children.has(normalized.isoIdentifier)) {
       throw new Error(`duplicate ISO identifier: ${file.path}`);
     }
-    directory.children.set(normalized.isoIdentifier, {
+    const fileNode: FileNode = {
       kind: "file",
       name: normalized.fileName,
       isoIdentifier: normalized.isoIdentifier,
       data: toBytes(file.data),
       date: file.date ?? now,
       extent: 0,
-    });
+    };
+    if (file.systemUse !== undefined) {
+      fileNode.systemUse = toBytes(file.systemUse);
+    }
+    directory.children.set(normalized.isoIdentifier, fileNode);
   }
 
   return root;
@@ -215,7 +220,8 @@ function directoryDataLength(directory: DirectoryNode): number {
   offset = nextRecordOffset(offset, 34);
   offset = nextRecordOffset(offset, 34);
   for (const child of [...directory.children.values()].sort(compareNode)) {
-    const recordLength = 33 + child.isoIdentifier.length + ((33 + child.isoIdentifier.length) % 2 === 0 ? 0 : 1);
+    const systemUseLength = child.kind === "file" ? child.systemUse?.byteLength ?? 0 : 0;
+    const recordLength = 33 + child.isoIdentifier.length + ((33 + child.isoIdentifier.length) % 2 === 0 ? 0 : 1) + systemUseLength;
     offset = nextRecordOffset(offset, recordLength);
   }
   return offset;
@@ -228,15 +234,19 @@ function encodeDirectoryExtent(directory: DirectoryNode): Uint8Array {
   offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
   for (const child of [...directory.children.values()].sort(compareNode)) {
     const identifier = asciiBytes(child.isoIdentifier);
-    const record = child.kind === "directory"
-      ? directoryRecordForDirectory(child, identifier)
-      : encodeDirectoryRecord({
+    let record: Uint8Array;
+    if (child.kind === "directory") {
+      record = directoryRecordForDirectory(child, identifier);
+    } else {
+      const input = {
         extent: child.extent,
         dataLength: child.data.byteLength,
         flags: 0,
         identifier,
         date: child.date,
-      });
+      };
+      record = child.systemUse ? encodeDirectoryRecord({ ...input, systemUse: child.systemUse }) : encodeDirectoryRecord(input);
+    }
     offset = appendRecord(bytes, offset, record);
   }
   return bytes;

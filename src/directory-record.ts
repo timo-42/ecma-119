@@ -16,6 +16,7 @@ export type DirectoryRecordInput = {
   identifier: Uint8Array;
   date: Date;
   volumeSequenceNumber?: number;
+  systemUse?: Uint8Array;
 };
 
 export type DecodedDirectoryRecord = {
@@ -26,15 +27,18 @@ export type DecodedDirectoryRecord = {
   flags: number;
   volumeSequenceNumber: number;
   identifier: Uint8Array;
+  systemUse: Uint8Array;
 };
 
-export function directoryRecordLength(identifierLength: number): number {
+export function directoryRecordLength(identifierLength: number, systemUseLength = 0): number {
   const base = 33 + identifierLength;
-  return base + (base % 2 === 0 ? 0 : 1);
+  return base + (base % 2 === 0 ? 0 : 1) + systemUseLength;
 }
 
 export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
-  const length = directoryRecordLength(input.identifier.length);
+  const systemUse = input.systemUse ?? new Uint8Array();
+  const systemUseOffset = directoryRecordLength(input.identifier.length);
+  const length = directoryRecordLength(input.identifier.length, systemUse.byteLength);
   if (length > 255) {
     throw new Error("directory record is too long");
   }
@@ -51,6 +55,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   writeUint16Both(bytes, 28, input.volumeSequenceNumber ?? 1);
   bytes[32] = input.identifier.length;
   bytes.set(input.identifier, 33);
+  bytes.set(systemUse, systemUseOffset);
   return bytes;
 }
 
@@ -60,6 +65,7 @@ export function decodeDirectoryRecord(bytes: Uint8Array, offset: number): Decode
     throw new Error(`missing directory record at offset ${offset}`);
   }
   const identifierLength = bytes[offset + 32]!;
+  const systemUseOffset = offset + directoryRecordLength(identifierLength);
   return {
     length,
     extent: readUint32Both(bytes, offset + 2),
@@ -68,5 +74,6 @@ export function decodeDirectoryRecord(bytes: Uint8Array, offset: number): Decode
     flags: bytes[offset + 25]!,
     volumeSequenceNumber: readUint16Both(bytes, offset + 28),
     identifier: bytes.slice(offset + 33, offset + 33 + identifierLength),
+    systemUse: bytes.slice(systemUseOffset, offset + length),
   };
 }
