@@ -2189,6 +2189,37 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports $kind descriptor root directory record identifier mismatches", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary root identifier\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const descriptorOffset = 17 * SECTOR_SIZE;
+    image[descriptorOffset + 156 + 33] = 1;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.root_directory_record.identifier`,
+          path: ".",
+          message: `${codePrefix} volume descriptor root directory record must use identifier 0`,
+        }),
+      ]),
+    );
+  });
+
   test("reports primary descriptor file references missing from the root directory", () => {
     const image = createIsoImage([{ path: "COPY.TXT", data: "root reference\n" }], {
       publisherIdentifier: "_MISSING.TXT;1",
