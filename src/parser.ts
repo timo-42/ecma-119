@@ -211,27 +211,39 @@ function rawDescriptorLabel(type: number, version: number): string {
 
 function validateRawPrimaryDescriptorBothEndianFields(image: Uint8Array): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const offset = sectorOffset(SYSTEM_AREA_SECTORS);
-  if (offset + SECTOR_SIZE > image.byteLength || !isPrimaryVolumeDescriptorHeaderAt(image, offset)) {
-    return issues;
+  let sector = SYSTEM_AREA_SECTORS;
+  while (sectorOffset(sector + 1) <= image.byteLength) {
+    const offset = sectorOffset(sector);
+    if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
+      return issues;
+    }
+    if (isPrimaryVolumeDescriptorHeaderAt(image, offset)) {
+      issues.push(...validateRawPrimaryDescriptorBothEndianFieldsAt(image, offset, sector));
+    }
+    if (isVolumeDescriptorSetTerminatorAt(image, offset)) {
+      return issues;
+    }
+    sector += 1;
   }
+  return issues;
+}
 
-  for (const field of rawPrimaryDescriptorBothEndianFields) {
+function validateRawPrimaryDescriptorBothEndianFieldsAt(image: Uint8Array, offset: number, sector: number): ValidationIssue[] {
+  return rawPrimaryDescriptorBothEndianFields.flatMap((field) => {
     const little = field.bytes === 2
       ? readUint16LEAt(image, offset + field.start)
       : readUint32LEAt(image, offset + field.start);
     const big = field.bytes === 2
       ? readUint16BEAt(image, offset + field.start + field.bytes)
       : readUint32BEAt(image, offset + field.start + field.bytes);
-    if (little !== big) {
-      issues.push({
-        code: `pvd.${field.code}.endian_mismatch`,
-        message: `primary volume descriptor ${field.label} must store matching little- and big-endian values at sector ${SYSTEM_AREA_SECTORS}: ${little} !== ${big}`,
-      });
-    }
-  }
 
-  return issues;
+    return little === big
+      ? []
+      : [{
+          code: `pvd.${field.code}.endian_mismatch`,
+          message: `primary volume descriptor ${field.label} must store matching little- and big-endian values at sector ${sector}: ${little} !== ${big}`,
+        }];
+  });
 }
 
 const rawPrimaryDescriptorBothEndianFields = [
