@@ -120,6 +120,8 @@ describe("extended attribute records", () => {
         path: "DIR",
         date,
         extendedAttributeRecord: {
+          ownerIdentification: 1,
+          groupIdentification: 1,
           systemIdentifier: "DIR_EAR",
           applicationUse: asciiBytes("dir app"),
         },
@@ -137,6 +139,7 @@ describe("extended attribute records", () => {
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(rootRecord[1]).toBe(1);
+    expect(rootRecord[25]! & 0x10).toBe(0x10);
     expect(pathTable[directoryPathTableOffset + 1]).toBe(1);
     expect(directory).toMatchObject({
       path: "DIR",
@@ -148,6 +151,36 @@ describe("extended attribute records", () => {
     expect(directory && "children" in directory ? directory.extendedAttributeRecordFields?.systemIdentifier : undefined).toBe("DIR_EAR");
     expect(directory && "children" in directory ? directory.extendedAttributeRecordFields?.applicationUse : undefined).toEqual(asciiBytes("dir app"));
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("directory ear\n");
+  });
+
+  test("reports directory extended attribute flag mismatches", () => {
+    const image = createIsoImage({
+      files: [{
+        path: "DIR/FILE.TXT",
+        data: "directory ear flags\n",
+      }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: {
+          ownerIdentification: 1,
+          groupIdentification: 1,
+          systemIdentifier: "DIR_EAR",
+        },
+      }],
+    });
+    const rootDirectory = getRootDirectoryBytes(image);
+    const recordOffset = findRootFileRecordOffset(image, "DIR");
+    rootDirectory[recordOffset + 25] &= ~0x10;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.file_flags",
+          path: "DIR",
+          message: expect.stringMatching(/directory record flags/i),
+        }),
+      ]),
+    );
   });
 
   test("duplicates directory extended attribute records into supplementary hierarchies", () => {

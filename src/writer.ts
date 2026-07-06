@@ -40,6 +40,7 @@ type DirectoryNode = {
   dataLength: number;
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordLength: number;
+  flags: number;
   pathTableIndex: number;
 };
 
@@ -216,6 +217,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     extent: 0,
     dataLength: 0,
     extendedAttributeRecordLength: 0,
+    flags: FILE_FLAG_DIRECTORY,
     pathTableIndex: 1,
   };
 
@@ -241,6 +243,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         extent: 0,
         dataLength: 0,
         extendedAttributeRecordLength: 0,
+        flags: FILE_FLAG_DIRECTORY,
         pathTableIndex: 0,
       };
       directory.children.set(part, child);
@@ -295,6 +298,10 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       if (directory.extendedAttributeRecordLength > 0xff) {
         throw new Error("directory extended attribute record exceeds 255 logical blocks");
       }
+      const fields = decodeOptionalExtendedAttributeRecord(directory.extendedAttributeRecord);
+      if (fields) {
+        directory.flags = FILE_FLAG_DIRECTORY | (extendedAttributeRecordFileFlags(fields) & 0x10);
+      }
     }
   }
 
@@ -322,6 +329,7 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date): Dire
       extent: 0,
       dataLength: 0,
       extendedAttributeRecordLength: 0,
+      flags: FILE_FLAG_DIRECTORY,
       pathTableIndex: 0,
     };
     directory.children.set(part, child);
@@ -401,7 +409,7 @@ function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8
     extent: directoryExtentFor(directory, layout),
     extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
     dataLength: directoryDataLengthFor(directory, layout),
-    flags: FILE_FLAG_DIRECTORY,
+    flags: directory.flags,
     identifier,
     date: directory.date,
   });
