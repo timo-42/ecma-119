@@ -1,5 +1,5 @@
 import { decodeVolumeDate, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
-import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, type DecodedDirectoryRecord } from "./directory-record.js";
+import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
@@ -209,6 +209,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateSingleVolumeDescriptor(pvd, "pvd", "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
 }
@@ -383,6 +384,13 @@ function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEn
         path: recordPath || ".",
       });
     }
+    if ((record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+      issues.push({
+        code: "directory.multi_extent_unsupported",
+        message: `directory record at ${recordPath || "."} uses unsupported multi-extent file sections`,
+        path: recordPath || ".",
+      });
+    }
     if (index < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
       continue;
     }
@@ -407,6 +415,7 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   if (descriptor.rootDirectoryRecord.size > 0) {
     issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
@@ -686,12 +695,18 @@ function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: st
   if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
+  if ((record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+    throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
+  }
   assertSupportedVolumeSequence(record.volumeSequenceNumber, path);
 }
 
 function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): void {
   if (entry.fileUnitSize !== 0 || entry.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
+  }
+  if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+    throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
   }
   assertSupportedVolumeSequence(entry.volumeSequenceNumber, path);
 }
@@ -736,6 +751,17 @@ function validateDirectoryEntryVolumeSequence(entry: IsoDirectoryEntry, path: st
   return [{
     code: "directory.volume_sequence_unsupported",
     message: `directory record at ${path} uses unsupported volume sequence number ${entry.volumeSequenceNumber}`,
+    path,
+  }];
+}
+
+function validateDirectoryEntryMultiExtent(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  if ((entry.flags & FILE_FLAG_MULTI_EXTENT) === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.multi_extent_unsupported",
+    message: `directory record at ${path} uses unsupported multi-extent file sections`,
     path,
   }];
 }

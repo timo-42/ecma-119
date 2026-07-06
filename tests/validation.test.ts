@@ -253,6 +253,73 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports unsupported multi-extent file records without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "multi extent flag\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    image[fileRecordOffset + 25] |= 0x80;
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported multi-extent/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.multi_extent_unsupported",
+          path: "README.TXT",
+          message: expect.stringMatching(/unsupported multi-extent/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("reports unsupported multi-extent descriptor root records without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root multi extent flag\n" }]);
+    image[PVD_OFFSET + 156 + 25] |= 0x80;
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported multi-extent/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.multi_extent_unsupported",
+          path: ".",
+          message: expect.stringMatching(/unsupported multi-extent/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("does not treat associated file flags as reserved or multi-extent", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "associated file flag\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    image[fileRecordOffset + 25] |= 0x04;
+
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: expect.stringMatching(/reserved|multi_extent/i),
+        }),
+      ]),
+    );
+    expect(parseIsoImage(image).files[0]).toMatchObject({
+      path: "README.TXT",
+      flags: 0x04,
+    });
+  });
+
   test("reports unsupported primary volume set size without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "multi-volume descriptor\n" }]);
     writeUint16Both(image, PVD_OFFSET + 120, 2);
