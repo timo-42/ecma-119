@@ -19,6 +19,7 @@ const image = createIsoImage([
   {
     path: "README.TXT",
     data: "Hello from ECMA-119\n",
+    extendedAttributeRecord: new Uint8Array(2048),
     systemUse: new Uint8Array([0x53, 0x55])
   }
 ], {
@@ -48,7 +49,8 @@ Implemented support is intentionally explicit:
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
 - opaque directory record System Use bytes
+- opaque file Extended Attribute Record bytes
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Supplementary/enhanced descriptors, executable boot semantics, partition filesystem semantics, extended attributes, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record and volume partition descriptors are supported as raw descriptor metadata.
+Supplementary/enhanced descriptors, executable boot semantics, partition filesystem semantics, structured extended attribute fields, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record, volume partition descriptors, and Extended Attribute Records are supported as raw metadata.

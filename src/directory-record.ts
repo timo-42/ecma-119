@@ -39,6 +39,10 @@ export function directoryRecordLength(identifierLength: number, systemUseLength 
 
 export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   const systemUse = input.systemUse ?? new Uint8Array();
+  const extendedAttributeRecordLength = input.extendedAttributeRecordLength ?? 0;
+  if (!Number.isInteger(extendedAttributeRecordLength) || extendedAttributeRecordLength < 0 || extendedAttributeRecordLength > 0xff) {
+    throw new RangeError("extended attribute record length must be an integer from 0 to 255 logical blocks");
+  }
   const systemUseOffset = directoryRecordLength(input.identifier.length);
   const length = directoryRecordLength(input.identifier.length, systemUse.byteLength);
   if (length > 255) {
@@ -47,7 +51,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
 
   const bytes = new Uint8Array(length);
   bytes[0] = length;
-  bytes[1] = input.extendedAttributeRecordLength ?? 0;
+  bytes[1] = extendedAttributeRecordLength;
   writeUint32Both(bytes, 2, input.extent);
   writeUint32Both(bytes, 10, input.dataLength);
   bytes.set(encodeDirectoryDate(input.date), 18);

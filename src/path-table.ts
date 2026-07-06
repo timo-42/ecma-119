@@ -21,8 +21,12 @@ export function encodePathTable(records: PathTableRecord[], endian: PathTableEnd
 
   for (const record of records) {
     const length = pathTableRecordLength(record.identifier.length);
+    const extendedAttributeRecordLength = record.extendedAttributeRecordLength ?? 0;
+    if (!Number.isInteger(extendedAttributeRecordLength) || extendedAttributeRecordLength < 0 || extendedAttributeRecordLength > 0xff) {
+      throw new RangeError("extended attribute record length must be an integer from 0 to 255 logical blocks");
+    }
     bytes[offset] = record.identifier.length;
-    bytes[offset + 1] = record.extendedAttributeRecordLength ?? 0;
+    bytes[offset + 1] = extendedAttributeRecordLength;
     if (endian === "little") {
       writeUint32LE(bytes, offset + 2, record.extent);
       writeUint16LE(bytes, offset + 6, record.parentDirectoryNumber);
