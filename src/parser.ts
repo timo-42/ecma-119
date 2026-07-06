@@ -1029,6 +1029,17 @@ function validateSupplementaryLikeVolumeDescriptor(
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
+  issues.push(...validateDescriptorCharacterFields(descriptor, label, [
+    { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
+    { start: 40, length: 32, kind: "d", code: "volume_identifier.characters", label: "volume identifier" },
+    { start: 190, length: 128, kind: "d", code: "volume_set_identifier.characters", label: "volume set identifier" },
+    { start: 318, length: 128, kind: "a", code: "publisher_identifier.characters", label: "publisher identifier" },
+    { start: 446, length: 128, kind: "a", code: "data_preparer_identifier.characters", label: "data preparer identifier" },
+    { start: 574, length: 128, kind: "a", code: "application_identifier.characters", label: "application identifier" },
+    { start: 702, length: 37, kind: "file", code: "copyright_file_identifier.characters", label: "copyright file identifier" },
+    { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
+    { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
+  ]));
   issues.push(...validateVolumeSpaceSize(image, descriptor, descriptors, label));
   const expectedFileStructureVersion = descriptor.kind === "enhanced" ? 2 : 1;
   if (descriptor.fileStructureVersion !== expectedFileStructureVersion) {

@@ -1642,6 +1642,50 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports invalid $kind descriptor character fields", ({ options, codePrefix }) => {
+    const fields = [
+      { offset: 8, code: "system_identifier.characters", label: "system identifier", byte: 0x7b },
+      { offset: 40, code: "volume_identifier.characters", label: "volume identifier", byte: 0x7b },
+      { offset: 190, code: "volume_set_identifier.characters", label: "volume set identifier", byte: 0x7b },
+      { offset: 318, code: "publisher_identifier.characters", label: "publisher identifier", byte: 0x7b },
+      { offset: 446, code: "data_preparer_identifier.characters", label: "data preparer identifier", byte: 0x7b },
+      { offset: 574, code: "application_identifier.characters", label: "application identifier", byte: 0x7b },
+      { offset: 702, code: "copyright_file_identifier.characters", label: "copyright file identifier", byte: 0x2a },
+      { offset: 739, code: "abstract_file_identifier.characters", label: "abstract file identifier", byte: 0x2a },
+      { offset: 776, code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier", byte: 0x2a },
+    ];
+
+    for (const field of fields) {
+      const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary descriptor characters\n" }], {
+        volumeIdentifier: "VALIDATION",
+        ...options,
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+      });
+      const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+      image[secondaryDescriptorOffset + field.offset] = field.byte;
+
+      expect(validateIsoImage(image)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: `${codePrefix}.${field.code}`,
+            message: expect.stringMatching(new RegExp(`${field.label} contains invalid ECMA-119`, "i")),
+          }),
+        ]),
+      );
+    }
+  });
+
   test("reports enhanced path table parent issues", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
