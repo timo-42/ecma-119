@@ -73,6 +73,32 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports duplicate boot record descriptors", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "duplicate boot descriptor\n" }], {
+      bootRecord: {
+        bootSystemIdentifier: "BOOT",
+      },
+      volumePartition: {
+        volumePartitionIdentifier: "PARTITION",
+        data: "partition\n",
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const bootDescriptorOffset = 17 * SECTOR_SIZE;
+    const partitionDescriptorOffset = 18 * SECTOR_SIZE;
+    image.set(image.subarray(bootDescriptorOffset, bootDescriptorOffset + SECTOR_SIZE), partitionDescriptorOffset);
+
+    expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "boot", "terminator"]);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "descriptor.boot_duplicate",
+          message: "volume descriptor sequence contains 2 boot record descriptors; the supported profile allows at most one",
+        }),
+      ]),
+    );
+  });
+
   test("accepts the deepest valid primary directory hierarchy with write-read validation", () => {
     const path = "A/B/C/D/E/F/G/README.TXT";
     const image = baselineImage([{ path, data: "valid depth\n" }]);

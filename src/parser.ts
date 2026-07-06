@@ -100,10 +100,17 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
 function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const primaryCount = descriptors.filter((descriptor) => descriptor.kind === "primary").length;
+  const bootCount = descriptors.filter((descriptor) => descriptor.kind === "boot").length;
   if (primaryCount > 1) {
     issues.push({
       code: "descriptor.primary_duplicate",
       message: `volume descriptor sequence contains ${primaryCount} primary volume descriptors; the supported profile requires exactly one`,
+    });
+  }
+  if (bootCount > 1) {
+    issues.push({
+      code: "descriptor.boot_duplicate",
+      message: `volume descriptor sequence contains ${bootCount} boot record descriptors; the supported profile allows at most one`,
     });
   }
   for (const descriptor of descriptors) {
