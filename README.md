@@ -103,6 +103,7 @@ Implemented support is intentionally explicit:
 - read-side reconstruction of compatible interleaved regular file sections
 - read-side reconstruction of compatible interleaved directory records
 - read-side coalescing of compatible non-interleaved multi-extent file sections
+- read-side coalescing and low-level encoding of compatible multi-extent directory records
 - byte-level parser for generated and compatible ECMA-119 images
 
 Executable boot semantics, partition filesystem semantics, cross-volume file resolution across multiple images, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
