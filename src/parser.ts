@@ -28,9 +28,9 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   if (!pvd) {
     throw new Error("missing primary volume descriptor");
   }
-  assertSingleVolumeDescriptor(pvd, "primary volume descriptor");
+  assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
   validatePrimaryDescriptorReferences(image, pvd);
-  assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".");
+  assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber);
   const includeData = options.includeData ?? true;
   const populatedDescriptors = descriptors.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
   const primaryVolumeDescriptor = populatedDescriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
@@ -77,7 +77,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
-      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", new Set(), {
+      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber, new Set(), {
         validatePrimaryLevelOne: true,
       }));
       for (const descriptor of descriptors) {
@@ -282,12 +282,12 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   if (pvd.fileStructureVersion !== 1) {
     issues.push({ code: "pvd.file_structure_version", message: "primary volume descriptor file structure version must be 1" });
   }
-  issues.push(...validateSingleVolumeDescriptor(pvd, "pvd", "primary volume descriptor"));
+  issues.push(...validateVolumeDescriptorMetadata(pvd, "pvd", "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryReservedFileFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryDirectoryFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryProtectionExtendedAttributeFlags(pvd.rootDirectoryRecord, "."));
-  issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
@@ -390,7 +390,7 @@ function minimumReferencedVolumeSpaceSize(image: Uint8Array, descriptors: Volume
         pathTableEndSector(descriptor.typeMPathTableLocation, descriptor.pathTableSize),
         optionalPathTableEndSector(descriptor.optionalTypeLPathTableLocation, descriptor.pathTableSize),
         optionalPathTableEndSector(descriptor.optionalTypeMPathTableLocation, descriptor.pathTableSize),
-        directoryTreeEndSector(image, descriptor.rootDirectoryRecord, new Set()),
+        directoryTreeEndSector(image, descriptor.rootDirectoryRecord, descriptor.volumeSequenceNumber, new Set()),
       );
     } else if (descriptor.kind === "partition") {
       minimum = Math.max(minimum, descriptor.volumePartitionLocation + descriptor.volumePartitionSize);
@@ -410,9 +410,12 @@ function optionalPathTableEndSector(location: number, size: number): number {
   return location === 0 ? 0 : pathTableEndSector(location, size);
 }
 
-function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry, visited: Set<number>): number {
+function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry, localVolumeSequenceNumber: number, visited: Set<number>): number {
   let end = directoryExtentEndSector(directory);
   if (!Number.isFinite(end) || visited.has(directory.extent)) {
+    return end;
+  }
+  if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return end;
   }
   visited.add(directory.extent);
@@ -449,9 +452,11 @@ function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry,
       const identifier = decodeFileIdentifier(record.identifier);
       const child = directoryEntryFromRecord(record, identifier, []);
       end = Math.max(end, directoryExtentEndSector(child));
-      end = Math.max(end, directoryTreeEndSector(image, child, new Set(visited)));
+      end = Math.max(end, directoryTreeEndSector(image, child, localVolumeSequenceNumber, new Set(visited)));
     } else {
-      end = Math.max(end, fileExtentEndSector(record));
+      if (record.volumeSequenceNumber === localVolumeSequenceNumber) {
+        end = Math.max(end, fileExtentEndSector(record));
+      }
     }
   }
   return end;
@@ -942,6 +947,7 @@ function validateDirectoryHierarchy(
   directory: IsoDirectoryEntry,
   parent: IsoDirectoryEntry,
   path: string,
+  localVolumeSequenceNumber: number,
   visited: Set<number>,
   options: { validatePrimaryLevelOne?: boolean; depth?: number } = {},
 ): ValidationIssue[] {
@@ -1072,7 +1078,7 @@ function validateDirectoryHierarchy(
       });
     }
     if (record.volumeSequenceNumber !== 1) {
-      issues.push(...validateDirectoryRecordVolumeSequence(record, recordPath || "."));
+      issues.push(...validateDirectoryRecordVolumeSequence(record, recordPath || ".", localVolumeSequenceNumber));
     }
     if ((record.flags & FILE_FLAG_MULTI_EXTENT) !== 0 && (record.flags & FILE_FLAG_DIRECTORY) !== 0) {
       issues.push({
@@ -1085,7 +1091,7 @@ function validateDirectoryHierarchy(
       continue;
     }
     const childPath = recordPath || ".";
-    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, new Set(visited), {
+    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, localVolumeSequenceNumber, new Set(visited), {
       depth: depth + 1,
       validatePrimaryLevelOne,
     }));
@@ -1226,16 +1232,16 @@ function validateSupplementaryLikeVolumeDescriptor(
       message: `${label} volume descriptor file structure version must be ${expectedFileStructureVersion}`,
     });
   }
-  issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
+  issues.push(...validateVolumeDescriptorMetadata(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryReservedFileFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryDirectoryFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryProtectionExtendedAttributeFlags(descriptor.rootDirectoryRecord, `${label}:.`));
-  issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
-  issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
+  issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber, new Set()));
   return issues;
 }
 
@@ -1440,14 +1446,16 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   assertSupportedDirectoryEntry(
     descriptor.rootDirectoryRecord,
     descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`,
+    descriptor.volumeSequenceNumber,
   );
   return {
     ...descriptor,
-    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, "", includeData, new Set()),
+    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, new Set()),
   };
 }
 
-function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, visited: Set<number>): IsoDirectoryEntry {
+function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, localVolumeSequenceNumber: number, visited: Set<number>): IsoDirectoryEntry {
+  assertSupportedDirectoryEntry(directory, path || ".", localVolumeSequenceNumber);
   assertDirectoryInBounds(image, directory, path || ".");
   if (visited.has(directory.extent)) {
     throw new Error(`invalid directory cycle detected at ${path || "."}`);
@@ -1478,7 +1486,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
 
     const index = recordIndex++;
     if (index < 2) {
-      assertSupportedDirectoryRecord(record, path || ".", { allowInterleaving: true });
+      assertSupportedDirectoryRecord(record, path || ".", localVolumeSequenceNumber, { allowInterleaving: true });
       continue;
     }
 
@@ -1486,7 +1494,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       const identifier = decodeFileIdentifier(record.identifier);
       const cleanName = stripVersion(identifier);
       const recordPath = joinPath(path, cleanName);
-      assertSupportedDirectoryRecord(record, recordPath || ".", { allowInterleaving: true });
+      assertSupportedDirectoryRecord(record, recordPath || ".", localVolumeSequenceNumber, { allowInterleaving: true });
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromRecord(record, childPath, []);
       if (record.extendedAttributeRecordLength > 0) {
@@ -1496,7 +1504,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
           child.extendedAttributeRecordFields = fields;
         }
       }
-      children.push(readDirectoryTree(image, child, childPath, includeData, new Set(visited)));
+      children.push(readDirectoryTree(image, child, childPath, includeData, localVolumeSequenceNumber, new Set(visited)));
     } else {
       const identifier = decodeFileIdentifier(record.identifier);
       const cleanName = stripVersion(identifier);
@@ -1506,7 +1514,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       recordIndex += chain.records.length - 1;
       const firstRecord = chain.records[0]!;
       for (const section of chain.records) {
-        assertSupportedDirectoryRecord(section, filePath || ".", { allowInterleaving: true, allowMultiExtent: true });
+        assertSupportedDirectoryRecord(section, filePath || ".", localVolumeSequenceNumber, { allowInterleaving: true, allowMultiExtent: true });
         assertFileSectionInBounds(image, section, filePath);
       }
       const file: IsoFileEntry = fileEntryFromSectionChain(chain.records, filePath, identifier);
@@ -1889,6 +1897,7 @@ function sectionDataStartSector(record: Pick<DecodedDirectoryRecord, "extent" | 
 function assertSupportedDirectoryRecord(
   record: DecodedDirectoryRecord,
   path: string,
+  localVolumeSequenceNumber: number,
   options: { allowInterleaving?: boolean; allowMultiExtent?: boolean } = {},
 ): void {
   assertSupportedDirectoryFileFlags(record.flags, path);
@@ -1910,10 +1919,10 @@ function assertSupportedDirectoryRecord(
   if (!options.allowMultiExtent && (record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
   }
-  assertSupportedVolumeSequence(record.volumeSequenceNumber, path);
+  assertSupportedVolumeSequence(record.volumeSequenceNumber, path, localVolumeSequenceNumber);
 }
 
-function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): void {
+function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string, localVolumeSequenceNumber: number): void {
   assertSupportedDirectoryFileFlags(entry.flags, path);
   if (entry.fileUnitSize === 0 && entry.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
@@ -1928,7 +1937,7 @@ function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): 
   if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
   }
-  assertSupportedVolumeSequence(entry.volumeSequenceNumber, path);
+  assertSupportedVolumeSequence(entry.volumeSequenceNumber, path, localVolumeSequenceNumber);
 }
 
 function assertSupportedDirectoryFileFlags(flags: number, path: string): void {
@@ -1937,28 +1946,28 @@ function assertSupportedDirectoryFileFlags(flags: number, path: string): void {
   }
 }
 
-function assertSupportedVolumeSequence(volumeSequenceNumber: number, path: string): void {
+function assertSupportedVolumeSequence(volumeSequenceNumber: number, path: string, localVolumeSequenceNumber: number): void {
   if (volumeSequenceNumber < 1) {
     throw new Error(`directory record at ${path} has invalid volume sequence number ${volumeSequenceNumber}`);
   }
-  if (volumeSequenceNumber !== 1) {
-    throw new Error(`directory record at ${path} uses unsupported volume sequence number ${volumeSequenceNumber}`);
+  if (volumeSequenceNumber !== localVolumeSequenceNumber) {
+    throw new Error(`directory record at ${path} references unsupported external volume sequence number ${volumeSequenceNumber}; expected local volume sequence number ${localVolumeSequenceNumber}`);
   }
 }
 
-function assertSingleVolumeDescriptor(descriptor: PathTableValidationInput, label: string): void {
+function assertVolumeDescriptorMetadata(descriptor: PathTableValidationInput, label: string): void {
   if (descriptor.volumeSetSize < 1) {
     throw new Error(`${label} volume set size must be at least 1`);
   }
   if (descriptor.volumeSequenceNumber < 1) {
     throw new Error(`${label} volume sequence number must be at least 1`);
   }
-  if (descriptor.volumeSetSize !== 1 || descriptor.volumeSequenceNumber !== 1) {
-    throw new Error(`${label} uses unsupported multi-volume fields`);
+  if (descriptor.volumeSequenceNumber > descriptor.volumeSetSize) {
+    throw new Error(`${label} volume sequence number must be less than or equal to volume set size`);
   }
 }
 
-function validateSingleVolumeDescriptor(descriptor: PathTableValidationInput, codePrefix: string, label: string): ValidationIssue[] {
+function validateVolumeDescriptorMetadata(descriptor: PathTableValidationInput, codePrefix: string, label: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (descriptor.volumeSetSize < 1) {
     issues.push({
@@ -1972,10 +1981,10 @@ function validateSingleVolumeDescriptor(descriptor: PathTableValidationInput, co
       message: `${label} volume sequence number must be at least 1`,
     });
   }
-  if (issues.length === 0 && (descriptor.volumeSetSize !== 1 || descriptor.volumeSequenceNumber !== 1)) {
+  if (issues.length === 0 && descriptor.volumeSequenceNumber > descriptor.volumeSetSize) {
     issues.push({
-      code: `${codePrefix}.single_volume_profile`,
-      message: `${label} uses unsupported multi-volume fields`,
+      code: `${codePrefix}.volume_sequence_number.bounds`,
+      message: `${label} volume sequence number must be less than or equal to volume set size`,
     });
   }
   return issues;
@@ -2042,8 +2051,8 @@ function validateDirectoryProtectionExtendedAttributeFlags(
   }];
 }
 
-function validateDirectoryEntryVolumeSequence(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
-  if (entry.volumeSequenceNumber === 1) {
+function validateDirectoryEntryVolumeSequence(entry: IsoDirectoryEntry, path: string, localVolumeSequenceNumber: number): ValidationIssue[] {
+  if (entry.volumeSequenceNumber === localVolumeSequenceNumber) {
     return [];
   }
   if (entry.volumeSequenceNumber < 1) {
@@ -2055,13 +2064,13 @@ function validateDirectoryEntryVolumeSequence(entry: IsoDirectoryEntry, path: st
   }
   return [{
     code: "directory.volume_sequence_unsupported",
-    message: `directory record at ${path} uses unsupported volume sequence number ${entry.volumeSequenceNumber}`,
+    message: `directory record at ${path} references unsupported external volume sequence number ${entry.volumeSequenceNumber}; expected local volume sequence number ${localVolumeSequenceNumber}`,
     path,
   }];
 }
 
-function validateDirectoryRecordVolumeSequence(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
-  if (record.volumeSequenceNumber === 1) {
+function validateDirectoryRecordVolumeSequence(record: DecodedDirectoryRecord, path: string, localVolumeSequenceNumber: number): ValidationIssue[] {
+  if (record.volumeSequenceNumber === localVolumeSequenceNumber) {
     return [];
   }
   if (record.volumeSequenceNumber < 1) {
@@ -2073,7 +2082,7 @@ function validateDirectoryRecordVolumeSequence(record: DecodedDirectoryRecord, p
   }
   return [{
     code: "directory.volume_sequence_unsupported",
-    message: `directory record at ${path} uses unsupported volume sequence number ${record.volumeSequenceNumber}`,
+    message: `directory record at ${path} references unsupported external volume sequence number ${record.volumeSequenceNumber}; expected local volume sequence number ${localVolumeSequenceNumber}`,
     path,
   }];
 }

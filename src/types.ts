@@ -76,6 +76,8 @@ export type CreateIsoOptions = {
   identifierLevel?: 1 | 2;
   systemArea?: Uint8Array | Buffer | string;
   terminatorCount?: number;
+  volumeSetSize?: number;
+  volumeSequenceNumber?: number;
   volumeIdentifier?: string;
   systemIdentifier?: string;
   volumeSetIdentifier?: string;

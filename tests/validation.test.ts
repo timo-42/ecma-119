@@ -1708,26 +1708,16 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported primary volume set size without duplicate parse issues", () => {
+  test("accepts primary volume set sizes larger than one when records stay on the local volume", () => {
     const image = baselineImage([{ path: "README.TXT", data: "multi-volume descriptor\n" }]);
     writeUint16Both(image, PVD_OFFSET + 120, 2);
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported multi-volume fields/i);
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "pvd.single_volume_profile",
-          message: "primary volume descriptor uses unsupported multi-volume fields",
-        }),
-      ]),
-    );
-    expect(validateIsoImage(image)).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "image.parse",
-        }),
-      ]),
-    );
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor.volumeSetSize).toBe(2);
+    expect(parsed.primaryVolumeDescriptor.volumeSequenceNumber).toBe(1);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("multi-volume descriptor\n");
   });
 
   test("reports zero primary volume set sizes as range issues", () => {
@@ -1752,17 +1742,17 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported primary volume sequence number before path table parsing", () => {
+  test("reports primary volume sequence numbers greater than the volume set size before path table parsing", () => {
     const image = baselineImage([{ path: "README.TXT", data: "multi-volume descriptor\n" }]);
     writeUint16Both(image, PVD_OFFSET + 124, 2);
     writeUint32Both(image, PVD_OFFSET + 140, 0xffff);
 
-    expect(() => parseIsoImage(image)).toThrow(/^primary volume descriptor uses unsupported multi-volume fields$/i);
+    expect(() => parseIsoImage(image)).toThrow(/volume sequence number must be less than or equal to volume set size/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "pvd.single_volume_profile",
-          message: "primary volume descriptor uses unsupported multi-volume fields",
+          code: "pvd.volume_sequence_number.bounds",
+          message: "primary volume descriptor volume sequence number must be less than or equal to volume set size",
         }),
       ]),
     );
@@ -1798,17 +1788,17 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported descriptor root volume sequence numbers without duplicate parse issues", () => {
+  test("reports external descriptor root volume sequence numbers without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root sequence\n" }]);
     writeUint16Both(image, PVD_OFFSET + 156 + 28, 2);
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported volume sequence number 2/i);
+    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 2/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.volume_sequence_unsupported",
           path: ".",
-          message: expect.stringMatching(/volume sequence number 2/i),
+          message: expect.stringMatching(/external volume sequence number 2/i),
         }),
       ]),
     );
@@ -1844,19 +1834,19 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported child directory record volume sequence numbers without duplicate parse issues", () => {
+  test("reports external child directory record volume sequence numbers without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "child sequence\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
     writeUint16Both(image, fileRecordOffset + 28, 2);
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported volume sequence number 2/i);
+    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 2/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.volume_sequence_unsupported",
           path: "README.TXT",
-          message: expect.stringMatching(/volume sequence number 2/i),
+          message: expect.stringMatching(/external volume sequence number 2/i),
         }),
       ]),
     );
@@ -2423,7 +2413,7 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported supplementary volume set size", () => {
+  test("accepts supplementary volume set sizes larger than one when records stay on the local volume", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
       supplementaryVolumeDescriptors: [{
@@ -2434,14 +2424,7 @@ describe("validateIsoImage hardening", () => {
     const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
     writeUint16Both(image, supplementaryDescriptorOffset + 120, 2);
 
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "supplementary.single_volume_profile",
-          message: "supplementary volume descriptor uses unsupported multi-volume fields",
-        }),
-      ]),
-    );
+    expect(validateIsoImage(image)).toEqual([]);
   });
 
   test.each([
@@ -2564,7 +2547,7 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported supplementary volume sequence number", () => {
+  test("reports supplementary volume sequence numbers greater than the volume set size", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
       supplementaryVolumeDescriptors: [{
@@ -2578,14 +2561,14 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "supplementary.single_volume_profile",
-          message: "supplementary volume descriptor uses unsupported multi-volume fields",
+          code: "supplementary.volume_sequence_number.bounds",
+          message: "supplementary volume descriptor volume sequence number must be less than or equal to volume set size",
         }),
       ]),
     );
   });
 
-  test("reports unsupported enhanced volume sequence number", () => {
+  test("reports enhanced volume sequence numbers greater than the volume set size", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
       enhancedVolumeDescriptors: [{
@@ -2599,8 +2582,8 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "enhanced.single_volume_profile",
-          message: "enhanced volume descriptor uses unsupported multi-volume fields",
+          code: "enhanced.volume_sequence_number.bounds",
+          message: "enhanced volume descriptor volume sequence number must be less than or equal to volume set size",
         }),
       ]),
     );
