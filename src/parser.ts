@@ -989,8 +989,8 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
     try {
       decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch (error) {
-      if (dateIssues.length === 0) {
-        const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
+      const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
+      if (dateIssues.length === 0 || !isDirectoryRecordDateTimeError(message)) {
         const isPaddingError = message.includes("padding byte");
         issues.push({
           code: isPaddingError ? "directory.record_padding" : "directory.record_malformed",
@@ -1007,6 +1007,11 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
     offset += length;
   }
   return issues;
+}
+
+function isDirectoryRecordDateTimeError(message: string): boolean {
+  return /^(month|day|hour|minute|second|time zone offset) /u.test(message)
+    || message === "day is not valid for the supplied month and year";
 }
 
 function rawDirectoryRecordPath(directoryBytes: Uint8Array, offset: number, recordIndex: number, directoryPath: string): string {
