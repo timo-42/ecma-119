@@ -6,6 +6,7 @@ export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
   date?: Date;
+  systemUse?: Uint8Array | Buffer | string;
 };
 
 export type CreateIsoOptions = {
@@ -46,6 +47,7 @@ export type IsoFileEntry = {
   date: Date;
   flags: number;
   data?: Uint8Array;
+  systemUse?: Uint8Array;
 };
 
 export type IsoDirectoryEntry = {
@@ -56,6 +58,7 @@ export type IsoDirectoryEntry = {
   date: Date;
   flags: number;
   children: IsoNode[];
+  systemUse?: Uint8Array;
 };
 
 export type IsoNode = IsoFileEntry | IsoDirectoryEntry;

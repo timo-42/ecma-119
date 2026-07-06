@@ -16,7 +16,11 @@ npm install ecma-119
 import { createIsoImage, parseIsoImage } from "ecma-119";
 
 const image = createIsoImage([
-  { path: "README.TXT", data: "Hello from ECMA-119\n" }
+  {
+    path: "README.TXT",
+    data: "Hello from ECMA-119\n",
+    systemUse: new Uint8Array([0x53, 0x55])
+  }
 ], {
   volumeIdentifier: "EXAMPLE",
   bootRecord: {
@@ -43,6 +47,7 @@ Implemented support is intentionally explicit:
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
+- opaque directory record System Use bytes
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 

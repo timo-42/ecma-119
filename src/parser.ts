@@ -250,6 +250,10 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       offset += length;
       continue;
     }
+    const paddingOffset = offset + 33 + identifierLength;
+    if (identifierLength % 2 === 0 && image[paddingOffset] !== 0) {
+      issues.push({ code: "directory.record_padding", message: `directory record file identifier padding byte must be zero at ${path}`, path });
+    }
     if ((image[offset + 25]! & 0x60) !== 0) {
       issues.push({ code: "directory.file_flags_reserved", message: `directory record has reserved file flag bits set at ${path}`, path });
     }
@@ -360,6 +364,9 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
         date: record.date,
         flags: record.flags,
       };
+      if (record.systemUse.byteLength > 0) {
+        file.systemUse = record.systemUse;
+      }
       if (includeData) {
         file.data = image.slice(record.extent * SECTOR_SIZE, record.extent * SECTOR_SIZE + record.dataLength);
       }
@@ -379,7 +386,7 @@ function assertExtentInBounds(image: Uint8Array, extent: number, length: number,
 }
 
 function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {
-  return {
+  const entry: IsoDirectoryEntry = {
     path,
     identifier: decodeFileIdentifier(record.identifier),
     extent: record.extent,
@@ -388,6 +395,10 @@ function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, 
     flags: record.flags,
     children,
   };
+  if (record.systemUse.byteLength > 0) {
+    entry.systemUse = record.systemUse;
+  }
+  return entry;
 }
 
 function collectParsedFiles(directory: IsoDirectoryEntry): IsoFileEntry[] {
