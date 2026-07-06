@@ -162,6 +162,75 @@ describe("ECMA-119 date/time zone offsets", () => {
     expect(primary?.kind === "primary" ? primary.modifiedAt?.toISOString() : undefined).toBe("9999-12-31T23:59:59.000Z");
     expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["MAXYEAR.TXT"]);
   });
+
+  test("reports invalid primary volume descriptor date fields", () => {
+    const image = createIsoImage([{ path: "DATE.TXT", data: "bad pvd date\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    writeVolumeDateText(image, PVD_OFFSET + 813, "2024130100000000");
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.creation_date",
+          message: expect.stringMatching(/primary volume creation date and time is invalid: month/i),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/month/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports unspecified primary volume descriptor date fields with nonzero offsets", () => {
+    const image = createIsoImage([{ path: "DATE.TXT", data: "unspecified offset\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+      expiresAt: null,
+    });
+    image[PVD_OFFSET + 847 + 16] = 1;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.expiration_date",
+          message: "primary volume expiration date and time unspecified value must use zero GMT offset",
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      code: "supplementary.modification_date",
+      message: /supplementary volume modification date and time is invalid: day/i,
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      code: "enhanced.effective_date",
+      message: /enhanced volume effective date and time is invalid: hour/i,
+    },
+  ])("reports invalid $kind volume descriptor date fields", ({ options, code, message }) => {
+    const image = createIsoImage([{ path: "DATE.TXT", data: "bad secondary date\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+      ...options,
+    });
+    const dateOffset = code === "supplementary.modification_date" ? 830 : 864;
+    const invalidDate = code === "supplementary.modification_date" ? "2024023100000000" : "2024010124000000";
+    writeVolumeDateText(image, SUPPLEMENTARY_OFFSET + dateOffset, invalidDate);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          message: expect.stringMatching(message),
+        }),
+      ]),
+    );
+  });
 });
 
 function getRootDirectoryBytes(image: Uint8Array): Uint8Array {
@@ -210,6 +279,10 @@ function readUint32BE(bytes: Uint8Array, offset: number): number {
 
 function asciiBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
+}
+
+function writeVolumeDateText(image: Uint8Array, offset: number, value: string): void {
+  image.set(asciiBytes(value), offset);
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
