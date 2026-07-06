@@ -417,30 +417,26 @@ function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry,
   }
   visited.add(directory.extent);
 
-  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
-  const directoryEnd = start + directory.size;
-  if (!Number.isInteger(start) || !Number.isInteger(directoryEnd) || start < 0 || directoryEnd < start) {
+  const directoryBytes = readDirectoryExtentBytes(image, directory);
+  if (!directoryBytes) {
     return Number.POSITIVE_INFINITY;
   }
-  if (directoryEnd > image.byteLength) {
-    return end;
-  }
 
-  let offset = start;
+  let offset = 0;
   let recordIndex = 0;
-  while (offset < directoryEnd) {
-    const length = image[offset]!;
+  while (offset < directoryBytes.byteLength) {
+    const length = directoryBytes[offset]!;
     if (length === 0) {
-      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
       continue;
     }
-    if (length < 34 || offset + length > directoryEnd || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+    if (length < 34 || offset + length > directoryBytes.byteLength || (offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
       offset += Math.max(1, length);
       continue;
     }
     let record: DecodedDirectoryRecord;
     try {
-      record = decodeDirectoryRecord(image, offset, directoryEnd);
+      record = decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch {
       offset += length;
       continue;
@@ -462,7 +458,12 @@ function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry,
 }
 
 function directoryExtentEndSector(directory: IsoDirectoryEntry): number {
-  return extentEndSector(directory.extent, directory.extendedAttributeRecordLength, sectorsForBytes(directory.size));
+  return directory.extent + sectionExtentSectors({
+    dataLength: directory.size,
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+    fileUnitSize: directory.fileUnitSize,
+    interleaveGapSize: directory.interleaveGapSize,
+  });
 }
 
 function fileExtentEndSector(record: DecodedDirectoryRecord): number {
@@ -807,27 +808,26 @@ function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): C
       key,
     });
 
-    const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
-    const end = start + directory.size;
-    if (start < 0 || end > image.byteLength) {
+    const directoryBytes = readDirectoryExtentBytes(image, directory);
+    if (!directoryBytes) {
       return;
     }
     const childDirectories: Array<{ directory: IsoDirectoryEntry; identifier: Uint8Array }> = [];
-    let offset = start;
+    let offset = 0;
     let recordIndex = 0;
-    while (offset < end) {
-      const length = image[offset]!;
+    while (offset < directoryBytes.byteLength) {
+      const length = directoryBytes[offset]!;
       if (length === 0) {
-        offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+        offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
         continue;
       }
-      if (length < 34 || offset + length > end || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+      if (length < 34 || offset + length > directoryBytes.byteLength || (offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
         offset += Math.max(1, length);
         continue;
       }
       let record: DecodedDirectoryRecord;
       try {
-        record = decodeDirectoryRecord(image, offset, end);
+        record = decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
       } catch {
         offset += length;
         continue;
@@ -914,27 +914,24 @@ function bytesKey(bytes: Uint8Array): string {
 
 function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const start = directory.extent * SECTOR_SIZE;
-  const directoryStart = start + directory.extendedAttributeRecordLength * SECTOR_SIZE;
-  const end = directoryStart + directory.size;
-  if (start < 0 || end > image.byteLength) {
+  const directoryBytes = readDirectoryExtentBytes(image, directory);
+  if (!directoryBytes) {
     return [{ code: "directory.record_bounds", message: `directory extent for ${path} is out of bounds`, path }];
   }
-  let offset = directoryStart;
-  while (offset < end) {
-    const length = image[offset]!;
+  let offset = 0;
+  while (offset < directoryBytes.byteLength) {
+    const length = directoryBytes[offset]!;
     if (length === 0) {
-      offset = Math.ceil((offset - directoryStart + 1) / SECTOR_SIZE) * SECTOR_SIZE + directoryStart;
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
       continue;
     }
-    const relative = offset - directoryStart;
-    if ((relative % SECTOR_SIZE) + length > SECTOR_SIZE) {
+    if ((offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
       issues.push({ code: "directory.record_crosses_sector", message: `directory record crosses a logical sector boundary at ${path}`, path });
       offset += 1;
       continue;
     }
     try {
-      decodeDirectoryRecord(image, offset, end);
+      decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch (error) {
       const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
       const isPaddingError = message.includes("padding byte");
@@ -946,7 +943,7 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       offset += Math.max(1, length);
       continue;
     }
-    if ((image[offset + 25]! & 0x60) !== 0) {
+    if ((directoryBytes[offset + 25]! & 0x60) !== 0) {
       issues.push({ code: "directory.file_flags_reserved", message: `directory record has reserved file flag bits set at ${path}`, path });
     }
     offset += length;
@@ -981,36 +978,35 @@ function validateDirectoryHierarchy(
   issues.push(...validateDirectoryRecordLayout(image, directory, path));
   issues.push(...validateExtendedAttributeRecords(image, directory, path));
 
-  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
-  const end = start + directory.size;
-  if (start < 0 || end > image.byteLength) {
+  const directoryBytes = readDirectoryExtentBytes(image, directory);
+  if (!directoryBytes) {
     return issues;
   }
-  let offset = start;
+  let offset = 0;
   let recordIndex = 0;
   let previousOrdinaryRecord: DecodedDirectoryRecord | undefined;
   let previousOrdinaryPath = "";
   let pendingMultiExtentRecord: DecodedDirectoryRecord | undefined;
   let pendingMultiExtentPath = "";
   const ordinaryRecordKeys = new Set<string>();
-  while (offset < end) {
-    const length = image[offset]!;
+  while (offset < directoryBytes.byteLength) {
+    const length = directoryBytes[offset]!;
     if (length === 0) {
       if (recordIndex === 0) {
         issues.push({ code: "directory.self_record.missing", message: `directory self record is missing at ${path}`, path });
       } else if (recordIndex === 1) {
         issues.push({ code: "directory.parent_record.missing", message: `directory parent record is missing at ${path}`, path });
       }
-      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
       continue;
     }
-    if (length < 34 || offset + length > end || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+    if (length < 34 || offset + length > directoryBytes.byteLength || (offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
       offset += Math.max(1, length);
       continue;
     }
     let record: DecodedDirectoryRecord;
     try {
-      record = decodeDirectoryRecord(image, offset, end);
+      record = decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch {
       offset += length;
       continue;
@@ -1071,27 +1067,21 @@ function validateDirectoryHierarchy(
     if (index >= 2 && validatePrimaryLevelOne) {
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
     }
-    if ((record.flags & FILE_FLAG_DIRECTORY) !== 0 && (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0)) {
-      issues.push({
-        code: "directory.interleaving_unsupported",
-        message: `directory record at ${recordPath || "."} uses unsupported interleaved file section fields`,
-        path: recordPath || ".",
-      });
-    } else if ((record.flags & FILE_FLAG_DIRECTORY) === 0 && record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
+    if (record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
       issues.push({
         code: "directory.interleaving_invalid",
         message: `directory record at ${recordPath || "."} has invalid interleaved file section fields`,
         path: recordPath || ".",
       });
     } else if (
-      (record.flags & FILE_FLAG_DIRECTORY) === 0
-      && record.fileUnitSize !== 0
+      record.fileUnitSize !== 0
       && record.extendedAttributeRecordLength !== 0
       && record.extendedAttributeRecordLength !== record.fileUnitSize
     ) {
+      const recordKind = (record.flags & FILE_FLAG_DIRECTORY) !== 0 ? "directory" : "file";
       issues.push({
         code: "directory.interleaved_ear_length",
-        message: `interleaved file record at ${recordPath || "."} has extended attribute record length ${record.extendedAttributeRecordLength}; expected file unit size ${record.fileUnitSize}`,
+        message: `interleaved ${recordKind} record at ${recordPath || "."} has extended attribute record length ${record.extendedAttributeRecordLength}; expected file unit size ${record.fileUnitSize}`,
         path: recordPath || ".",
       });
     }
@@ -1472,13 +1462,15 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
 }
 
 function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, visited: Set<number>): IsoDirectoryEntry {
-  assertExtentInBounds(image, directory.extent, directory.extendedAttributeRecordLength, directory.size, path || ".");
+  assertDirectoryInBounds(image, directory, path || ".");
   if (visited.has(directory.extent)) {
     throw new Error(`invalid directory cycle detected at ${path || "."}`);
   }
   visited.add(directory.extent);
-  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
-  const bytes = image.subarray(start, start + directory.size);
+  const bytes = readDirectoryExtentBytes(image, directory);
+  if (!bytes) {
+    throw new Error(`invalid extent bounds for ${path || "."}`);
+  }
   const children: IsoNode[] = [];
   let offset = 0;
   let recordIndex = 0;
@@ -1500,7 +1492,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
 
     const index = recordIndex++;
     if (index < 2) {
-      assertSupportedDirectoryRecord(record, path || ".");
+      assertSupportedDirectoryRecord(record, path || ".", { allowInterleaving: true });
       continue;
     }
 
@@ -1508,7 +1500,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       const identifier = decodeFileIdentifier(record.identifier);
       const cleanName = stripVersion(identifier);
       const recordPath = joinPath(path, cleanName);
-      assertSupportedDirectoryRecord(record, recordPath || ".");
+      assertSupportedDirectoryRecord(record, recordPath || ".", { allowInterleaving: true });
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromRecord(record, childPath, []);
       if (record.extendedAttributeRecordLength > 0) {
@@ -1654,15 +1646,30 @@ function readFileSectionData(image: Uint8Array, records: DecodedDirectoryRecord[
 }
 
 function readFileSectionPayload(image: Uint8Array, record: DecodedDirectoryRecord, target: Uint8Array, targetOffset: number): number {
-  const dataStart = fileSectionDataStartSector(record) * SECTOR_SIZE;
-  if (record.fileUnitSize === 0) {
-    target.set(image.subarray(dataStart, dataStart + record.dataLength), targetOffset);
-    return targetOffset + record.dataLength;
+  return readSectionPayload(image, {
+    extent: record.extent,
+    extendedAttributeRecordLength: record.extendedAttributeRecordLength,
+    dataLength: record.dataLength,
+    fileUnitSize: record.fileUnitSize,
+    interleaveGapSize: record.interleaveGapSize,
+  }, target, targetOffset);
+}
+
+function readSectionPayload(
+  image: Uint8Array,
+  section: { extent: number; extendedAttributeRecordLength: number; dataLength: number; fileUnitSize: number; interleaveGapSize: number },
+  target: Uint8Array,
+  targetOffset: number,
+): number {
+  const dataStart = sectionDataStartSector(section) * SECTOR_SIZE;
+  if (section.fileUnitSize === 0) {
+    target.set(image.subarray(dataStart, dataStart + section.dataLength), targetOffset);
+    return targetOffset + section.dataLength;
   }
 
-  const unitBytes = record.fileUnitSize * SECTOR_SIZE;
-  const strideBytes = (record.fileUnitSize + record.interleaveGapSize) * SECTOR_SIZE;
-  let remaining = record.dataLength;
+  const unitBytes = section.fileUnitSize * SECTOR_SIZE;
+  const strideBytes = (section.fileUnitSize + section.interleaveGapSize) * SECTOR_SIZE;
+  let remaining = section.dataLength;
   let sourceOffset = dataStart;
   let writeOffset = targetOffset;
   while (remaining > 0) {
@@ -1677,26 +1684,25 @@ function readFileSectionPayload(image: Uint8Array, record: DecodedDirectoryRecor
 
 function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
-  const end = start + directory.size;
-  if (start < 0 || end > image.byteLength) {
+  const directoryBytes = readDirectoryExtentBytes(image, directory);
+  if (!directoryBytes) {
     return issues;
   }
-  let offset = start;
+  let offset = 0;
   let recordIndex = 0;
-  while (offset < end) {
-    const length = image[offset]!;
+  while (offset < directoryBytes.byteLength) {
+    const length = directoryBytes[offset]!;
     if (length === 0) {
-      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
       continue;
     }
-    if (length < 34 || offset + length > end || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+    if (length < 34 || offset + length > directoryBytes.byteLength || (offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
       offset += Math.max(1, length);
       continue;
     }
     let record: DecodedDirectoryRecord;
     try {
-      record = decodeDirectoryRecord(image, offset, end);
+      record = decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch {
       offset += length;
       continue;
@@ -1790,8 +1796,49 @@ function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttribu
   }
 }
 
+function readDirectoryExtentBytes(image: Uint8Array, directory: IsoDirectoryEntry): Uint8Array | undefined {
+  if (!sectionInBounds(image, {
+    extent: directory.extent,
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+    dataLength: directory.size,
+    fileUnitSize: directory.fileUnitSize,
+    interleaveGapSize: directory.interleaveGapSize,
+  })) {
+    return undefined;
+  }
+  const bytes = new Uint8Array(directory.size);
+  readSectionPayload(image, {
+    extent: directory.extent,
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+    dataLength: directory.size,
+    fileUnitSize: directory.fileUnitSize,
+    interleaveGapSize: directory.interleaveGapSize,
+  }, bytes, 0);
+  return bytes;
+}
+
+function assertDirectoryInBounds(image: Uint8Array, directory: IsoDirectoryEntry, path: string): void {
+  if (!sectionInBounds(image, {
+    extent: directory.extent,
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+    dataLength: directory.size,
+    fileUnitSize: directory.fileUnitSize,
+    interleaveGapSize: directory.interleaveGapSize,
+  })) {
+    throw new Error(`invalid extent bounds for ${path}`);
+  }
+}
+
 function assertFileSectionInBounds(image: Uint8Array, record: DecodedDirectoryRecord, path: string): void {
-  assertExtentInBounds(image, record.extent, 0, fileSectionExtentSectors(record) * SECTOR_SIZE, path);
+  if (!sectionInBounds(image, {
+    extent: record.extent,
+    extendedAttributeRecordLength: record.extendedAttributeRecordLength,
+    dataLength: record.dataLength,
+    fileUnitSize: record.fileUnitSize,
+    interleaveGapSize: record.interleaveGapSize,
+  })) {
+    throw new Error(`invalid extent bounds for ${path}`);
+  }
 }
 
 function fileSectionStorageByteLength(record: Pick<DecodedDirectoryRecord, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
@@ -1816,13 +1863,37 @@ function fileSectionStorageSectors(record: Pick<DecodedDirectoryRecord, "dataLen
 }
 
 function fileSectionExtentSectors(record: Pick<DecodedDirectoryRecord, "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  return sectionExtentSectors(record);
+}
+
+function sectionExtentSectors(record: Pick<DecodedDirectoryRecord, "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
   if (record.fileUnitSize === 0 || record.extendedAttributeRecordLength === 0) {
     return record.extendedAttributeRecordLength + fileSectionStorageSectors(record);
   }
   return record.extendedAttributeRecordLength + record.interleaveGapSize + fileSectionStorageSectors(record);
 }
 
-function fileSectionDataStartSector(record: Pick<DecodedDirectoryRecord, "extent" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+function sectionInBounds(
+  image: Uint8Array,
+  record: Pick<DecodedDirectoryRecord, "extent" | "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">,
+): boolean {
+  const start = record.extent * SECTOR_SIZE;
+  const end = start + sectionExtentSectors(record) * SECTOR_SIZE;
+  return Number.isInteger(record.extent)
+    && Number.isInteger(record.dataLength)
+    && Number.isInteger(record.extendedAttributeRecordLength)
+    && Number.isInteger(record.fileUnitSize)
+    && Number.isInteger(record.interleaveGapSize)
+    && record.extent >= 0
+    && record.dataLength >= 0
+    && record.extendedAttributeRecordLength >= 0
+    && record.fileUnitSize >= 0
+    && record.interleaveGapSize >= 0
+    && start >= 0
+    && end <= image.byteLength;
+}
+
+function sectionDataStartSector(record: Pick<DecodedDirectoryRecord, "extent" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
   if (record.fileUnitSize !== 0 && record.extendedAttributeRecordLength !== 0) {
     return record.extent + record.extendedAttributeRecordLength + record.interleaveGapSize;
   }
@@ -1838,17 +1909,17 @@ function assertSupportedDirectoryRecord(
   if (!options.allowInterleaving && (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0)) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
-  if (options.allowInterleaving && record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
+  if (record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
   }
   if (
     options.allowInterleaving
-    && (record.flags & FILE_FLAG_DIRECTORY) === 0
     && record.fileUnitSize !== 0
     && record.extendedAttributeRecordLength !== 0
     && record.extendedAttributeRecordLength !== record.fileUnitSize
   ) {
-    throw new Error(`interleaved file record at ${path} has extended attribute record length ${record.extendedAttributeRecordLength}; expected file unit size ${record.fileUnitSize}`);
+    const recordKind = (record.flags & FILE_FLAG_DIRECTORY) !== 0 ? "directory" : "file";
+    throw new Error(`interleaved ${recordKind} record at ${path} has extended attribute record length ${record.extendedAttributeRecordLength}; expected file unit size ${record.fileUnitSize}`);
   }
   if (!options.allowMultiExtent && (record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
@@ -1858,8 +1929,15 @@ function assertSupportedDirectoryRecord(
 
 function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): void {
   assertSupportedDirectoryFileFlags(entry.flags, path);
-  if (entry.fileUnitSize !== 0 || entry.interleaveGapSize !== 0) {
-    throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
+  if (entry.fileUnitSize === 0 && entry.interleaveGapSize !== 0) {
+    throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
+  }
+  if (
+    entry.fileUnitSize !== 0
+    && entry.extendedAttributeRecordLength !== 0
+    && entry.extendedAttributeRecordLength !== entry.fileUnitSize
+  ) {
+    throw new Error(`interleaved directory record at ${path} has extended attribute record length ${entry.extendedAttributeRecordLength}; expected file unit size ${entry.fileUnitSize}`);
   }
   if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
@@ -1921,11 +1999,21 @@ function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: stri
   if (entry.fileUnitSize === 0 && entry.interleaveGapSize === 0) {
     return [];
   }
-  return [{
-    code: "directory.interleaving_unsupported",
-    message: `directory record at ${path} uses unsupported interleaved file section fields`,
-    path,
-  }];
+  if (entry.fileUnitSize === 0) {
+    return [{
+      code: "directory.interleaving_invalid",
+      message: `directory record at ${path} has invalid interleaved file section fields`,
+      path,
+    }];
+  }
+  if (entry.extendedAttributeRecordLength !== 0 && entry.extendedAttributeRecordLength !== entry.fileUnitSize) {
+    return [{
+      code: "directory.interleaved_ear_length",
+      message: `interleaved directory record at ${path} has extended attribute record length ${entry.extendedAttributeRecordLength}; expected file unit size ${entry.fileUnitSize}`,
+      path,
+    }];
+  }
+  return [];
 }
 
 function validateDirectoryEntryReservedFileFlags(entry: Pick<IsoDirectoryEntry, "flags">, path: string): ValidationIssue[] {

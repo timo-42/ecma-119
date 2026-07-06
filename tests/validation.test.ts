@@ -1297,18 +1297,35 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported interleaved descriptor root directory fields without duplicate parse issues", () => {
-    const image = baselineImage([{ path: "README.TXT", data: "root interleaved metadata\n" }]);
-    image[PVD_OFFSET + 156 + 26] = 1;
+  test("accepts interleaved descriptor root directory fields", () => {
+    const files = Array.from({ length: 80 }, (_, index) => ({
+      path: `F${index.toString().padStart(3, "0")}.TXT`,
+      data: `file ${index}\n`,
+    }));
+    const image = withInterleavedPrimaryRootDirectory(baselineImage(files), 1, 1);
+
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.root).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parsed.files.map((file) => file.path)).toEqual(files.map((file) => file.path));
+  });
+
+  test("reports invalid interleaved descriptor root directory fields without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root invalid interleaved metadata\n" }]);
+    image[PVD_OFFSET + 156 + 26] = 0;
     image[PVD_OFFSET + 156 + 27] = 2;
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported interleaved file section fields/i);
+    expect(() => parseIsoImage(image)).toThrow(/invalid interleaved file section fields/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "directory.interleaving_unsupported",
+          code: "directory.interleaving_invalid",
           path: ".",
-          message: expect.stringMatching(/unsupported interleaved/i),
+          message: expect.stringMatching(/invalid interleaved/i),
         }),
       ]),
     );
@@ -2687,9 +2704,60 @@ function withDescriptorRootExtendedAttributeRecord(image: Uint8Array, descriptor
   return result;
 }
 
+function withInterleavedPrimaryRootDirectory(image: Uint8Array, fileUnitSize: number, interleaveGapSize: number): Uint8Array {
+  const rootExtent = rootDirectoryExtent(image);
+  const rootSize = rootDirectorySizeAt(image, PVD_OFFSET);
+  const rootDirectory = image.slice(rootExtent * SECTOR_SIZE, rootExtent * SECTOR_SIZE + rootSize);
+  const oldSectorCount = image.byteLength / SECTOR_SIZE;
+  const newRootExtent = oldSectorCount;
+  const storageSectors = interleavedStorageSectors(rootSize, fileUnitSize, interleaveGapSize);
+  const result = new Uint8Array(image.byteLength + storageSectors * SECTOR_SIZE);
+  result.set(image);
+
+  writeDirectoryRecordExtentFields(rootDirectory, 0, newRootExtent, 0);
+  writeDirectoryRecordInterleaveFields(rootDirectory, 0, fileUnitSize, interleaveGapSize);
+  const parentRecordOffset = rootDirectory[0]!;
+  writeDirectoryRecordExtentFields(rootDirectory, parentRecordOffset, newRootExtent, 0);
+  writeDirectoryRecordInterleaveFields(rootDirectory, parentRecordOffset, fileUnitSize, interleaveGapSize);
+  writeInterleavedBytes(result, newRootExtent, rootDirectory, fileUnitSize, interleaveGapSize);
+
+  writeDirectoryRecordExtentFields(result, PVD_OFFSET + 156, newRootExtent, 0);
+  writeDirectoryRecordInterleaveFields(result, PVD_OFFSET + 156, fileUnitSize, interleaveGapSize);
+  const littlePathTableOffset = readUint32LE(result, PVD_OFFSET + 140) * SECTOR_SIZE;
+  const bigPathTableOffset = readUint32BE(result, PVD_OFFSET + 148) * SECTOR_SIZE;
+  writeUint32LE(result, littlePathTableOffset + 2, newRootExtent);
+  writeUint32BE(result, bigPathTableOffset + 2, newRootExtent);
+  setPrimaryVolumeSpaceSize(result, newRootExtent + storageSectors);
+  return result;
+}
+
 function writeDirectoryRecordExtentFields(image: Uint8Array, offset: number, extent: number, extendedAttributeRecordLength: number): void {
   image[offset + 1] = extendedAttributeRecordLength;
   writeUint32Both(image, offset + 2, extent);
+}
+
+function writeDirectoryRecordInterleaveFields(image: Uint8Array, offset: number, fileUnitSize: number, interleaveGapSize: number): void {
+  image[offset + 26] = fileUnitSize;
+  image[offset + 27] = interleaveGapSize;
+}
+
+function interleavedStorageSectors(byteLength: number, fileUnitSize: number, interleaveGapSize: number): number {
+  const unitBytes = fileUnitSize * SECTOR_SIZE;
+  const units = Math.ceil(byteLength / unitBytes);
+  return units === 0 ? 0 : (units - 1) * (fileUnitSize + interleaveGapSize) + Math.ceil((byteLength - (units - 1) * unitBytes) / SECTOR_SIZE);
+}
+
+function writeInterleavedBytes(image: Uint8Array, extent: number, bytes: Uint8Array, fileUnitSize: number, interleaveGapSize: number): void {
+  const unitBytes = fileUnitSize * SECTOR_SIZE;
+  const strideBytes = (fileUnitSize + interleaveGapSize) * SECTOR_SIZE;
+  let sourceOffset = 0;
+  let targetOffset = extent * SECTOR_SIZE;
+  while (sourceOffset < bytes.byteLength) {
+    const chunk = Math.min(unitBytes, bytes.byteLength - sourceOffset);
+    image.set(bytes.subarray(sourceOffset, sourceOffset + chunk), targetOffset);
+    sourceOffset += chunk;
+    targetOffset += strideBytes;
+  }
 }
 
 function expectVolumeSpaceLowerBoundIssue(): ReturnType<typeof expect.objectContaining> {
