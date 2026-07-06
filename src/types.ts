@@ -7,6 +7,8 @@ export type IsoInputFile = {
   data: Uint8Array | Buffer | string;
   date?: Date;
   timeZoneOffsetMinutes?: number;
+  hidden?: boolean;
+  associated?: boolean;
   extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
   systemUse?: Uint8Array | Buffer | string;
 };
@@ -15,6 +17,8 @@ export type IsoInputDirectory = {
   path: string;
   date?: Date;
   timeZoneOffsetMinutes?: number;
+  hidden?: boolean;
+  associated?: boolean;
   extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
   systemUse?: Uint8Array | Buffer | string;
 };

@@ -9,7 +9,7 @@ import {
   writeUint32Both,
   writeUint32LE,
 } from "./binary.js";
-import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
+import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
@@ -269,7 +269,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       date: file.date ?? now,
       timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
       extent: 0,
-      flags: 0,
+      flags: inputFileFlags(file),
     };
     if (file.extendedAttributeRecord !== undefined) {
       fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
@@ -287,7 +287,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       }
       const fields = decodeOptionalExtendedAttributeRecord(fileNode.extendedAttributeRecord);
       if (fields) {
-        fileNode.flags = extendedAttributeRecordFileFlags(fields);
+        fileNode.flags |= extendedAttributeRecordFileFlags(fields);
       }
     }
     if (file.systemUse !== undefined) {
@@ -301,6 +301,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     const directory = ensureDirectory(root, normalizeDirectoryPath(input.path).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
     directory.date = input.date ?? directory.date;
     directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
+    directory.flags = inputDirectoryFlags(directory.flags, input);
     if (input.extendedAttributeRecord !== undefined) {
       directory.extendedAttributeRecord = isExtendedAttributeRecordInput(input.extendedAttributeRecord)
         ? encodeExtendedAttributeRecord(input.extendedAttributeRecord, {
@@ -317,7 +318,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       }
       const fields = decodeOptionalExtendedAttributeRecord(directory.extendedAttributeRecord);
       if (fields) {
-        directory.flags = FILE_FLAG_DIRECTORY | (extendedAttributeRecordFileFlags(fields) & 0x10);
+        directory.flags |= extendedAttributeRecordFileFlags(fields) & 0x10;
       }
     }
     if (input.systemUse !== undefined) {
@@ -729,6 +730,28 @@ function checkedVolumeFlags(value: number): number {
     throw new Error("secondary volume descriptor flags bits 1 through 7 must be zero");
   }
   return flags;
+}
+
+function inputFileFlags(input: Pick<IsoInputFile, "hidden" | "associated">): number {
+  return inputFlags(0, input);
+}
+
+function inputDirectoryFlags(current: number, input: Pick<IsoInputDirectory, "hidden" | "associated">): number {
+  return inputFlags(current | FILE_FLAG_DIRECTORY, input);
+}
+
+function inputFlags(current: number, input: { hidden?: boolean; associated?: boolean }): number {
+  let flags = current;
+  flags = setFlag(flags, FILE_FLAG_HIDDEN, input.hidden);
+  flags = setFlag(flags, FILE_FLAG_ASSOCIATED, input.associated);
+  return flags;
+}
+
+function setFlag(flags: number, bit: number, value: boolean | undefined): number {
+  if (value === undefined) {
+    return flags;
+  }
+  return value ? flags | bit : flags & ~bit;
 }
 
 function compareNode(left: DirectoryNode | FileNode, right: DirectoryNode | FileNode): number {
