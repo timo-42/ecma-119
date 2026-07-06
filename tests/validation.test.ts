@@ -488,6 +488,54 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports optional Type L path tables that differ from the mandatory copy and hierarchy", () => {
+    const image = withOptionalPathTableCopy(
+      baselineImage([{ path: "DIR/FILE.TXT", data: "optional l path table\n" }]),
+      PVD_OFFSET,
+      "little",
+      (result, optionalPathTableOffset) => {
+        writeUint32LE(result, optionalPathTableOffset + 10 + 2, 0xffff);
+      },
+    );
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.optional.little.mismatch",
+          message: expect.stringMatching(/optional Type L path table record 2 does not match/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.optional.little.hierarchy.record",
+          message: expect.stringMatching(/optional Type L path table directory record does not match/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports optional Type M path tables that differ from the mandatory copy", () => {
+    const image = withOptionalPathTableCopy(
+      baselineImage([{ path: "DIR/FILE.TXT", data: "optional m path table\n" }]),
+      PVD_OFFSET,
+      "big",
+      (result, optionalPathTableOffset) => {
+        writeUint32BE(result, optionalPathTableOffset + 10 + 2, 0xffff);
+      },
+    );
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.optional.big.mismatch",
+          message: expect.stringMatching(/optional Type M path table record 2 does not match/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.optional.big.hierarchy.record",
+          message: expect.stringMatching(/optional Type M path table directory record does not match/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported primary file structure versions", () => {
     const image = baselineImage([{ path: "README.TXT", data: "file structure version\n" }]);
     image[PVD_OFFSET + 881] = 2;
@@ -1600,6 +1648,36 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports supplementary optional path tables that differ from the mandatory copy and hierarchy", () => {
+    const image = withOptionalPathTableCopy(
+      createIsoImage([{ path: "DIR/FILE.TXT", data: "supp optional path table\n" }], {
+        volumeIdentifier: "VALIDATION",
+        supplementaryVolumeDescriptors: [{
+          volumeIdentifier: "SUPP",
+        }],
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+      }),
+      17 * SECTOR_SIZE,
+      "big",
+      (result, optionalPathTableOffset) => {
+        writeUint32BE(result, optionalPathTableOffset + 10 + 2, 0xffff);
+      },
+    );
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.optional.big.mismatch",
+          message: expect.stringMatching(/optional Type M path table record 2 does not match/i),
+        }),
+        expect.objectContaining({
+          code: "supplementary_path_table.optional.big.hierarchy.record",
+          message: expect.stringMatching(/optional Type M path table directory record does not match/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported supplementary file structure versions", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
@@ -2110,6 +2188,40 @@ function setRootDirectorySize(image: Uint8Array, size: number): void {
 
 function setPrimaryVolumeSpaceSize(image: Uint8Array, size: number): void {
   writeUint32Both(image, PVD_OFFSET + 80, size);
+}
+
+function withOptionalPathTableCopy(
+  image: Uint8Array,
+  descriptorOffset: number,
+  endian: "little" | "big",
+  mutate: (image: Uint8Array, optionalPathTableOffset: number) => void,
+): Uint8Array {
+  const optionalSector = image.byteLength / SECTOR_SIZE;
+  const result = new Uint8Array(image.byteLength + SECTOR_SIZE);
+  result.set(image);
+
+  const pathTableSize = readBothEndianUint32(result, descriptorOffset + 132);
+  const mandatoryLocation = endian === "little"
+    ? readUint32LE(result, descriptorOffset + 140)
+    : readUint32BE(result, descriptorOffset + 148);
+  const mandatoryPathTableOffset = mandatoryLocation * SECTOR_SIZE;
+  const optionalPathTableOffset = optionalSector * SECTOR_SIZE;
+  result.set(result.subarray(mandatoryPathTableOffset, mandatoryPathTableOffset + pathTableSize), optionalPathTableOffset);
+
+  if (endian === "little") {
+    writeUint32LE(result, descriptorOffset + 144, optionalSector);
+  } else {
+    writeUint32BE(result, descriptorOffset + 152, optionalSector);
+  }
+
+  const requiredVolumeSpaceSize = optionalSector + Math.ceil(pathTableSize / SECTOR_SIZE);
+  setDescriptorVolumeSpaceSize(result, PVD_OFFSET, Math.max(descriptorVolumeSpaceSize(result, PVD_OFFSET), requiredVolumeSpaceSize));
+  if (descriptorOffset !== PVD_OFFSET) {
+    setDescriptorVolumeSpaceSize(result, descriptorOffset, Math.max(descriptorVolumeSpaceSize(result, descriptorOffset), requiredVolumeSpaceSize));
+  }
+
+  mutate(result, optionalPathTableOffset);
+  return result;
 }
 
 function withDescriptorRootExtendedAttributeRecord(image: Uint8Array, descriptorOffset: number, extendedAttributeRecord: Uint8Array): Uint8Array {

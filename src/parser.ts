@@ -406,14 +406,22 @@ function validatePathTableReferences(
 ): ValidationIssue[] {
   const little = validatePathTableReference(image, descriptor, codePrefix, "little", descriptor.typeLPathTableLocation);
   const big = validatePathTableReference(image, descriptor, codePrefix, "big", descriptor.typeMPathTableLocation);
+  const optionalLittle = validateOptionalPathTableReference(image, descriptor, codePrefix, "little");
+  const optionalBig = validateOptionalPathTableReference(image, descriptor, codePrefix, "big");
   const issues = [
     ...little.issues,
     ...big.issues,
-    ...validateOptionalPathTableReference(image, descriptor, codePrefix, "little"),
-    ...validateOptionalPathTableReference(image, descriptor, codePrefix, "big"),
+    ...optionalLittle.issues,
+    ...optionalBig.issues,
   ];
   if (little.records && big.records) {
     issues.push(...validatePathTableMirror(little.records, big.records, codePrefix));
+  }
+  if (little.records && optionalLittle.records) {
+    issues.push(...validatePathTableCopy(little.records, optionalLittle.records, codePrefix, "little"));
+  }
+  if (big.records && optionalBig.records) {
+    issues.push(...validatePathTableCopy(big.records, optionalBig.records, codePrefix, "big"));
   }
   const expected = expectedPathTableRecords(image, descriptor.rootDirectoryRecord);
   if (expected) {
@@ -421,6 +429,12 @@ function validatePathTableReferences(
       issues.push(...validatePathTableAgainstHierarchy(little.records, expected, codePrefix, "Type L"));
     } else if (big.records) {
       issues.push(...validatePathTableAgainstHierarchy(big.records, expected, codePrefix, "Type M"));
+    }
+    if (optionalLittle.records) {
+      issues.push(...validatePathTableAgainstHierarchy(optionalLittle.records, expected, `${codePrefix}.optional.little`, "optional Type L"));
+    }
+    if (optionalBig.records) {
+      issues.push(...validatePathTableAgainstHierarchy(optionalBig.records, expected, `${codePrefix}.optional.big`, "optional Type M"));
     }
   }
   return issues;
@@ -570,13 +584,12 @@ function validateOptionalPathTableReference(
   descriptor: PathTableValidationInput,
   codePrefix: string,
   endian: "little" | "big",
-): ValidationIssue[] {
+): { issues: ValidationIssue[]; records?: PathTableRecord[] } {
   const location = endian === "little" ? descriptor.optionalTypeLPathTableLocation : descriptor.optionalTypeMPathTableLocation;
   if (location === 0) {
-    return [];
+    return { issues: [] };
   }
-  const result = validatePathTableReference(image, descriptor, `${codePrefix}.optional`, endian, location);
-  return result.issues;
+  return validatePathTableReference(image, descriptor, `${codePrefix}.optional`, endian, location);
 }
 
 function validatePathTableMirror(little: PathTableRecord[], big: PathTableRecord[], codePrefix: string): ValidationIssue[] {
@@ -594,6 +607,31 @@ function validatePathTableMirror(little: PathTableRecord[], big: PathTableRecord
       issues.push({
         code: `${codePrefix}.mirror.mismatch`,
         message: `Type L and Type M path table record ${index + 1} do not match`,
+      });
+    }
+  }
+  return issues;
+}
+
+function validatePathTableCopy(
+  required: PathTableRecord[],
+  optional: PathTableRecord[],
+  codePrefix: string,
+  endian: "little" | "big",
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const label = endian === "little" ? "Type L" : "Type M";
+  if (required.length !== optional.length) {
+    issues.push({
+      code: `${codePrefix}.optional.${endian}.mismatch`,
+      message: `optional ${label} path table has a different record count than the mandatory ${label} path table: ${optional.length} !== ${required.length}`,
+    });
+  }
+  for (let index = 0; index < Math.min(required.length, optional.length); index += 1) {
+    if (!samePathTableRecord(required[index]!, optional[index]!)) {
+      issues.push({
+        code: `${codePrefix}.optional.${endian}.mismatch`,
+        message: `optional ${label} path table record ${index + 1} does not match the mandatory ${label} path table`,
       });
     }
   }
