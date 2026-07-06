@@ -72,6 +72,7 @@ export type CreateIsoOptions = {
   abstractFileIdentifier?: string;
   bibliographicFileIdentifier?: string;
   volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
+  optionalPathTables?: OptionalPathTableCopies;
   bootRecord?: BootRecordOptions;
   supplementaryVolumeDescriptors?: SupplementaryVolumeDescriptorOptions[];
   enhancedVolumeDescriptors?: EnhancedVolumeDescriptorOptions[];
@@ -82,6 +83,11 @@ export type CreateIsoOptions = {
   modifiedAt?: Date;
   effectiveAt?: Date;
   expiresAt?: Date | null;
+};
+
+export type OptionalPathTableCopies = boolean | {
+  typeL?: boolean;
+  typeM?: boolean;
 };
 
 export type SupplementaryVolumeDescriptorOptions = {
@@ -97,6 +103,7 @@ export type SupplementaryVolumeDescriptorOptions = {
   abstractFileIdentifier?: string;
   bibliographicFileIdentifier?: string;
   volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
+  optionalPathTables?: OptionalPathTableCopies;
 };
 
 export type EnhancedVolumeDescriptorOptions = SupplementaryVolumeDescriptorOptions;

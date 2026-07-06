@@ -123,6 +123,73 @@ describe("volume descriptor sequence parsing", () => {
     expect(primary.applicationUse.subarray(applicationUse.byteLength).every((byte) => byte === 0)).toBe(true);
   });
 
+  test("writes optional primary Type L and Type M path table copies", () => {
+    const image = createIsoImage([{
+      path: "DIR/README.TXT",
+      data: "optional primary path tables\n",
+    }], {
+      volumeIdentifier: "OPTIONAL_PATHS",
+      optionalPathTables: true,
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const primary = parsed.primaryVolumeDescriptor;
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(primary.optionalTypeLPathTableLocation).not.toBe(0);
+    expect(primary.optionalTypeMPathTableLocation).not.toBe(0);
+    expect(primary.optionalTypeLPathTableLocation).not.toBe(primary.typeLPathTableLocation);
+    expect(primary.optionalTypeMPathTableLocation).not.toBe(primary.typeMPathTableLocation);
+    expect(pathTableBytes(image, primary.optionalTypeLPathTableLocation, primary.pathTableSize)).toEqual(
+      pathTableBytes(image, primary.typeLPathTableLocation, primary.pathTableSize),
+    );
+    expect(pathTableBytes(image, primary.optionalTypeMPathTableLocation, primary.pathTableSize)).toEqual(
+      pathTableBytes(image, primary.typeMPathTableLocation, primary.pathTableSize),
+    );
+    expect(parsed.files[0]).toMatchObject({
+      path: "DIR/README.TXT",
+      size: "optional primary path tables\n".length,
+    });
+  });
+
+  test("writes optional secondary descriptor path table copies with per-descriptor overrides", () => {
+    const image = createIsoImage([{
+      path: "DIR/README.TXT",
+      data: "optional secondary path tables\n",
+    }], {
+      volumeIdentifier: "PRIMARY",
+      optionalPathTables: { typeL: true },
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        optionalPathTables: { typeM: true },
+      }],
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+        optionalPathTables: false,
+      }],
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const primary = descriptors.find((descriptor) => descriptor.kind === "primary");
+    const supplementary = descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    const enhanced = descriptors.find((descriptor) => descriptor.kind === "enhanced");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(primary?.kind === "primary" ? primary.optionalTypeLPathTableLocation : undefined).not.toBe(0);
+    expect(primary?.kind === "primary" ? primary.optionalTypeMPathTableLocation : undefined).toBe(0);
+    expect(supplementary?.kind === "supplementary" ? supplementary.optionalTypeLPathTableLocation : undefined).toBe(0);
+    expect(supplementary?.kind === "supplementary" ? supplementary.optionalTypeMPathTableLocation : undefined).not.toBe(0);
+    expect(enhanced?.kind === "enhanced" ? enhanced.optionalTypeLPathTableLocation : undefined).toBe(0);
+    expect(enhanced?.kind === "enhanced" ? enhanced.optionalTypeMPathTableLocation : undefined).toBe(0);
+
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("expected supplementary descriptor");
+    }
+    expect(pathTableBytes(image, supplementary.optionalTypeMPathTableLocation, supplementary.pathTableSize)).toEqual(
+      pathTableBytes(image, supplementary.typeMPathTableLocation, supplementary.pathTableSize),
+    );
+  });
+
   test("writes enhanced volume descriptors with separate path tables and directory hierarchy", () => {
     const image = createIsoImage([{
       path: "DIR/README.TXT",
@@ -587,4 +654,9 @@ function imageWithDescriptorByte(image: Uint8Array, sectorNumber: number, descri
   const mutated = image.slice();
   mutated[sectorNumber * SECTOR_SIZE + descriptorOffset] = value;
   return mutated;
+}
+
+function pathTableBytes(image: Uint8Array, sectorNumber: number, byteLength: number): Uint8Array {
+  const start = sectorNumber * SECTOR_SIZE;
+  return image.slice(start, start + byteLength);
 }
