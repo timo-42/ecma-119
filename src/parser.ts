@@ -979,6 +979,7 @@ function validateDirectoryHierarchy(
   let recordIndex = 0;
   let previousOrdinaryRecord: DecodedDirectoryRecord | undefined;
   let previousOrdinaryPath = "";
+  const ordinaryRecordKeys = new Set<string>();
   while (offset < end) {
     const length = image[offset]!;
     if (length === 0) {
@@ -1014,6 +1015,15 @@ function validateDirectoryHierarchy(
     if (index >= 2) {
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
       issues.push(...validateOrdinaryFileExtendedAttributeFlags(record, recordPath || "."));
+      const recordKey = ordinaryDirectoryRecordKey(record);
+      if (ordinaryRecordKeys.has(recordKey)) {
+        issues.push({
+          code: "directory.record_duplicate",
+          message: `directory records at ${path} contain duplicate file identifier entries`,
+          path: recordPath || ".",
+        });
+      }
+      ordinaryRecordKeys.add(recordKey);
       if (previousOrdinaryRecord && compareDirectoryRecordOrder(previousOrdinaryRecord, record) > 0) {
         issues.push({
           code: "directory.record_order",
@@ -1792,6 +1802,11 @@ function compareAssociatedFileBit(leftFlags: number, rightFlags: number): number
   const leftAssociated = (leftFlags & FILE_FLAG_ASSOCIATED) === FILE_FLAG_ASSOCIATED ? 1 : 0;
   const rightAssociated = (rightFlags & FILE_FLAG_ASSOCIATED) === FILE_FLAG_ASSOCIATED ? 1 : 0;
   return leftAssociated - rightAssociated;
+}
+
+function ordinaryDirectoryRecordKey(record: DecodedDirectoryRecord): string {
+  const associated = (record.flags & FILE_FLAG_ASSOCIATED) === FILE_FLAG_ASSOCIATED ? "1" : "0";
+  return `${bytesKey(record.identifier)}:${associated}`;
 }
 
 function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {
