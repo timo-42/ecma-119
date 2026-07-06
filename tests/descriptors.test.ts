@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage, writeUint32Both } from "../src/index";
+import { createIsoImage, encodeDirectoryRecord, parseIsoImage, parseVolumeDescriptors, validateIsoImage, writeUint32Both } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import {
   PVD_SECTOR,
@@ -163,6 +163,50 @@ describe("volume descriptor sequence parsing", () => {
     expect([first.flags, second.flags, third.flags]).toEqual([0x80, 0x80, 0x00]);
     expect(first.extent).toBeLessThan(second.extent);
     expect(second.extent).toBeLessThan(third.extent);
+  });
+
+  test("validates and reads compatible multi-extent directory records", () => {
+    const files = Array.from({ length: 70 }, (_, index) => ({
+      path: `DIR/M${String(index).padStart(3, "0")}.TXT`,
+      data: `multi dir ${index}\n`,
+    }));
+    const image = createIsoImage(files, {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsedBefore = parseIsoImage(image);
+    const root = parsedBefore.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const dirRecordOffset = findDirectoryRecordOffset(rootDirectory, "DIR");
+    const dirRecord = readDirectoryRecord(rootDirectory, dirRecordOffset);
+    expect(dirRecord.dataLength).toBeGreaterThan(SECTOR_SIZE);
+
+    rootDirectory[dirRecordOffset + 25] = dirRecord.flags | 0x80;
+    writeUint32Both(rootDirectory, dirRecordOffset + 10, SECTOR_SIZE);
+    rootDirectory.set(encodeDirectoryRecord({
+      extent: dirRecord.extent + 1,
+      dataLength: dirRecord.dataLength - SECTOR_SIZE,
+      flags: 0x02,
+      identifier: new TextEncoder().encode("DIR"),
+      date: new Date("2024-01-01T00:00:00Z"),
+      volumeSequenceNumber: dirRecord.volumeSequenceNumber,
+    }), dirRecordOffset + dirRecord.length);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((node) => node.identifier === "DIR");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      size: dirRecord.dataLength,
+      sections: [
+        expect.objectContaining({ extent: dirRecord.extent, size: SECTOR_SIZE, flags: 0x82 }),
+        expect.objectContaining({ extent: dirRecord.extent + 1, size: dirRecord.dataLength - SECTOR_SIZE, flags: 0x02 }),
+      ],
+      children: expect.arrayContaining([
+        expect.objectContaining({ path: "DIR/M000.TXT", data: new TextEncoder().encode("multi dir 0\n") }),
+        expect.objectContaining({ path: "DIR/M069.TXT", data: new TextEncoder().encode("multi dir 69\n") }),
+      ]),
+    });
   });
 
   test("rejects invalid multi-extent authoring options", () => {
@@ -1127,4 +1171,23 @@ function imageWithDescriptorByte(image: Uint8Array, sectorNumber: number, descri
 function pathTableBytes(image: Uint8Array, sectorNumber: number, byteLength: number): Uint8Array {
   const start = sectorNumber * SECTOR_SIZE;
   return image.slice(start, start + byteLength);
+}
+
+function findDirectoryRecordOffset(directory: Uint8Array, identifier: string): number {
+  const expected = new TextEncoder().encode(identifier);
+  let offset = 0;
+  while (offset < directory.byteLength) {
+    const length = directory[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      continue;
+    }
+    const identifierLength = directory[offset + 32]!;
+    const actual = directory.subarray(offset + 33, offset + 33 + identifierLength);
+    if (actual.byteLength === expected.byteLength && actual.every((byte, index) => byte === expected[index])) {
+      return offset;
+    }
+    offset += length;
+  }
+  throw new Error(`missing directory record ${identifier}`);
 }
