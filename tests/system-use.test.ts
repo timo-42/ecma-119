@@ -33,6 +33,40 @@ describe("directory record System Use", () => {
     expect(parsed.files[0]?.systemUse).toEqual(systemUse);
   });
 
+  test("writes directory System Use bytes after the identifier padding and parses them back", () => {
+    const systemUse = Uint8Array.of(0x44, 0x49, 0x52, 0x01, 0xfe);
+    const image = createIsoImage([{
+      path: "DIR/FILE.TXT",
+      data: "directory system use\n",
+    }], {
+      directories: [{
+        path: "DIR",
+        systemUse,
+      }],
+    });
+
+    const record = findRootFileRecord(image, "DIR");
+    const identifierLength = record[32]!;
+    const systemUseOffset = 33 + identifierLength + ((33 + identifierLength) % 2 === 0 ? 0 : 1);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(identifierLength).toBe(3);
+    expect(record.subarray(33, 33 + identifierLength)).toEqual(asciiBytes("DIR"));
+    expect(systemUseOffset).toBe(33 + identifierLength);
+    expect(record.subarray(systemUseOffset)).toEqual(systemUse);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((entry) => entry.identifier === "DIR");
+
+    expect(directory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      flags: 0x02,
+    });
+    expect(directory?.systemUse).toEqual(systemUse);
+    expect(parsed.files[0]?.path).toBe("DIR/FILE.TXT");
+  });
+
   test("rejects file System Use bytes that would make a directory record exceed 255 bytes", () => {
     const tooLong = new Uint8Array(214);
 
@@ -41,6 +75,17 @@ describe("directory record System Use", () => {
       data: "x",
       systemUse: tooLong,
     }])).toThrow(/directory record|system use|255/i);
+  });
+
+  test("rejects directory System Use bytes that would make a directory record exceed 255 bytes", () => {
+    const tooLong = new Uint8Array(220);
+
+    expect(() => createIsoImage([], {
+      directories: [{
+        path: "DIR",
+        systemUse: tooLong,
+      }],
+    })).toThrow(/directory record|system use|255/i);
   });
 
   test("preserves System Use bytes from handcrafted directory records", () => {
@@ -58,6 +103,25 @@ describe("directory record System Use", () => {
     });
     expect(parsed.files[0]?.data).toEqual(data);
     expect(parsed.files[0]?.systemUse).toEqual(systemUse);
+  });
+
+  test("preserves directory System Use bytes from handcrafted directory records", () => {
+    const systemUse = Uint8Array.of(0xda, 0x7a, 0x10, 0x20, 0x30);
+    const image = handcraftedIsoWithDirectorySystemUse(systemUse);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((entry) => entry.identifier === "DIR");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      flags: 0x02,
+    });
+    expect(directory?.systemUse).toEqual(systemUse);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]?.path).toBe("DIR/HELLO.TXT");
+    expect(parsed.files[0]?.data).toEqual(asciiBytes("directory handmade\n"));
   });
 
   test("preserves System Use bytes from mutated writer records", () => {
@@ -191,6 +255,75 @@ function handcraftedIsoWithSystemUse(data: Uint8Array, systemUse: Uint8Array): U
   return image;
 }
 
+function handcraftedIsoWithDirectorySystemUse(systemUse: Uint8Array): Uint8Array {
+  const image = new Uint8Array(25 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const rootDirectory = sector(image, 20);
+  const childDirectory = sector(image, 21);
+  const fileData = sector(image, 22);
+  const pathTableL = sector(image, 18);
+  const pathTableM = sector(image, 19);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const filePayload = asciiBytes("directory handmade\n");
+
+  fileData.set(filePayload);
+  writePathTable(pathTableL, "little", [
+    { identifier: Uint8Array.of(0), extent: 20, parent: 1 },
+    { identifier: asciiBytes("DIR"), extent: 21, parent: 1 },
+  ]);
+  writePathTable(pathTableM, "big", [
+    { identifier: Uint8Array.of(0), extent: 20, parent: 1 },
+    { identifier: asciiBytes("DIR"), extent: 21, parent: 1 },
+  ]);
+
+  const rootSelf = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const rootParent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const childRecord = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("DIR"), date, systemUse });
+  let offset = 0;
+  rootDirectory.set(rootSelf, offset);
+  offset += rootSelf.byteLength;
+  rootDirectory.set(rootParent, offset);
+  offset += rootParent.byteLength;
+  rootDirectory.set(childRecord, offset);
+
+  const childSelf = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, systemUse });
+  const childParent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const file = directoryRecord({ extent: 22, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("HELLO.TXT;1"), date });
+  offset = 0;
+  childDirectory.set(childSelf, offset);
+  offset += childSelf.byteLength;
+  childDirectory.set(childParent, offset);
+  offset += childParent.byteLength;
+  childDirectory.set(file, offset);
+
+  pvd[0] = 1;
+  writeAscii(pvd, 1, 5, "CD001", 0);
+  pvd[6] = 1;
+  writeAscii(pvd, 8, 32, "HANDMADE_SYSTEM", 0x20);
+  writeAscii(pvd, 40, 32, "HANDMADE", 0x20);
+  writeBoth32(pvd, 80, 25);
+  writeBoth16(pvd, 120, 1);
+  writeBoth16(pvd, 124, 1);
+  writeBoth16(pvd, 128, SECTOR_SIZE);
+  writeBoth32(pvd, 132, 22);
+  writeUint32LE(pvd, 140, 18);
+  writeUint32BE(pvd, 148, 19);
+  pvd.set(rootSelf, 156);
+  writeAscii(pvd, 574, 128, "HANDCRAFTED TEST", 0x20);
+  pvd.set(volumeDate(date), 813);
+  pvd.set(volumeDate(date), 830);
+  pvd.set(volumeDate(null), 847);
+  pvd.set(volumeDate(date), 864);
+  pvd[881] = 1;
+
+  const terminator = sector(image, 17);
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
 function sector(image: Uint8Array, sectorNumber: number): Uint8Array {
   return image.subarray(sectorNumber * SECTOR_SIZE, (sectorNumber + 1) * SECTOR_SIZE);
 }
@@ -230,16 +363,28 @@ function patchRootDirectorySize(image: Uint8Array, size: number): void {
 }
 
 function writePathTableRoot(bytes: Uint8Array, endian: "little" | "big", extent: number): void {
-  bytes[0] = 1;
-  bytes[1] = 0;
-  if (endian === "little") {
-    writeUint32LE(bytes, 2, extent);
-    writeUint16LE(bytes, 6, 1);
-  } else {
-    writeUint32BE(bytes, 2, extent);
-    writeUint16BE(bytes, 6, 1);
+  writePathTable(bytes, endian, [{ identifier: Uint8Array.of(0), extent, parent: 1 }]);
+}
+
+function writePathTable(
+  bytes: Uint8Array,
+  endian: "little" | "big",
+  records: Array<{ identifier: Uint8Array; extent: number; parent: number }>,
+): void {
+  let offset = 0;
+  for (const record of records) {
+    bytes[offset] = record.identifier.byteLength;
+    bytes[offset + 1] = 0;
+    if (endian === "little") {
+      writeUint32LE(bytes, offset + 2, record.extent);
+      writeUint16LE(bytes, offset + 6, record.parent);
+    } else {
+      writeUint32BE(bytes, offset + 2, record.extent);
+      writeUint16BE(bytes, offset + 6, record.parent);
+    }
+    bytes.set(record.identifier, offset + 8);
+    offset += 8 + record.identifier.byteLength + (record.identifier.byteLength % 2 === 0 ? 0 : 1);
   }
-  bytes[8] = 0;
 }
 
 function directoryDate(date: Date): Uint8Array {

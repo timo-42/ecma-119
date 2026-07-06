@@ -14,6 +14,7 @@ export type IsoInputDirectory = {
   path: string;
   date?: Date;
   extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
+  systemUse?: Uint8Array | Buffer | string;
 };
 
 export type ExtendedAttributeRecordInput = {

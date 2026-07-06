@@ -9,7 +9,7 @@ import {
   writeUint32Both,
   writeUint32LE,
 } from "./binary.js";
-import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
+import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
@@ -42,6 +42,7 @@ type DirectoryNode = {
   extendedAttributeRecordLength: number;
   flags: number;
   pathTableIndex: number;
+  systemUse?: Uint8Array;
 };
 
 type PreparedVolumePartition = {
@@ -304,6 +305,9 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         directory.flags = FILE_FLAG_DIRECTORY | (extendedAttributeRecordFileFlags(fields) & 0x10);
       }
     }
+    if (input.systemUse !== undefined) {
+      directory.systemUse = toBytes(input.systemUse);
+    }
   }
 
   return root;
@@ -369,11 +373,10 @@ function collectFiles(root: DirectoryNode): FileNode[] {
 
 function directoryDataLength(directory: DirectoryNode): number {
   let offset = 0;
-  offset = nextRecordOffset(offset, 34);
-  offset = nextRecordOffset(offset, 34);
+  offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory, Uint8Array.of(0)));
+  offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
   for (const child of [...directory.children.values()].sort(compareNode)) {
-    const systemUseLength = child.kind === "file" ? child.systemUse?.byteLength ?? 0 : 0;
-    const recordLength = 33 + child.isoIdentifier.length + ((33 + child.isoIdentifier.length) % 2 === 0 ? 0 : 1) + systemUseLength;
+    const recordLength = directoryRecordLengthForNode(child, asciiBytes(child.isoIdentifier));
     offset = nextRecordOffset(offset, recordLength);
   }
   return offset;
@@ -406,14 +409,23 @@ function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecond
 }
 
 function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, layout?: PreparedSecondaryDescriptor): Uint8Array {
-  return encodeDirectoryRecord({
+  const input = {
     extent: directoryExtentFor(directory, layout),
     extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
     dataLength: directoryDataLengthFor(directory, layout),
     flags: directory.flags,
     identifier,
     date: directory.date,
-  });
+  };
+  return directory.systemUse ? encodeDirectoryRecord({ ...input, systemUse: directory.systemUse }) : encodeDirectoryRecord(input);
+}
+
+function directoryRecordLengthForNode(node: DirectoryNode | FileNode, identifier: Uint8Array): number {
+  return directoryRecordLength(identifier.byteLength, node.systemUse?.byteLength ?? 0);
+}
+
+function directoryRecordLengthForDirectory(directory: DirectoryNode, identifier: Uint8Array): number {
+  return directoryRecordLength(identifier.byteLength, directory.systemUse?.byteLength ?? 0);
 }
 
 function directoryExtentFor(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): number {
