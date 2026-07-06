@@ -165,7 +165,9 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector:
     logicalBlockSize: readUint16Both(image, offset + 128),
     pathTableSize: readUint32Both(image, offset + 132),
     typeLPathTableLocation: readUint32LEAt(image, offset + 140),
+    optionalTypeLPathTableLocation: readUint32LEAt(image, offset + 144),
     typeMPathTableLocation: readUint32BEAt(image, offset + 148),
+    optionalTypeMPathTableLocation: readUint32BEAt(image, offset + 152),
     rootDirectoryRecord: directoryEntryFromRecord(rootRecord, "", []),
     volumeSetIdentifier: readAsciiTrimmed(image, offset + 190, 128),
     publisherIdentifier: readAsciiTrimmed(image, offset + 318, 128),
@@ -214,8 +216,10 @@ function validatePathTableReferences(
   codePrefix: string,
 ): ValidationIssue[] {
   return [
-    ...validatePathTableReference(image, descriptor, codePrefix, "little"),
-    ...validatePathTableReference(image, descriptor, codePrefix, "big"),
+    ...validatePathTableReference(image, descriptor, codePrefix, "little", descriptor.typeLPathTableLocation),
+    ...validatePathTableReference(image, descriptor, codePrefix, "big", descriptor.typeMPathTableLocation),
+    ...validateOptionalPathTableReference(image, descriptor, codePrefix, "little"),
+    ...validateOptionalPathTableReference(image, descriptor, codePrefix, "big"),
   ];
 }
 
@@ -224,9 +228,9 @@ function validatePathTableReference(
   descriptor: PathTableValidationInput,
   codePrefix: string,
   endian: "little" | "big",
+  location: number,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const location = endian === "little" ? descriptor.typeLPathTableLocation : descriptor.typeMPathTableLocation;
   const label = endian === "little" ? "Type L" : "Type M";
   const pathTableStart = location * SECTOR_SIZE;
   const pathTableEnd = pathTableStart + descriptor.pathTableSize;
@@ -262,6 +266,19 @@ function validatePathTableReference(
     }
   }
   return issues;
+}
+
+function validateOptionalPathTableReference(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  codePrefix: string,
+  endian: "little" | "big",
+): ValidationIssue[] {
+  const location = endian === "little" ? descriptor.optionalTypeLPathTableLocation : descriptor.optionalTypeMPathTableLocation;
+  if (location === 0) {
+    return [];
+  }
+  return validatePathTableReference(image, descriptor, `${codePrefix}.optional`, endian, location);
 }
 
 function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
@@ -430,7 +447,9 @@ function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sec
     logicalBlockSize: readUint16Both(image, offset + 128),
     pathTableSize: readUint32Both(image, offset + 132),
     typeLPathTableLocation: readUint32LEAt(image, offset + 140),
+    optionalTypeLPathTableLocation: readUint32LEAt(image, offset + 144),
     typeMPathTableLocation: readUint32BEAt(image, offset + 148),
+    optionalTypeMPathTableLocation: readUint32BEAt(image, offset + 152),
     rootDirectoryRecord: rootRecord ? directoryEntryFromRecord(rootRecord, "", []) : emptyDirectoryEntry(),
     copyrightFileIdentifier: readAsciiTrimmed(image, offset + 702, 37),
     abstractFileIdentifier: readAsciiTrimmed(image, offset + 739, 37),
