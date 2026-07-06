@@ -492,6 +492,49 @@ describe("extended attribute records", () => {
     expect(parsed.files[0]?.data).toEqual(data);
   });
 
+  test("writes interleaved directory extended attribute records in the first file unit", () => {
+    const extendedAttributeRecord = makeExtendedAttributeRecord("interleaved dir ear");
+    const image = createIsoImage([{
+      path: "DIR/FILE.TXT",
+      data: "directory interleaved ear\n",
+    }], {
+      directories: [{
+        path: "DIR",
+        interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+        extendedAttributeRecord,
+      }],
+    });
+
+    const record = findRootFileRecord(image, "DIR");
+    const extent = readBoth32(record, 2);
+    const firstDirectoryUnit = image.subarray((extent + 2) * SECTOR_SIZE, (extent + 3) * SECTOR_SIZE);
+    const self = findDirectoryRecord(firstDirectoryUnit, "\0");
+
+    expect(record[1]).toBe(1);
+    expect(record[26]).toBe(1);
+    expect(record[27]).toBe(1);
+    expect(image.subarray(extent * SECTOR_SIZE, extent * SECTOR_SIZE + extendedAttributeRecord.byteLength)).toEqual(extendedAttributeRecord);
+    expect(image.subarray((extent + 1) * SECTOR_SIZE, (extent + 2) * SECTOR_SIZE).every((byte) => byte === 0)).toBe(true);
+    expect(self[26]).toBe(1);
+    expect(self[27]).toBe(1);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((node) => "children" in node && node.path === "DIR");
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      extent,
+      extendedAttributeRecordLength: 1,
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(directory && "children" in directory ? directory.extendedAttributeRecord : undefined).toEqual(
+      image.slice(extent * SECTOR_SIZE, (extent + 1) * SECTOR_SIZE),
+    );
+    expect(directory && "children" in directory ? directory.extendedAttributeRecordFields?.systemIdentifier : undefined).toBe("ECMA119_TEST");
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("directory interleaved ear\n");
+  });
+
   test("reads extended attribute records from an ISO image not produced by the writer", () => {
     const data = asciiBytes("handmade data\n");
     const extendedAttributeRecord = makeExtendedAttributeRecord("handmade ear");

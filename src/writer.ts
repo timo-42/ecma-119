@@ -50,6 +50,8 @@ type DirectoryNode = {
   timeZoneOffsetMinutes: number;
   extent: number;
   dataLength: number;
+  fileUnitSize: number;
+  interleaveGapSize: number;
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordLength: number;
   flags: number;
@@ -143,19 +145,17 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
 
   for (const directory of directories) {
     directory.extent = nextSector;
-    nextSector += directory.extendedAttributeRecordLength;
     const dataLength = directoryDataLength(directory);
     directory.dataLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
-    nextSector += directory.dataLength / SECTOR_SIZE;
+    nextSector += directoryExtentSectors(directory);
   }
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
       descriptor.directoryExtents.set(directory, nextSector);
-      nextSector += directory.extendedAttributeRecordLength;
       const dataLength = directoryDataLength(directory);
       const paddedLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
       descriptor.directoryDataLengths.set(directory, paddedLength);
-      nextSector += paddedLength / SECTOR_SIZE;
+      nextSector += directoryExtentSectors({ ...directory, dataLength: paddedLength });
     }
   }
 
@@ -212,7 +212,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     if (directory.extendedAttributeRecord) {
       image.set(directory.extendedAttributeRecord, sectorOffset(directory.extent));
     }
-    image.set(encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber), sectorOffset(directory.extent + directory.extendedAttributeRecordLength));
+    writeDirectoryExtentPayload(image, directory, encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber));
   }
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
@@ -220,7 +220,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       if (directory.extendedAttributeRecord) {
         image.set(directory.extendedAttributeRecord, sectorOffset(extent));
       }
-      image.set(encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber, descriptor), sectorOffset(extent + directory.extendedAttributeRecordLength));
+      writeDirectoryExtentPayload(image, { ...directory, extent, dataLength: descriptor.directoryDataLengths.get(directory)! }, encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber, descriptor));
     }
   }
 
@@ -292,6 +292,8 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     timeZoneOffsetMinutes: defaultTimeZoneOffsetMinutes,
     extent: 0,
     dataLength: 0,
+    fileUnitSize: 0,
+    interleaveGapSize: 0,
     extendedAttributeRecordLength: 0,
     flags: FILE_FLAG_DIRECTORY,
     pathTableIndex: 1,
@@ -323,6 +325,8 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
         extent: 0,
         dataLength: 0,
+        fileUnitSize: 0,
+        interleaveGapSize: 0,
         extendedAttributeRecordLength: 0,
         flags: FILE_FLAG_DIRECTORY,
         pathTableIndex: 0,
@@ -378,8 +382,11 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   for (const input of directories) {
     const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     const directory = ensureDirectory(root, normalizeDirectoryPath(input.path, identifierLevel).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
+    const interleave = checkedInterleaveOptions(input.interleave);
     directory.date = input.date ?? directory.date;
     directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
+    directory.fileUnitSize = interleave.fileUnitSize;
+    directory.interleaveGapSize = interleave.interleaveGapSize;
     directory.flags = inputDirectoryFlags(directory.flags, input);
     if (input.extendedAttributeRecord !== undefined) {
       directory.extendedAttributeRecord = isExtendedAttributeRecordInput(input.extendedAttributeRecord)
@@ -391,7 +398,9 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       if (directory.extendedAttributeRecord.byteLength === 0) {
         throw new Error("directory extended attribute record must contain at least one byte");
       }
-      directory.extendedAttributeRecordLength = sectorsForBytes(directory.extendedAttributeRecord.byteLength);
+      directory.extendedAttributeRecordLength = input.interleave === undefined
+        ? sectorsForBytes(directory.extendedAttributeRecord.byteLength)
+        : checkedInterleavedExtendedAttributeRecordLength(directory.extendedAttributeRecord, directory);
       if (directory.extendedAttributeRecordLength > 0xff) {
         throw new Error("directory extended attribute record exceeds 255 logical blocks");
       }
@@ -432,6 +441,8 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
       timeZoneOffsetMinutes,
       extent: 0,
       dataLength: 0,
+      fileUnitSize: 0,
+      interleaveGapSize: 0,
       extendedAttributeRecordLength: 0,
       flags: FILE_FLAG_DIRECTORY,
       pathTableIndex: 0,
@@ -515,6 +526,13 @@ function fileSectionExtentSectors(section: Pick<FileSectionNode, "dataLength" | 
   return section.extendedAttributeRecordLength + section.interleaveGapSize + fileSectionStorageSectors(section);
 }
 
+function directoryExtentSectors(directory: Pick<DirectoryNode, "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (directory.fileUnitSize === 0 || directory.extendedAttributeRecordLength === 0) {
+    return directory.extendedAttributeRecordLength + fileSectionStorageSectors(directory);
+  }
+  return directory.extendedAttributeRecordLength + directory.interleaveGapSize + fileSectionStorageSectors(directory);
+}
+
 function fileSectionStorageByteLength(section: Pick<FileSectionNode, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
   if (section.fileUnitSize === 0) {
     return section.dataLength;
@@ -536,16 +554,30 @@ function writeFileSectionPayload(image: Uint8Array, data: Uint8Array, section: F
     return;
   }
 
-  const unitBytes = section.fileUnitSize * SECTOR_SIZE;
-  const strideBytes = (section.fileUnitSize + section.interleaveGapSize) * SECTOR_SIZE;
-  let remaining = section.dataLength;
-  let sourceOffset = section.dataOffset;
-  let targetOffset = dataStart;
+  writeInterleavedBytes(image, data.subarray(section.dataOffset, section.dataOffset + section.dataLength), dataStart, section.fileUnitSize, section.interleaveGapSize);
+}
+
+function writeDirectoryExtentPayload(image: Uint8Array, directory: Pick<DirectoryNode, "extent" | "dataLength" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">, bytes: Uint8Array): void {
+  const dataStart = sectorOffset(directoryDataStartSector(directory));
+  if (directory.fileUnitSize === 0) {
+    image.set(bytes, dataStart);
+    return;
+  }
+
+  writeInterleavedBytes(image, bytes, dataStart, directory.fileUnitSize, directory.interleaveGapSize);
+}
+
+function writeInterleavedBytes(image: Uint8Array, data: Uint8Array, targetOffset: number, fileUnitSize: number, interleaveGapSize: number): void {
+  const unitBytes = fileUnitSize * SECTOR_SIZE;
+  const strideBytes = (fileUnitSize + interleaveGapSize) * SECTOR_SIZE;
+  let remaining = data.byteLength;
+  let sourceOffset = 0;
+  let writeOffset = targetOffset;
   while (remaining > 0) {
     const chunk = Math.min(unitBytes, remaining);
-    image.set(data.subarray(sourceOffset, sourceOffset + chunk), targetOffset);
+    image.set(data.subarray(sourceOffset, sourceOffset + chunk), writeOffset);
     sourceOffset += chunk;
-    targetOffset += strideBytes;
+    writeOffset += strideBytes;
     remaining -= chunk;
   }
 }
@@ -555,6 +587,13 @@ function fileSectionDataStartSector(section: Pick<FileSectionNode, "extent" | "e
     return section.extent + section.extendedAttributeRecordLength + section.interleaveGapSize;
   }
   return section.extent + section.extendedAttributeRecordLength;
+}
+
+function directoryDataStartSector(directory: Pick<DirectoryNode, "extent" | "extendedAttributeRecordLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (directory.fileUnitSize !== 0 && directory.extendedAttributeRecordLength !== 0) {
+    return directory.extent + directory.extendedAttributeRecordLength + directory.interleaveGapSize;
+  }
+  return directory.extent + directory.extendedAttributeRecordLength;
 }
 
 function collectDirectories(root: DirectoryNode): DirectoryNode[] {
@@ -643,6 +682,8 @@ function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8
     extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
     dataLength: directoryDataLengthFor(directory, layout),
     flags: directory.flags,
+    fileUnitSize: directory.fileUnitSize,
+    interleaveGapSize: directory.interleaveGapSize,
     identifier,
     date: directory.date,
     timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
@@ -657,6 +698,8 @@ function directoryRecordForDescriptorRoot(directory: DirectoryNode, volumeSequen
     extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
     dataLength: directoryDataLengthFor(directory, layout),
     flags: directory.flags,
+    fileUnitSize: directory.fileUnitSize,
+    interleaveGapSize: directory.interleaveGapSize,
     identifier: Uint8Array.of(0),
     date: directory.date,
     timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
