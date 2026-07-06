@@ -23,7 +23,7 @@ describe("directory record file flags", () => {
     });
   });
 
-  test("writes hidden and associated flags for directories", () => {
+  test("writes hidden flags for directories", () => {
     const image = createIsoImage([{
       path: "DIR/FILE.TXT",
       data: "directory flags\n",
@@ -31,7 +31,6 @@ describe("directory record file flags", () => {
       directories: [{
         path: "DIR",
         hidden: true,
-        associated: true,
       }],
     });
 
@@ -40,10 +39,10 @@ describe("directory record file flags", () => {
     const directory = parsed.root.children.find((node) => node.identifier === "DIR");
 
     expect(validateIsoImage(image)).toEqual([]);
-    expect(record[25]).toBe(0x07);
+    expect(record[25]).toBe(0x03);
     expect(directory).toMatchObject({
       path: "DIR",
-      flags: 0x07,
+      flags: 0x03,
     });
   });
 
@@ -81,7 +80,6 @@ describe("directory record file flags", () => {
       directories: [{
         path: "DIR",
         hidden: true,
-        associated: true,
         extendedAttributeRecord: {
           ownerIdentification: 1,
           groupIdentification: 1,
@@ -97,11 +95,23 @@ describe("directory record file flags", () => {
     const directory = parsed.root.children.find((node) => node.identifier === "DIR");
 
     expect(validateIsoImage(image)).toEqual([]);
-    expect(record[25]).toBe(0x17);
+    expect(record[25]).toBe(0x13);
     expect(directory).toMatchObject({
       path: "DIR",
-      flags: 0x17,
+      flags: 0x13,
     });
+  });
+
+  test("rejects associated directory inputs", () => {
+    expect(() => createIsoImage([{
+      path: "DIR/FILE.TXT",
+      data: "directory associated flag\n",
+    }], {
+      directories: [{
+        path: "DIR",
+        associated: true,
+      }],
+    })).toThrow(/directory records must not set the Associated File bit/i);
   });
 });
 

@@ -1134,6 +1134,55 @@ describe("validateIsoImage hardening", () => {
     });
   });
 
+  test("reports associated directory record flags", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "associated directory flag\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    image[directoryRecordOffset + 25] |= 0x04;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_directory",
+          path: "DIR",
+          message: "directory record at DIR identifies a directory and must not set Associated File or Record bits",
+        }),
+      ]),
+    );
+  });
+
+  test("reports record-bit directory records without extended attribute records", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "record directory flag\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    image[directoryRecordOffset + 25] |= 0x08;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_directory",
+          path: "DIR",
+          message: "directory record at DIR identifies a directory and must not set Associated File or Record bits",
+        }),
+      ]),
+    );
+  });
+
+  test("reports descriptor root associated directory flags", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root associated directory flag\n" }]);
+    image[PVD_OFFSET + 156 + 25] |= 0x04;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_directory",
+          path: ".",
+          message: "directory record at . identifies a directory and must not set Associated File or Record bits",
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported primary volume set size without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "multi-volume descriptor\n" }]);
     writeUint16Both(image, PVD_OFFSET + 120, 2);

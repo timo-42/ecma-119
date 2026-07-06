@@ -737,6 +737,9 @@ function inputFileFlags(input: Pick<IsoInputFile, "hidden" | "associated">): num
 }
 
 function inputDirectoryFlags(current: number, input: Pick<IsoInputDirectory, "hidden" | "associated">): number {
+  if (input.associated) {
+    throw new Error("directory records must not set the Associated File bit");
+  }
   return inputFlags(current | FILE_FLAG_DIRECTORY, input);
 }
 
