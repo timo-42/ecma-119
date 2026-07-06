@@ -56,6 +56,30 @@ describe("validateIsoImage hardening", () => {
   });
 
   test.each([
+    { fieldOffset: 80, bytes: 4, code: "pvd.volume_space_size.endian_mismatch", label: "volume space size" },
+    { fieldOffset: 120, bytes: 2, code: "pvd.volume_set_size.endian_mismatch", label: "volume set size" },
+    { fieldOffset: 124, bytes: 2, code: "pvd.volume_sequence_number.endian_mismatch", label: "volume sequence number" },
+    { fieldOffset: 128, bytes: 2, code: "pvd.logical_block_size.endian_mismatch", label: "logical block size" },
+    { fieldOffset: 132, bytes: 4, code: "pvd.path_table_size.endian_mismatch", label: "path table size" },
+  ])("reports PVD both-endian mismatches for $label", ({ fieldOffset, bytes, code, label }) => {
+    const image = baselineImage();
+    image[PVD_OFFSET + fieldOffset + (bytes * 2) - 1] ^= 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          message: expect.stringContaining(`primary volume descriptor ${label} must store matching little- and big-endian values`),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/both-endian uint(16|32) mismatch/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
     { sector: 17, code: "boot.version", message: "boot record descriptor at sector 17 must use version 1" },
     { sector: 18, code: "secondary.version", message: "supplementary or enhanced volume descriptor at sector 18 must use version 1 or 2" },
     { sector: 20, code: "partition.version", message: "volume partition descriptor at sector 20 must use version 1" },
