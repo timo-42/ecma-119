@@ -12,6 +12,26 @@ import {
 } from "./helpers";
 
 describe("volume descriptor sequence parsing", () => {
+  test("writes and reads zero-length files without reading allocated padding", () => {
+    const image = createIsoImage([{
+      path: "EMPTY.TXT",
+      data: "",
+    }], {
+      volumeIdentifier: "EMPTY",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "EMPTY.TXT",
+      identifier: "EMPTY.TXT;1",
+      size: 0,
+    });
+    expect(parsed.files[0]?.data).toEqual(new Uint8Array());
+  });
+
   test("writes supplementary volume descriptors with separate path tables and directory hierarchy", () => {
     const image = createIsoImage([{
       path: "README.TXT",
