@@ -268,6 +268,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
     { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
     { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
   ]));
+  issues.push(...validateDescriptorRootFileReferences(image, pvd, "pvd"));
   if (pvd.rootDirectoryRecord.identifier !== ".") {
     issues.push({
       code: "pvd.root_directory_record.identifier",
@@ -1272,6 +1273,7 @@ function validateSupplementaryLikeVolumeDescriptor(
     { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
     { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
   ]));
+  issues.push(...validateDescriptorRootFileReferences(image, descriptor, label));
   issues.push(...validateSecondaryEscapeSequences(descriptor, label));
   issues.push(...validateVolumeSpaceSize(image, descriptor, descriptors, label));
   const expectedFileStructureVersion = descriptor.kind === "enhanced" ? 2 : 1;
@@ -1372,6 +1374,79 @@ function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boo
     return isDString(value);
   }
   return value === "" || isSupportedPrimaryFileIdentifier(new TextEncoder().encode(value));
+}
+
+function validateDescriptorRootFileReferences(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  codePrefix: string,
+): ValidationIssue[] {
+  const rootFileIdentifiers = rootDirectoryFileIdentifiers(image, descriptor.rootDirectoryRecord);
+  if (!rootFileIdentifiers) {
+    return [];
+  }
+  const issues: ValidationIssue[] = [];
+  const fields = [
+    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 318, 128), code: "publisher_identifier.file_reference", label: "publisher identifier" },
+    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 446, 128), code: "data_preparer_identifier.file_reference", label: "data preparer identifier" },
+    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 574, 128), code: "application_identifier.file_reference", label: "application identifier" },
+    { identifier: descriptor.copyrightFileIdentifier, code: "copyright_file_identifier.file_reference", label: "copyright file identifier" },
+    { identifier: descriptor.abstractFileIdentifier, code: "abstract_file_identifier.file_reference", label: "abstract file identifier" },
+    { identifier: descriptor.bibliographicFileIdentifier, code: "bibliographic_file_identifier.file_reference", label: "bibliographic file identifier" },
+  ];
+  for (const field of fields) {
+    if (!field.identifier) {
+      continue;
+    }
+    if (!rootFileIdentifiers.has(field.identifier)) {
+      issues.push({
+        code: `${codePrefix}.${field.code}`,
+        message: `${descriptor.kind} volume descriptor ${field.label} references ${field.identifier}, which is not a file described in the root directory`,
+      });
+    }
+  }
+  return issues;
+}
+
+function prefixedDescriptorFileIdentifier(bytes: Uint8Array, offset: number, length: number): string | undefined {
+  if (bytes[offset] !== 0x5f) {
+    return undefined;
+  }
+  return readAscii(bytes, offset + 1, length - 1).replace(/[ \0]+$/u, "");
+}
+
+function rootDirectoryFileIdentifiers(image: Uint8Array, root: IsoDirectoryEntry): Set<string> | undefined {
+  const bytes = readDirectoryExtentBytes(image, root);
+  if (!bytes) {
+    return undefined;
+  }
+  const identifiers = new Set<string>();
+  let offset = 0;
+  let recordIndex = 0;
+  while (offset < bytes.byteLength) {
+    const length = bytes[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      continue;
+    }
+    if (length < 34 || offset + length > bytes.byteLength || (offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
+      offset += Math.max(1, length);
+      continue;
+    }
+    let record: DecodedDirectoryRecord;
+    try {
+      record = decodeDirectoryRecord(bytes, offset, bytes.byteLength);
+    } catch {
+      offset += length;
+      continue;
+    }
+    offset += record.length;
+    if (recordIndex++ < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== 0) {
+      continue;
+    }
+    identifiers.add(decodeFileIdentifier(record.identifier));
+  }
+  return identifiers;
 }
 
 function validateSecondaryEscapeSequences(
