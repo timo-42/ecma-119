@@ -9,6 +9,8 @@ import {
   createFixtureImage,
   findDirectoryRecord,
   findImageCreator,
+  findIsoParser,
+  findIsoValidator,
   hasEcma119Entry,
   loadEcma119Module,
   readBothEndianUint16,
@@ -27,6 +29,8 @@ const maybeDescribe = hasEcma119Entry() ? describe : describe.skip;
 
 maybeDescribe("generated ECMA-119 fixture image", () => {
   let createImage: ((files: ImageFileInput[], options: ImageMetadataInput) => unknown) | undefined;
+  let parseIsoImage: ((image: Uint8Array, options?: { includeData?: boolean }) => unknown) | undefined;
+  let validateIsoImage: ((image: Uint8Array) => unknown) | undefined;
   let image: Uint8Array;
   let primaryVolumeDescriptor: Uint8Array;
 
@@ -34,6 +38,8 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
     const module = await loadEcma119Module();
     if (module) {
       createImage = findImageCreator(module);
+      parseIsoImage = findIsoParser(module);
+      validateIsoImage = findIsoValidator(module);
     }
 
     if (createImage) {
@@ -46,6 +52,8 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
     expect(createImage, "export one of createImage, createIsoImage, createEcma119Image, buildImage, or writeImage").toBeTypeOf(
       "function",
     );
+    expect(parseIsoImage, "export parseIsoImage so generated fixtures can be read back").toBeTypeOf("function");
+    expect(validateIsoImage, "export validateIsoImage so generated fixtures can be checked after writing").toBeTypeOf("function");
   });
 
   test("matches required ECMA-119 sector-level fixture structures", ({ skip }) => {
@@ -116,6 +124,33 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
     expect(ascii(fileContent)).toBe("hello ecma-119\n");
   });
 
+  test("reads and validates the generated fixture with the public parser", ({ skip }) => {
+    if (!createImage || !parseIsoImage || !validateIsoImage) {
+      skip("cannot run generated write-read fixture until writer, parser, and validator APIs are exported");
+    }
+
+    expect(validateIsoImage!(image)).toEqual([]);
+
+    const parsed = parseIsoImage!(image, { includeData: true }) as {
+      primaryVolumeDescriptor: { volumeIdentifier: string; logicalBlockSize: number };
+      descriptors: Array<{ kind: string }>;
+      files: Array<{ path: string; identifier: string; size: number; data?: Uint8Array }>;
+    };
+
+    expect(parsed.primaryVolumeDescriptor).toMatchObject({
+      volumeIdentifier: "ECMA119_FIXTURE",
+      logicalBlockSize: SECTOR_SIZE,
+    });
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "terminator"]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      size: "hello ecma-119\n".length,
+    });
+    expect(ascii(parsed.files[0]?.data ?? new Uint8Array())).toBe("hello ecma-119\n");
+  });
+
   test("sizes large directories with sector padding between records", async () => {
     expect(createImage).toBeTypeOf("function");
     const files = Array.from({ length: 132 }, (_, index) => ({
@@ -130,6 +165,14 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
 
     expect(rootRecord.dataLength).toBeGreaterThan(SECTOR_SIZE);
     expect(findDirectoryRecord(rootDirectory, "F00131.TXT;1")).toBeDefined();
+
+    expect(validateIsoImage?.(largeImage)).toEqual([]);
+    const parsed = parseIsoImage?.(largeImage, { includeData: false }) as { files?: Array<{ path: string; size: number }> } | undefined;
+    expect(parsed?.files).toHaveLength(132);
+    expect(parsed?.files?.find((file) => file.path === "F00131.TXT")).toMatchObject({
+      path: "F00131.TXT",
+      size: "file 131\n".length,
+    });
   });
 
   test("rejects malformed directory cycles instead of recursing indefinitely", async () => {
