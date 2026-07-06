@@ -59,6 +59,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     if (terminator && !allZero(terminator.raw.subarray(7))) {
       issues.push({ code: "descriptor.terminator_reserved", message: "volume descriptor set terminator reserved bytes must be zero" });
     }
+    issues.push(...validateDescriptorSequenceProfile(descriptors));
     for (const descriptor of descriptors) {
       if (descriptor.kind === "boot") {
         issues.push(...validateBootVolumeDescriptor(descriptor));
@@ -94,6 +95,26 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     }
   }
   return dedupeIssues(issues);
+}
+
+function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const primaryCount = descriptors.filter((descriptor) => descriptor.kind === "primary").length;
+  if (primaryCount > 1) {
+    issues.push({
+      code: "descriptor.primary_duplicate",
+      message: `volume descriptor sequence contains ${primaryCount} primary volume descriptors; the supported profile requires exactly one`,
+    });
+  }
+  for (const descriptor of descriptors) {
+    if (descriptor.kind === "unknown") {
+      issues.push({
+        code: "descriptor.unknown",
+        message: `volume descriptor type ${descriptor.type} at sector ${descriptor.sector} is outside the supported profile`,
+      });
+    }
+  }
+  return issues;
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {

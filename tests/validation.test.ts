@@ -31,6 +31,48 @@ describe("validateIsoImage hardening", () => {
     ]);
   });
 
+  test("reports unknown volume descriptors as outside the supported profile", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "unknown descriptor\n" }], {
+      bootRecord: {
+        bootSystemIdentifier: "BOOT",
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const unknownDescriptorOffset = TERMINATOR_OFFSET;
+    image[unknownDescriptorOffset] = 254;
+    image[unknownDescriptorOffset + 6] = 7;
+
+    expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "unknown", "terminator"]);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "descriptor.unknown",
+          message: "volume descriptor type 254 at sector 17 is outside the supported profile",
+        }),
+      ]),
+    );
+  });
+
+  test("reports duplicate primary volume descriptors", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "duplicate primary descriptor\n" }], {
+      bootRecord: {
+        bootSystemIdentifier: "BOOT",
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image.set(image.subarray(PVD_OFFSET, PVD_OFFSET + SECTOR_SIZE), TERMINATOR_OFFSET);
+
+    expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "primary", "terminator"]);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "descriptor.primary_duplicate",
+          message: "volume descriptor sequence contains 2 primary volume descriptors; the supported profile requires exactly one",
+        }),
+      ]),
+    );
+  });
+
   test("accepts the deepest valid primary directory hierarchy with write-read validation", () => {
     const path = "A/B/C/D/E/F/G/README.TXT";
     const image = baselineImage([{ path, data: "valid depth\n" }]);
