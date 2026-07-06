@@ -1,4 +1,4 @@
-import { decodeVolumeDate, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
+import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, stripVersion } from "./identifiers.js";
@@ -8,6 +8,7 @@ import {
   type IsoFileEntry,
   type IsoImage,
   type IsoNode,
+  type BootVolumeDescriptor,
   type EnhancedVolumeDescriptor,
   type PrimaryVolumeDescriptor,
   type SupplementaryVolumeDescriptor,
@@ -57,6 +58,11 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     const terminator = descriptors.find((descriptor) => descriptor.kind === "terminator");
     if (terminator && !allZero(terminator.raw.subarray(7))) {
       issues.push({ code: "descriptor.terminator_reserved", message: "volume descriptor set terminator reserved bytes must be zero" });
+    }
+    for (const descriptor of descriptors) {
+      if (descriptor.kind === "boot") {
+        issues.push(...validateBootVolumeDescriptor(descriptor));
+      }
     }
     const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
     if (!pvd) {
@@ -210,6 +216,17 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
     { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
     { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
   ]));
+  issues.push(...validateDescriptorCharacterFields(pvd, "pvd", [
+    { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
+    { start: 40, length: 32, kind: "d", code: "volume_identifier.characters", label: "volume identifier" },
+    { start: 190, length: 128, kind: "d", code: "volume_set_identifier.characters", label: "volume set identifier" },
+    { start: 318, length: 128, kind: "a", code: "publisher_identifier.characters", label: "publisher identifier" },
+    { start: 446, length: 128, kind: "a", code: "data_preparer_identifier.characters", label: "data preparer identifier" },
+    { start: 574, length: 128, kind: "a", code: "application_identifier.characters", label: "application identifier" },
+    { start: 702, length: 37, kind: "file", code: "copyright_file_identifier.characters", label: "copyright file identifier" },
+    { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
+    { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
+  ]));
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
   }
@@ -232,6 +249,13 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
+}
+
+function validateBootVolumeDescriptor(descriptor: BootVolumeDescriptor): ValidationIssue[] {
+  return validateDescriptorCharacterFields(descriptor, "boot", [
+    { start: 7, length: 32, kind: "a", code: "system_identifier.characters", label: "boot system identifier" },
+    { start: 39, length: 32, kind: "a", code: "identifier.characters", label: "boot identifier" },
+  ]);
 }
 
 function minimumReferencedVolumeSpaceSize(image: Uint8Array, descriptors: VolumeDescriptor[]): number {
@@ -799,6 +823,10 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
     issues.push(...validateZeroDescriptorRanges(descriptor, "partition", [
       { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
     ]));
+    issues.push(...validateDescriptorCharacterFields(descriptor, "partition", [
+      { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
+      { start: 40, length: 32, kind: "d", code: "volume_partition_identifier.characters", label: "volume partition identifier" },
+    ]));
     const location = descriptor.volumePartitionLocation;
     const size = descriptor.volumePartitionSize;
     const end = location + size;
@@ -834,6 +862,39 @@ function validateZeroDescriptorRanges(
     }
   }
   return issues;
+}
+
+function validateDescriptorCharacterFields(
+  descriptor: VolumeDescriptor,
+  codePrefix: string,
+  fields: { start: number; length: number; kind: "a" | "d" | "file"; code: string; label: string }[],
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const field of fields) {
+    const text = readAscii(descriptor.raw, field.start, field.length);
+    if (!isDescriptorCharacterField(text, field.kind)) {
+      issues.push({
+        code: `${codePrefix}.${field.code}`,
+        message: `${descriptor.kind} volume descriptor ${field.label} contains invalid ECMA-119 ${field.kind}-characters`,
+      });
+    }
+  }
+  return issues;
+}
+
+function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boolean {
+  if (kind === "a") {
+    return isAString(text);
+  }
+  const value = text.replace(/ +$/u, "");
+  if (kind === "d") {
+    return isDString(value);
+  }
+  if (value === "") {
+    return true;
+  }
+  const match = /^([A-Z0-9_]{1,8}(?:\.[A-Z0-9_]{1,3})?);([1-9][0-9]{0,4})$/u.exec(value);
+  return match !== null && Number(match[2]) <= 32767;
 }
 
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {

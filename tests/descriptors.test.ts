@@ -226,6 +226,77 @@ describe("volume descriptor sequence parsing", () => {
     }
   });
 
+  test("validates primary boot and partition descriptor character fields", () => {
+    const image = createIsoImage([{
+      path: "COPY.TXT",
+      data: "descriptor character fields\n",
+    }], {
+      systemIdentifier: "PRIMARY SYSTEM",
+      volumeIdentifier: "PRIMARY_VOL",
+      volumeSetIdentifier: "VOLSET",
+      publisherIdentifier: "PUBLISHER/ID",
+      dataPreparerIdentifier: "PREPARER",
+      applicationIdentifier: "ECMA-119 TEST",
+      copyrightFileIdentifier: "COPY.TXT",
+      abstractFileIdentifier: "COPY.TXT",
+      bibliographicFileIdentifier: "COPY.TXT",
+      bootRecord: {
+        bootSystemIdentifier: "BOOT SYSTEM",
+        bootIdentifier: "BOOT ID",
+        bootSystemUse: Uint8Array.of(0x01, 0x02),
+      },
+      volumePartition: {
+        systemIdentifier: "PARTITION SYSTEM",
+        volumePartitionIdentifier: "PARTITION",
+        systemUse: Uint8Array.of(0x03, 0x04),
+        data: Uint8Array.of(0x05),
+      },
+    });
+
+    const parsed = parseIsoImage(image);
+    const descriptors = parseVolumeDescriptors(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor).toMatchObject({
+      systemIdentifier: "PRIMARY SYSTEM",
+      volumeIdentifier: "PRIMARY_VOL",
+      volumeSetIdentifier: "VOLSET",
+      publisherIdentifier: "PUBLISHER/ID",
+      dataPreparerIdentifier: "PREPARER",
+      applicationIdentifier: "ECMA-119 TEST",
+      copyrightFileIdentifier: "COPY.TXT;1",
+    });
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "partition", "terminator"]);
+
+    const mutations = [
+      { sector: 16, offset: 8, code: "pvd.system_identifier.characters", message: /system identifier/i },
+      { sector: 16, offset: 40, code: "pvd.volume_identifier.characters", message: /volume identifier/i },
+      { sector: 16, offset: 190, code: "pvd.volume_set_identifier.characters", message: /volume set identifier/i },
+      { sector: 16, offset: 318, code: "pvd.publisher_identifier.characters", message: /publisher identifier/i },
+      { sector: 16, offset: 446, code: "pvd.data_preparer_identifier.characters", message: /data preparer identifier/i },
+      { sector: 16, offset: 574, code: "pvd.application_identifier.characters", message: /application identifier/i },
+      { sector: 16, offset: 702, code: "pvd.copyright_file_identifier.characters", message: /copyright file identifier/i },
+      { sector: 16, offset: 739, code: "pvd.abstract_file_identifier.characters", message: /abstract file identifier/i },
+      { sector: 16, offset: 776, code: "pvd.bibliographic_file_identifier.characters", message: /bibliographic file identifier/i },
+      { sector: 17, offset: 7, code: "boot.system_identifier.characters", message: /boot system identifier/i },
+      { sector: 17, offset: 39, code: "boot.identifier.characters", message: /boot identifier/i },
+      { sector: 18, offset: 8, code: "partition.system_identifier.characters", message: /system identifier/i },
+      { sector: 18, offset: 40, code: "partition.volume_partition_identifier.characters", message: /volume partition identifier/i },
+    ];
+
+    for (const mutation of mutations) {
+      const mutated = imageWithDescriptorByte(image, mutation.sector, mutation.offset, 0x23);
+      expect(validateIsoImage(mutated)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: mutation.code,
+            message: expect.stringMatching(mutation.message),
+          }),
+        ]),
+      );
+    }
+  });
+
   test("omits file data from parsed secondary descriptor trees when includeData is false", () => {
     const image = createIsoImage([{
       path: "DIR/README.TXT",
