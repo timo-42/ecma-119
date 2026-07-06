@@ -219,9 +219,9 @@ export function sectorOffset(sector: number): number {
   return sector * SECTOR_SIZE;
 }
 
-export function encodeDirectoryDate(date: Date): Uint8Array {
+export function encodeDirectoryDate(date: Date, timeZoneOffsetMinutes = 0): Uint8Array {
   const bytes = new Uint8Array(7);
-  writeDirectoryDateTime(dateToDirectoryDateTime(date, 0), bytes);
+  writeDirectoryDateTime(dateToDirectoryDateTime(date, timeZoneOffsetMinutes), bytes);
   return bytes;
 }
 
@@ -229,9 +229,9 @@ export function decodeDirectoryDate(bytes: Uint8Array, offset: number): Date {
   return dateTimeToDate(readDirectoryDateTime(bytes, offset));
 }
 
-export function encodeVolumeDate(date: Date | null | undefined): Uint8Array {
+export function encodeVolumeDate(date: Date | null | undefined, timeZoneOffsetMinutes = 0): Uint8Array {
   const bytes = new Uint8Array(17);
-  writeVolumeDescriptorDateTime(date ? dateToVolumeDescriptorDateTime(date, 0) : null, bytes);
+  writeVolumeDescriptorDateTime(date ? dateToVolumeDescriptorDateTime(date, timeZoneOffsetMinutes) : null, bytes);
   return bytes;
 }
 

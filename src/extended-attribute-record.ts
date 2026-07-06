@@ -19,11 +19,12 @@ export const EXTENDED_ATTRIBUTE_RECORD_MIN_LENGTH = 250;
 const DEFAULT_PERMISSIONS = 0xaaaa;
 const REQUIRED_PERMISSION_BITS = 0xaaaa;
 
-export function encodeExtendedAttributeRecord(input: ExtendedAttributeRecordInput = {}, options: { defaultDate?: Date } = {}): Uint8Array {
+export function encodeExtendedAttributeRecord(input: ExtendedAttributeRecordInput = {}, options: { defaultDate?: Date; defaultTimeZoneOffsetMinutes?: number } = {}): Uint8Array {
   const applicationUse = input.applicationUse === undefined ? new Uint8Array() : toBytes(input.applicationUse);
   const escapeSequences = input.escapeSequences === undefined ? new Uint8Array() : toBytes(input.escapeSequences);
   const systemUse = input.systemUse === undefined ? new Uint8Array() : toBytes(input.systemUse);
   const defaultDate = options.defaultDate ?? new Date(0);
+  const timeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? options.defaultTimeZoneOffsetMinutes ?? 0;
   const ownerIdentification = input.ownerIdentification ?? 0;
   const groupIdentification = input.groupIdentification ?? 0;
   const permissions = input.permissions ?? DEFAULT_PERMISSIONS;
@@ -51,10 +52,10 @@ export function encodeExtendedAttributeRecord(input: ExtendedAttributeRecordInpu
   writeUint16Both(bytes, 0, ownerIdentification);
   writeUint16Both(bytes, 4, groupIdentification);
   writeUint16BE(bytes, 8, permissions);
-  writeVolumeDescriptorDateTime(bytes, 10, dateToVolumeDescriptorDateTime(input.createdAt ?? defaultDate, 0));
-  writeVolumeDescriptorDateTime(bytes, 27, dateToVolumeDescriptorDateTime(input.modifiedAt ?? input.createdAt ?? defaultDate, 0));
-  writeVolumeDescriptorDateTime(bytes, 44, input.expiresAt === null || input.expiresAt === undefined ? null : dateToVolumeDescriptorDateTime(input.expiresAt, 0));
-  writeVolumeDescriptorDateTime(bytes, 61, input.effectiveAt === null ? null : dateToVolumeDescriptorDateTime(input.effectiveAt ?? input.createdAt ?? defaultDate, 0));
+  writeVolumeDescriptorDateTime(bytes, 10, dateToVolumeDescriptorDateTime(input.createdAt ?? defaultDate, timeZoneOffsetMinutes));
+  writeVolumeDescriptorDateTime(bytes, 27, dateToVolumeDescriptorDateTime(input.modifiedAt ?? input.createdAt ?? defaultDate, timeZoneOffsetMinutes));
+  writeVolumeDescriptorDateTime(bytes, 44, input.expiresAt === null || input.expiresAt === undefined ? null : dateToVolumeDescriptorDateTime(input.expiresAt, timeZoneOffsetMinutes));
+  writeVolumeDescriptorDateTime(bytes, 61, input.effectiveAt === null ? null : dateToVolumeDescriptorDateTime(input.effectiveAt ?? input.createdAt ?? defaultDate, timeZoneOffsetMinutes));
   bytes[78] = checkedByte(recordFormat, "record format");
   bytes[79] = checkedByte(recordAttributes, "record attributes");
   writeUint16Both(bytes, 80, recordLength);

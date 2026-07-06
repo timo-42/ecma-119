@@ -18,6 +18,7 @@ export type DirectoryRecordInput = {
   interleaveGapSize?: number;
   identifier: Uint8Array;
   date: Date;
+  timeZoneOffsetMinutes?: number;
   volumeSequenceNumber?: number;
   systemUse?: Uint8Array;
 };
@@ -58,7 +59,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   bytes[1] = extendedAttributeRecordLength;
   writeUint32Both(bytes, 2, input.extent);
   writeUint32Both(bytes, 10, input.dataLength);
-  bytes.set(encodeDirectoryDate(input.date), 18);
+  bytes.set(encodeDirectoryDate(input.date, input.timeZoneOffsetMinutes ?? 0), 18);
   bytes[25] = input.flags;
   bytes[26] = checkedByte(input.fileUnitSize ?? 0, "file unit size");
   bytes[27] = checkedByte(input.interleaveGapSize ?? 0, "interleave gap size");
