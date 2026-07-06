@@ -20,6 +20,8 @@ type FileNode = {
   name: string;
   isoIdentifier: string;
   data: Uint8Array;
+  extendedAttributeRecord?: Uint8Array;
+  extendedAttributeRecordLength: number;
   date: Date;
   extent: number;
   systemUse?: Uint8Array;
@@ -82,6 +84,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const fileNodes = collectFiles(root);
   for (const file of fileNodes) {
     file.extent = nextSector;
+    nextSector += file.extendedAttributeRecordLength;
     nextSector += Math.max(1, sectorsForBytes(file.data.byteLength));
   }
   const preparedPartitions: PreparedVolumePartition[] = [];
@@ -100,7 +103,10 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
 
   for (const file of fileNodes) {
-    image.set(file.data, sectorOffset(file.extent));
+    if (file.extendedAttributeRecord) {
+      image.set(file.extendedAttributeRecord, sectorOffset(file.extent));
+    }
+    image.set(file.data, sectorOffset(file.extent + file.extendedAttributeRecordLength));
   }
   for (const partition of preparedPartitions) {
     if (partition.data) {
@@ -175,9 +181,20 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
       name: normalized.fileName,
       isoIdentifier: normalized.isoIdentifier,
       data: toBytes(file.data),
+      extendedAttributeRecordLength: 0,
       date: file.date ?? now,
       extent: 0,
     };
+    if (file.extendedAttributeRecord !== undefined) {
+      fileNode.extendedAttributeRecord = toBytes(file.extendedAttributeRecord);
+      if (fileNode.extendedAttributeRecord.byteLength === 0) {
+        throw new Error("extended attribute record must contain at least one byte");
+      }
+      fileNode.extendedAttributeRecordLength = sectorsForBytes(fileNode.extendedAttributeRecord.byteLength);
+      if (fileNode.extendedAttributeRecordLength > 0xff) {
+        throw new Error("extended attribute record exceeds 255 logical blocks");
+      }
+    }
     if (file.systemUse !== undefined) {
       fileNode.systemUse = toBytes(file.systemUse);
     }
@@ -240,6 +257,7 @@ function encodeDirectoryExtent(directory: DirectoryNode): Uint8Array {
     } else {
       const input = {
         extent: child.extent,
+        extendedAttributeRecordLength: child.extendedAttributeRecordLength,
         dataLength: child.data.byteLength,
         flags: 0,
         identifier,

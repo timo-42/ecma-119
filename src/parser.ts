@@ -221,18 +221,19 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
 function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const start = directory.extent * SECTOR_SIZE;
-  const end = start + directory.size;
+  const directoryStart = start + directory.extendedAttributeRecordLength * SECTOR_SIZE;
+  const end = directoryStart + directory.size;
   if (start < 0 || end > image.byteLength) {
     return [{ code: "directory.record_bounds", message: `directory extent for ${path} is out of bounds`, path }];
   }
-  let offset = start;
+  let offset = directoryStart;
   while (offset < end) {
     const length = image[offset]!;
     if (length === 0) {
-      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      offset = Math.ceil((offset - directoryStart + 1) / SECTOR_SIZE) * SECTOR_SIZE + directoryStart;
       continue;
     }
-    const relative = offset - start;
+    const relative = offset - directoryStart;
     if ((relative % SECTOR_SIZE) + length > SECTOR_SIZE) {
       issues.push({ code: "directory.record_crosses_sector", message: `directory record crosses a logical sector boundary at ${path}`, path });
       offset += 1;
@@ -317,12 +318,12 @@ function parsePartitionDescriptor(image: Uint8Array, offset: number, sector: num
 }
 
 function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, visited: Set<number>): IsoDirectoryEntry {
-  assertExtentInBounds(image, directory.extent, directory.size, path || ".");
+  assertExtentInBounds(image, directory.extent, directory.extendedAttributeRecordLength, directory.size, path || ".");
   if (visited.has(directory.extent)) {
     throw new Error(`invalid directory cycle detected at ${path || "."}`);
   }
   visited.add(directory.extent);
-  const start = directory.extent * SECTOR_SIZE;
+  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
   const bytes = image.subarray(start, start + directory.size);
   const children: IsoNode[] = [];
   let offset = 0;
@@ -351,36 +352,57 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromRecord(record, childPath, []);
+      if (record.extendedAttributeRecordLength > 0) {
+        child.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+      }
       children.push(readDirectoryTree(image, child, childPath, includeData, new Set(visited)));
     } else {
-      assertExtentInBounds(image, record.extent, record.dataLength, joinPath(path, stripVersion(identifier)));
+      assertExtentInBounds(image, record.extent, record.extendedAttributeRecordLength, record.dataLength, joinPath(path, stripVersion(identifier)));
       const cleanName = stripVersion(identifier);
       const filePath = joinPath(path, cleanName);
       const file: IsoFileEntry = {
         path: filePath,
         identifier,
         extent: record.extent,
+        extendedAttributeRecordLength: record.extendedAttributeRecordLength,
         size: record.dataLength,
         date: record.date,
         flags: record.flags,
       };
+      if (record.extendedAttributeRecordLength > 0) {
+        file.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+      }
       if (record.systemUse.byteLength > 0) {
         file.systemUse = record.systemUse;
       }
       if (includeData) {
-        file.data = image.slice(record.extent * SECTOR_SIZE, record.extent * SECTOR_SIZE + record.dataLength);
+        const dataStart = (record.extent + record.extendedAttributeRecordLength) * SECTOR_SIZE;
+        file.data = image.slice(dataStart, dataStart + record.dataLength);
       }
       children.push(file);
     }
   }
 
-  return { ...directory, children };
+  const entry = { ...directory, children };
+  if (entry.extendedAttributeRecordLength > 0 && !entry.extendedAttributeRecord) {
+    entry.extendedAttributeRecord = image.slice(directory.extent * SECTOR_SIZE, (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE);
+  }
+  return entry;
 }
 
-function assertExtentInBounds(image: Uint8Array, extent: number, length: number, path: string): void {
+function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttributeRecordLength: number, length: number, path: string): void {
   const start = extent * SECTOR_SIZE;
-  const end = start + length;
-  if (!Number.isInteger(extent) || !Number.isInteger(length) || extent < 0 || length < 0 || start < 0 || end > image.byteLength) {
+  const end = start + extendedAttributeRecordLength * SECTOR_SIZE + length;
+  if (
+    !Number.isInteger(extent)
+    || !Number.isInteger(extendedAttributeRecordLength)
+    || !Number.isInteger(length)
+    || extent < 0
+    || extendedAttributeRecordLength < 0
+    || length < 0
+    || start < 0
+    || end > image.byteLength
+  ) {
     throw new Error(`invalid extent bounds for ${path}`);
   }
 }
@@ -390,6 +412,7 @@ function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, 
     path,
     identifier: decodeFileIdentifier(record.identifier),
     extent: record.extent,
+    extendedAttributeRecordLength: record.extendedAttributeRecordLength,
     size: record.dataLength,
     date: record.date,
     flags: record.flags,
@@ -399,6 +422,11 @@ function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, 
     entry.systemUse = record.systemUse;
   }
   return entry;
+}
+
+function readExtendedAttributeRecord(image: Uint8Array, record: DecodedDirectoryRecord): Uint8Array {
+  const start = record.extent * SECTOR_SIZE;
+  return image.slice(start, start + record.extendedAttributeRecordLength * SECTOR_SIZE);
 }
 
 function collectParsedFiles(directory: IsoDirectoryEntry): IsoFileEntry[] {
