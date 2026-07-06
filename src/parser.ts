@@ -470,20 +470,6 @@ function fileExtentEndSector(record: DecodedDirectoryRecord): number {
   return record.extent + fileSectionExtentSectors(record);
 }
 
-function extentEndSector(extent: number, extendedAttributeRecordLength: number, dataSectors: number): number {
-  if (
-    !Number.isInteger(extent)
-    || !Number.isInteger(extendedAttributeRecordLength)
-    || !Number.isInteger(dataSectors)
-    || extent < 0
-    || extendedAttributeRecordLength < 0
-    || dataSectors < 0
-  ) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return extent + extendedAttributeRecordLength + dataSectors;
-}
-
 function sectorsForBytes(size: number): number {
   if (!Number.isInteger(size) || size < 0) {
     return Number.POSITIVE_INFINITY;
