@@ -184,6 +184,63 @@ describe("extended attribute records", () => {
     );
   });
 
+  test("reports file extended attribute flag mismatches", () => {
+    const image = createIsoImage([{
+      path: "EAR.TXT",
+      data: "file ear flags\n",
+      extendedAttributeRecord: {
+        ownerIdentification: 1,
+        groupIdentification: 1,
+        recordFormat: 1,
+        recordAttributes: 0,
+        recordLength: 12,
+      },
+    }]);
+    const rootDirectory = getRootDirectoryBytes(image);
+    const recordOffset = findRootFileRecordOffset(image, "EAR.TXT;1");
+    rootDirectory[recordOffset + 25] &= ~0x08;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.file_flags",
+          path: "EAR.TXT",
+          message: expect.stringMatching(/directory record flags/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports directories that set the Record file flag", () => {
+    const image = createIsoImage({
+      files: [{
+        path: "DIR/FILE.TXT",
+        data: "directory record bit\n",
+      }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: {
+          ownerIdentification: 1,
+          groupIdentification: 1,
+          systemIdentifier: "DIR_EAR",
+        },
+      }],
+    });
+    const rootDirectory = getRootDirectoryBytes(image);
+    const recordOffset = findRootFileRecordOffset(image, "DIR");
+    rootDirectory[recordOffset + 25] |= 0x08;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_record",
+          path: "DIR",
+          message: expect.stringMatching(/Record bit/i),
+        }),
+      ]),
+    );
+  });
+
   test("duplicates directory extended attribute records into supplementary hierarchies", () => {
     const image = createIsoImage({
       files: [{
@@ -433,6 +490,37 @@ describe("extended attribute records", () => {
       parentDirectoryNumber: 1,
       extendedAttributeRecordLength: 1.5,
     }], "little")).toThrow(/0 to 255 logical blocks/i);
+  });
+
+  test("low-level directory record encoder rejects unsupported file flag bits", () => {
+    const identifier = asciiBytes("FLAGS.TXT;1");
+    const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+    const input = {
+      extent: 20,
+      dataLength: 1,
+      identifier,
+      date,
+    };
+
+    expect(encodeDirectoryRecord({
+      ...input,
+      flags: 0x1f,
+    })[25]).toBe(0x1f);
+
+    expect(() => encodeDirectoryRecord({
+      ...input,
+      flags: 0x20,
+    })).toThrow(/reserved/i);
+
+    expect(() => encodeDirectoryRecord({
+      ...input,
+      flags: 0x40,
+    })).toThrow(/reserved/i);
+
+    expect(() => encodeDirectoryRecord({
+      ...input,
+      flags: 0x80,
+    })).toThrow(/multi-extent/i);
   });
 
   test("low-level directory record codec preserves interleave metadata bytes", () => {

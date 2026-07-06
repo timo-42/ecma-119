@@ -63,7 +63,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   writeUint32Both(bytes, 2, input.extent);
   writeUint32Both(bytes, 10, input.dataLength);
   bytes.set(encodeDirectoryDate(input.date, input.timeZoneOffsetMinutes ?? 0), 18);
-  bytes[25] = input.flags;
+  bytes[25] = checkedFileFlags(input.flags);
   bytes[26] = checkedByte(input.fileUnitSize ?? 0, "file unit size");
   bytes[27] = checkedByte(input.interleaveGapSize ?? 0, "interleave gap size");
   writeUint16Both(bytes, 28, input.volumeSequenceNumber ?? 1);
@@ -100,4 +100,15 @@ function checkedByte(value: number, name: string): number {
     throw new RangeError(`${name} must be an integer from 0 to 255`);
   }
   return value;
+}
+
+function checkedFileFlags(value: number): number {
+  const flags = checkedByte(value, "file flags");
+  if ((flags & 0x60) !== 0) {
+    throw new Error("directory record file flags bits 5 and 6 are reserved");
+  }
+  if ((flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+    throw new Error("directory record multi-extent file sections are not supported by the encoder");
+  }
+  return flags;
 }
