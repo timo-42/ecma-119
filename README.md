@@ -48,6 +48,7 @@ Implemented support is intentionally explicit:
 - ECMA-119 logical sectors of 2,048 bytes
 - primary volume descriptor and descriptor set terminator
 - optional boot record volume descriptor
+- optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
@@ -56,4 +57,4 @@ Implemented support is intentionally explicit:
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Supplementary/enhanced descriptors, executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record and volume partition descriptors are supported as raw descriptor metadata.
+Enhanced descriptors, executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record and volume partition descriptors are supported as raw descriptor metadata.

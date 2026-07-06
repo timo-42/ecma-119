@@ -54,12 +54,24 @@ export type CreateIsoOptions = {
   dataPreparerIdentifier?: string;
   applicationIdentifier?: string;
   bootRecord?: BootRecordOptions;
+  supplementaryVolumeDescriptors?: SupplementaryVolumeDescriptorOptions[];
   volumePartition?: VolumePartitionOptions;
   volumePartitions?: VolumePartitionOptions[];
   createdAt?: Date;
   modifiedAt?: Date;
   effectiveAt?: Date;
   expiresAt?: Date | null;
+};
+
+export type SupplementaryVolumeDescriptorOptions = {
+  volumeFlags?: number;
+  systemIdentifier?: string;
+  volumeIdentifier?: string;
+  escapeSequences?: Uint8Array | Buffer | string;
+  volumeSetIdentifier?: string;
+  publisherIdentifier?: string;
+  dataPreparerIdentifier?: string;
+  applicationIdentifier?: string;
 };
 
 export type BootRecordOptions = {
@@ -154,6 +166,14 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   volumeFlags: number;
   systemIdentifier: string;
   volumeIdentifier: string;
+  volumeSpaceSize: number;
+  volumeSetSize: number;
+  volumeSequenceNumber: number;
+  logicalBlockSize: number;
+  pathTableSize: number;
+  typeLPathTableLocation: number;
+  typeMPathTableLocation: number;
+  rootDirectoryRecord: IsoDirectoryEntry;
   escapeSequences: Uint8Array;
 };
 
@@ -164,6 +184,14 @@ export type EnhancedVolumeDescriptor = BaseVolumeDescriptor & {
   volumeFlags: number;
   systemIdentifier: string;
   volumeIdentifier: string;
+  volumeSpaceSize: number;
+  volumeSetSize: number;
+  volumeSequenceNumber: number;
+  logicalBlockSize: number;
+  pathTableSize: number;
+  typeLPathTableLocation: number;
+  typeMPathTableLocation: number;
+  rootDirectoryRecord: IsoDirectoryEntry;
   escapeSequences: Uint8Array;
 };
 

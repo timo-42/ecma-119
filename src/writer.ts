@@ -13,7 +13,7 @@ import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.j
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type VolumePartitionOptions } from "./types.js";
+import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -48,6 +48,18 @@ type PreparedVolumePartition = {
   size: number;
 };
 
+type PreparedSecondaryDescriptor = {
+  options: SupplementaryVolumeDescriptorOptions;
+  pathRecords: PathTableRecord[];
+  pathTableBytesL: Uint8Array;
+  pathTableBytesM: Uint8Array;
+  pathTableSectors: number;
+  typeLPathTableSector: number;
+  typeMPathTableSector: number;
+  directoryExtents: Map<DirectoryNode, number>;
+  directoryDataLengths: Map<DirectoryNode, number>;
+};
+
 export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInputFile[] } & CreateIsoOptions), maybeOptions: CreateIsoOptions = {}): Uint8Array {
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
@@ -64,13 +76,20 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const pathTableBytesM = encodePathTable(pathRecords, "big");
   const pathTableSectors = sectorsForBytes(pathTableBytesL.length);
   const volumePartitions = normalizeVolumePartitions(options);
-  const descriptorSectorCount = 2 + (options.bootRecord ? 1 : 0) + volumePartitions.length;
+  const secondaryDescriptors = normalizeSecondaryDescriptors(options, directories);
+  const descriptorSectorCount = 2 + (options.bootRecord ? 1 : 0) + secondaryDescriptors.length + volumePartitions.length;
 
   let nextSector = SYSTEM_AREA_SECTORS + descriptorSectorCount;
   const typeLPathTableSector = nextSector;
   nextSector += pathTableSectors;
   const typeMPathTableSector = nextSector;
   nextSector += pathTableSectors;
+  for (const descriptor of secondaryDescriptors) {
+    descriptor.typeLPathTableSector = nextSector;
+    nextSector += descriptor.pathTableSectors;
+    descriptor.typeMPathTableSector = nextSector;
+    nextSector += descriptor.pathTableSectors;
+  }
 
   for (const directory of directories) {
     directory.extent = nextSector;
@@ -78,9 +97,25 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     directory.dataLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
     nextSector += directory.dataLength / SECTOR_SIZE;
   }
+  for (const descriptor of secondaryDescriptors) {
+    for (const directory of directories) {
+      const dataLength = directoryDataLength(directory);
+      const paddedLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
+      descriptor.directoryExtents.set(directory, nextSector);
+      descriptor.directoryDataLengths.set(directory, paddedLength);
+      nextSector += paddedLength / SECTOR_SIZE;
+    }
+  }
 
   for (const [index, directory] of directories.entries()) {
     pathRecords[index]!.extent = directory.extent;
+  }
+  for (const descriptor of secondaryDescriptors) {
+    for (const [index, directory] of directories.entries()) {
+      descriptor.pathRecords[index]!.extent = descriptor.directoryExtents.get(directory)!;
+    }
+    descriptor.pathTableBytesL = encodePathTable(descriptor.pathRecords, "little");
+    descriptor.pathTableBytesM = encodePathTable(descriptor.pathRecords, "big");
   }
 
   const fileNodes = collectFiles(root);
@@ -99,9 +134,18 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const image = new Uint8Array(nextSector * SECTOR_SIZE);
   image.set(padToSector(encodePathTable(pathRecords, "little")), sectorOffset(typeLPathTableSector));
   image.set(padToSector(encodePathTable(pathRecords, "big")), sectorOffset(typeMPathTableSector));
+  for (const descriptor of secondaryDescriptors) {
+    image.set(padToSector(descriptor.pathTableBytesL), sectorOffset(descriptor.typeLPathTableSector));
+    image.set(padToSector(descriptor.pathTableBytesM), sectorOffset(descriptor.typeMPathTableSector));
+  }
 
   for (const directory of directories) {
     image.set(encodeDirectoryExtent(directory), sectorOffset(directory.extent));
+  }
+  for (const descriptor of secondaryDescriptors) {
+    for (const directory of directories) {
+      image.set(encodeDirectoryExtent(directory, descriptor), sectorOffset(descriptor.directoryExtents.get(directory)!));
+    }
   }
 
   for (const file of fileNodes) {
@@ -128,6 +172,19 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }), sectorOffset(descriptorSector++));
   if (options.bootRecord) {
     image.set(encodeBootVolumeDescriptor(options.bootRecord), sectorOffset(descriptorSector++));
+  }
+  for (const descriptor of secondaryDescriptors) {
+    image.set(encodeSupplementaryLikeVolumeDescriptor({
+      options: descriptor.options,
+      baseOptions: options,
+      now,
+      volumeSpaceSize: nextSector,
+      pathTableSize: descriptor.pathTableBytesL.length,
+      typeLPathTableSector: descriptor.typeLPathTableSector,
+      typeMPathTableSector: descriptor.typeMPathTableSector,
+      root,
+      layout: descriptor,
+    }), sectorOffset(descriptorSector++));
   }
   for (const partition of preparedPartitions) {
     image.set(encodeVolumePartitionDescriptor(partition.options, partition.location, partition.size), sectorOffset(descriptorSector++));
@@ -253,16 +310,16 @@ function directoryDataLength(directory: DirectoryNode): number {
   return offset;
 }
 
-function encodeDirectoryExtent(directory: DirectoryNode): Uint8Array {
-  const bytes = new Uint8Array(directory.dataLength);
+function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
+  const bytes = new Uint8Array(directoryDataLengthFor(directory, layout));
   let offset = 0;
-  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory, Uint8Array.of(0)));
-  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
+  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory, Uint8Array.of(0), layout));
+  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1), layout));
   for (const child of [...directory.children.values()].sort(compareNode)) {
     const identifier = asciiBytes(child.isoIdentifier);
     let record: Uint8Array;
     if (child.kind === "directory") {
-      record = directoryRecordForDirectory(child, identifier);
+      record = directoryRecordForDirectory(child, identifier, layout);
     } else {
       const input = {
         extent: child.extent,
@@ -279,14 +336,22 @@ function encodeDirectoryExtent(directory: DirectoryNode): Uint8Array {
   return bytes;
 }
 
-function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array): Uint8Array {
+function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, layout?: PreparedSecondaryDescriptor): Uint8Array {
   return encodeDirectoryRecord({
-    extent: directory.extent,
-    dataLength: directory.dataLength,
+    extent: directoryExtentFor(directory, layout),
+    dataLength: directoryDataLengthFor(directory, layout),
     flags: FILE_FLAG_DIRECTORY,
     identifier,
     date: directory.date,
   });
+}
+
+function directoryExtentFor(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): number {
+  return layout ? layout.directoryExtents.get(directory)! : directory.extent;
+}
+
+function directoryDataLengthFor(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): number {
+  return layout ? layout.directoryDataLengths.get(directory)! : directory.dataLength;
 }
 
 function appendRecord(bytes: Uint8Array, offset: number, record: Uint8Array): number {
@@ -339,6 +404,51 @@ function encodePrimaryVolumeDescriptor(input: {
   bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.options.createdAt ?? input.now), 830);
   bytes.set(encodeVolumeDate(input.options.expiresAt), 847);
   bytes.set(encodeVolumeDate(input.options.effectiveAt ?? input.options.createdAt ?? input.now), 864);
+  bytes[881] = 1;
+  return bytes;
+}
+
+function encodeSupplementaryLikeVolumeDescriptor(input: {
+  options: SupplementaryVolumeDescriptorOptions;
+  baseOptions: CreateIsoOptions;
+  now: Date;
+  volumeSpaceSize: number;
+  pathTableSize: number;
+  typeLPathTableSector: number;
+  typeMPathTableSector: number;
+  root: DirectoryNode;
+  layout: PreparedSecondaryDescriptor;
+}): Uint8Array {
+  const bytes = new Uint8Array(SECTOR_SIZE);
+  bytes[0] = 2;
+  writeAsciiPadded(bytes, 1, 5, STANDARD_IDENTIFIER, 0x00);
+  bytes[6] = 1;
+  bytes[7] = checkedVolumeFlags(input.options.volumeFlags ?? 0);
+  writeAField(bytes, 8, 32, input.options.systemIdentifier ?? input.baseOptions.systemIdentifier ?? "");
+  writeDField(bytes, 40, 32, input.options.volumeIdentifier ?? input.baseOptions.volumeIdentifier ?? "ECMA_119");
+  writeUint32Both(bytes, 80, input.volumeSpaceSize);
+  const escapeSequences = input.options.escapeSequences === undefined ? new Uint8Array() : toBytes(input.options.escapeSequences);
+  if (escapeSequences.byteLength > 32) {
+    throw new Error("escape sequences field exceeds 32 bytes");
+  }
+  bytes.set(escapeSequences, 88);
+  writeUint16Both(bytes, 120, 1);
+  writeUint16Both(bytes, 124, 1);
+  writeUint16Both(bytes, 128, SECTOR_SIZE);
+  writeUint32Both(bytes, 132, input.pathTableSize);
+  writeUint32LE(bytes, 140, input.typeLPathTableSector);
+  writeUint32LE(bytes, 144, 0);
+  writeUint32BE(bytes, 148, input.typeMPathTableSector);
+  writeUint32BE(bytes, 152, 0);
+  bytes.set(directoryRecordForDirectory(input.root, Uint8Array.of(0), input.layout), 156);
+  writeDField(bytes, 190, 128, input.options.volumeSetIdentifier ?? input.baseOptions.volumeSetIdentifier ?? "");
+  writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? input.baseOptions.publisherIdentifier ?? "");
+  writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? input.baseOptions.dataPreparerIdentifier ?? "");
+  writeAField(bytes, 574, 128, input.options.applicationIdentifier ?? input.baseOptions.applicationIdentifier ?? "ECMA-119");
+  bytes.set(encodeVolumeDate(input.baseOptions.createdAt ?? input.now), 813);
+  bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now), 830);
+  bytes.set(encodeVolumeDate(input.baseOptions.expiresAt), 847);
+  bytes.set(encodeVolumeDate(input.baseOptions.effectiveAt ?? input.baseOptions.createdAt ?? input.now), 864);
   bytes[881] = 1;
   return bytes;
 }
@@ -396,6 +506,29 @@ function normalizeVolumePartitions(options: CreateIsoOptions): VolumePartitionOp
   return partitions;
 }
 
+function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: DirectoryNode[]): PreparedSecondaryDescriptor[] {
+  return (options.supplementaryVolumeDescriptors ?? []).map((descriptor) => {
+    const pathRecords: PathTableRecord[] = directories.map((directory) => ({
+      identifier: directory.parent ? asciiBytes(directory.isoIdentifier) : Uint8Array.of(0),
+      extent: 0,
+      parentDirectoryNumber: directory.parent ? directory.parent.pathTableIndex : 1,
+    }));
+    const pathTableBytesL = encodePathTable(pathRecords, "little");
+    const pathTableBytesM = encodePathTable(pathRecords, "big");
+    return {
+      options: descriptor,
+      pathRecords,
+      pathTableBytesL,
+      pathTableBytesM,
+      pathTableSectors: sectorsForBytes(pathTableBytesL.length),
+      typeLPathTableSector: 0,
+      typeMPathTableSector: 0,
+      directoryExtents: new Map(),
+      directoryDataLengths: new Map(),
+    };
+  });
+}
+
 function prepareVolumePartition(options: VolumePartitionOptions, location: number): PreparedVolumePartition {
   assertVolumePartitionOptions(options);
   const data = options.data === undefined ? undefined : toBytes(options.data);
@@ -433,6 +566,21 @@ function writeDField(bytes: Uint8Array, offset: number, length: number, value: s
 
 function writeAField(bytes: Uint8Array, offset: number, length: number, value: string): void {
   writeAsciiPadded(bytes, offset, length, normalizeACharacters(value, "a-character field"));
+}
+
+function checkedByte(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new RangeError(`${name} must be an integer from 0 to 255`);
+  }
+  return value;
+}
+
+function checkedVolumeFlags(value: number): number {
+  const flags = checkedByte(value, "volume flags");
+  if ((flags & 0xfe) !== 0) {
+    throw new Error("supplementary volume descriptor flags bits 1 through 7 must be zero");
+  }
+  return flags;
 }
 
 function compareNode(left: DirectoryNode | FileNode, right: DirectoryNode | FileNode): number {
