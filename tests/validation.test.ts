@@ -377,6 +377,67 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports duplicate ordinary directory records in the same directory", () => {
+    const image = baselineImage([
+      { path: "A.TXT", data: "a\n" },
+      { path: "B.TXT", data: "b\n" },
+    ]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const aOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "A.TXT;1");
+    const bOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "B.TXT;1");
+    copyDirectoryRecordIdentifier(image, aOffset, bOffset);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_duplicate",
+          path: "A.TXT",
+          message: "directory records at . contain duplicate file identifier entries",
+        }),
+      ]),
+    );
+  });
+
+  test("does not report associated and non-associated records with the same identifier as duplicates", () => {
+    const image = baselineImage([
+      { path: "A.TXT", data: "a\n" },
+      { path: "B.TXT", data: "b\n" },
+    ]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const aOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "A.TXT;1");
+    const bOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "B.TXT;1");
+    copyDirectoryRecordIdentifier(image, aOffset, bOffset);
+    image[bOffset + 25] |= 0x04;
+
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_duplicate",
+        }),
+      ]),
+    );
+  });
+
+  test("reports duplicate ordinary directory records inside nested directories", () => {
+    const image = baselineImage([
+      { path: "DIR/A.TXT", data: "a\n" },
+      { path: "DIR/B.TXT", data: "b\n" },
+    ]);
+    const aOffset = findDirectoryRecordOffsetByPath(image, ["DIR", "A.TXT;1"]);
+    const bOffset = findDirectoryRecordOffsetByPath(image, ["DIR", "B.TXT;1"]);
+    copyDirectoryRecordIdentifier(image, aOffset, bOffset);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_duplicate",
+          path: "DIR/A.TXT",
+          message: "directory records at DIR contain duplicate file identifier entries",
+        }),
+      ]),
+    );
+  });
+
   test("reports Type L and Type M path table mirror mismatches", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "mirror mismatch\n" }]);
     const pathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
@@ -2487,6 +2548,15 @@ function findDirectoryRecordOffsetByPath(image: Uint8Array, identifiers: string[
     directorySize = readBothEndianUint32(image, recordOffset + 10);
   }
   throw new Error("directory path must contain at least one identifier");
+}
+
+function copyDirectoryRecordIdentifier(image: Uint8Array, sourceOffset: number, targetOffset: number): void {
+  const sourceLength = image[sourceOffset + 32]!;
+  const targetLength = image[targetOffset + 32]!;
+  if (sourceLength !== targetLength) {
+    throw new Error("directory record identifiers must have matching lengths");
+  }
+  image.set(image.subarray(sourceOffset + 33, sourceOffset + 33 + sourceLength), targetOffset + 33);
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
