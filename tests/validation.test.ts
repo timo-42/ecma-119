@@ -466,6 +466,85 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports primary directory record identifiers outside Level 1 rules", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "identifier rules\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const childDirectoryOffset = dirExtent * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, childDirectoryOffset, SECTOR_SIZE, "FILE.TXT;1");
+
+    image[dirRecordOffset + 33] = "#".charCodeAt(0);
+    image[fileRecordOffset + 33] = "#".charCodeAt(0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.directory_identifier.characters",
+          message: expect.stringMatching(/Level 1 d-characters/i),
+        }),
+        expect.objectContaining({
+          code: "directory.file_identifier.characters",
+          message: expect.stringMatching(/Level 1 file identifier/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports invalid primary file identifier versions", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "bad version\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    const identifierLength = image[fileRecordOffset + 32]!;
+    image[fileRecordOffset + 33 + identifierLength - 1] = "0".charCodeAt(0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_identifier.characters",
+          message: expect.stringMatching(/Level 1 file identifier/i),
+        }),
+      ]),
+    );
+  });
+
+  test("does not apply primary Level 1 record identifier rules to supplementary hierarchies", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supp identifier\n" }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+    });
+    const supplementary = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "supplementary");
+    if (!supplementary || supplementary.kind !== "supplementary") {
+      throw new Error("missing supplementary descriptor");
+    }
+    const rootDirectoryOffset = supplementary.rootDirectoryRecord.extent * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    image[dirRecordOffset + 33] = "#".charCodeAt(0);
+
+    const issues = validateIsoImage(image);
+
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: expect.stringMatching(/^directory\.(directory_identifier|file_identifier)\.characters$/),
+        }),
+      ]),
+    );
+  });
+
+  test("reports primary descriptor root directory record identifier mismatches", () => {
+    const image = baselineImage();
+    image[PVD_OFFSET + 156 + 33] = 1;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.root_directory_record.identifier",
+          message: expect.stringMatching(/root directory record/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports malformed extended attribute records inside nested directories", () => {
     const image = baselineImage([{
       path: "DIR/FILE.TXT",
