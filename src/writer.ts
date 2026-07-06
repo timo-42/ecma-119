@@ -302,13 +302,16 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     const fileTimeZoneOffsetMinutes = file.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     let directory = root;
     for (const part of normalized.parts.slice(0, -1)) {
-      const existing = directory.children.get(part);
+      const existing = directory.children.get(directoryChildKey(part));
       if (existing && existing.kind !== "directory") {
         throw new Error(`path segment conflicts with a file: ${part}`);
       }
       if (existing) {
         directory = existing;
         continue;
+      }
+      if (hasFileChildWithIdentifier(directory, part)) {
+        throw new Error(`path segment conflicts with a file: ${part}`);
       }
       const child: DirectoryNode = {
         kind: "directory",
@@ -324,10 +327,11 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         flags: FILE_FLAG_DIRECTORY,
         pathTableIndex: 0,
       };
-      directory.children.set(part, child);
+      directory.children.set(directoryChildKey(part), child);
       directory = child;
     }
-    if (directory.children.has(normalized.isoIdentifier)) {
+    const flags = inputFileFlags(file);
+    if (directory.children.has(directoryChildKey(normalized.isoIdentifier)) || directory.children.has(fileChildKey(normalized.isoIdentifier, flags))) {
       throw new Error(`duplicate ISO identifier: ${file.path}`);
     }
     const data = toBytes(file.data);
@@ -341,7 +345,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       date: file.date ?? now,
       timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
       extent: 0,
-      flags: inputFileFlags(file),
+      flags,
     };
     if (file.extendedAttributeRecord !== undefined) {
       fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
@@ -368,7 +372,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     if (file.systemUse !== undefined) {
       fileNode.systemUse = toBytes(file.systemUse);
     }
-    directory.children.set(normalized.isoIdentifier, fileNode);
+    directory.children.set(fileChildKey(normalized.isoIdentifier, fileNode.flags), fileNode);
   }
 
   for (const input of directories) {
@@ -407,13 +411,16 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
 function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZoneOffsetMinutes: number): DirectoryNode {
   let directory = root;
   for (const part of parts) {
-    const existing = directory.children.get(part);
+    const existing = directory.children.get(directoryChildKey(part));
     if (existing && existing.kind !== "directory") {
       throw new Error(`path segment conflicts with a file: ${part}`);
     }
     if (existing) {
       directory = existing;
       continue;
+    }
+    if (hasFileChildWithIdentifier(directory, part)) {
+      throw new Error(`path segment conflicts with a file: ${part}`);
     }
     const child: DirectoryNode = {
       kind: "directory",
@@ -429,10 +436,28 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
       flags: FILE_FLAG_DIRECTORY,
       pathTableIndex: 0,
     };
-    directory.children.set(part, child);
+    directory.children.set(directoryChildKey(part), child);
     directory = child;
   }
   return directory;
+}
+
+function directoryChildKey(identifier: string): string {
+  return `D:${identifier}`;
+}
+
+function fileChildKey(identifier: string, flags: number): string {
+  const associated = (flags & FILE_FLAG_ASSOCIATED) === FILE_FLAG_ASSOCIATED ? "1" : "0";
+  return `F:${identifier}:${associated}`;
+}
+
+function hasFileChildWithIdentifier(directory: DirectoryNode, identifier: string): boolean {
+  for (const child of directory.children.values()) {
+    if (child.kind === "file" && child.isoIdentifier === identifier) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExtent"], interleave: IsoInputFile["interleave"]): FileSectionNode[] {

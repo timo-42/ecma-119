@@ -23,6 +23,36 @@ describe("directory record file flags", () => {
     });
   });
 
+  test("writes associated and regular files with the same identifier", () => {
+    const image = createIsoImage([
+      { path: "PAIR.TXT", data: "regular\n" },
+      { path: "PAIR.TXT", data: "associated\n", associated: true },
+    ]);
+    const records = findRootRecords(image, "PAIR.TXT;1");
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(records).toHaveLength(2);
+    expect(records[0]?.[25]).toBe(0x04);
+    expect(records[1]?.[25]).toBe(0x00);
+    expect(parsed.files.map((file) => file.identifier)).toEqual(["PAIR.TXT;1", "PAIR.TXT;1"]);
+    expect(parsed.files.map((file) => file.path)).toEqual(["PAIR.TXT", "PAIR.TXT"]);
+    expect(parsed.files.map((file) => file.flags)).toEqual([0x04, 0x00]);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("associated\n");
+    expect(new TextDecoder("ascii").decode(parsed.files[1]?.data)).toBe("regular\n");
+  });
+
+  test("rejects duplicate files with the same associated-bit state", () => {
+    expect(() => createIsoImage([
+      { path: "DUP.TXT", data: "first\n" },
+      { path: "DUP.TXT", data: "second\n" },
+    ])).toThrow(/duplicate ISO identifier/i);
+    expect(() => createIsoImage([
+      { path: "DUP.TXT", data: "first\n", associated: true },
+      { path: "DUP.TXT", data: "second\n", associated: true },
+    ])).toThrow(/duplicate ISO identifier/i);
+  });
+
   test("writes hidden flags for directories", () => {
     const image = createIsoImage([{
       path: "DIR/FILE.TXT",
@@ -116,8 +146,17 @@ describe("directory record file flags", () => {
 });
 
 function findRootRecord(image: Uint8Array, identifier: string): Uint8Array {
+  const record = findRootRecords(image, identifier)[0];
+  if (!record) {
+    throw new Error(`missing directory record for ${identifier}`);
+  }
+  return record;
+}
+
+function findRootRecords(image: Uint8Array, identifier: string): Uint8Array[] {
   const root = rootDirectoryBytes(image);
   const expected = asciiBytes(identifier);
+  const records: Uint8Array[] = [];
   let offset = 0;
 
   while (offset < root.byteLength) {
@@ -129,12 +168,12 @@ function findRootRecord(image: Uint8Array, identifier: string): Uint8Array {
     const identifierLength = root[offset + 32]!;
     const actual = root.subarray(offset + 33, offset + 33 + identifierLength);
     if (bytesEqual(actual, expected)) {
-      return root.slice(offset, offset + length);
+      records.push(root.slice(offset, offset + length));
     }
     offset += length;
   }
 
-  throw new Error(`missing directory record for ${identifier}`);
+  return records;
 }
 
 function rootDirectoryBytes(image: Uint8Array): Uint8Array {
