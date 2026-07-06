@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, validateIsoImage } from "../src/index";
+import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage, type VolumePartitionDescriptor } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import { readBothEndianUint32, readUint32BE, readUint32LE } from "./helpers";
 
@@ -91,6 +91,114 @@ describe("validateIsoImage hardening", () => {
           code: "pvd.file_structure_version",
           message: "primary volume descriptor file structure version must be 1",
         }),
+      ]),
+    );
+  });
+
+  test("reports primary volume space smaller than descriptor sequence", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "descriptor sequence\n" }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    setPrimaryVolumeSpaceSize(image, 17);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expectVolumeSpaceLowerBoundIssue(),
+      ]),
+    );
+  });
+
+  test("reports primary volume space smaller than primary path tables", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table\n" }]);
+    const typeMPathTableLocation = readUint32BE(image, PVD_OFFSET + 148);
+    const pathTableSize = readBothEndianUint32(image, PVD_OFFSET + 132);
+    setPrimaryVolumeSpaceSize(image, typeMPathTableLocation + Math.ceil(pathTableSize / SECTOR_SIZE) - 1);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expectVolumeSpaceLowerBoundIssue(),
+      ]),
+    );
+  });
+
+  test("reports primary volume space smaller than file extended attribute record and data", () => {
+    const image = baselineImage([{
+      path: "EAR.TXT",
+      data: "file ear lower bound\n",
+      extendedAttributeRecord: {
+        systemIdentifier: "VALIDATION",
+      },
+    }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "EAR.TXT;1");
+    const fileExtent = readBothEndianUint32(image, fileRecordOffset + 2);
+    const fileExtendedAttributeRecordLength = image[fileRecordOffset + 1]!;
+    setPrimaryVolumeSpaceSize(image, fileExtent + fileExtendedAttributeRecordLength);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expectVolumeSpaceLowerBoundIssue(),
+      ]),
+    );
+  });
+
+  test("reports primary volume space smaller than directory extended attribute record and directory data", () => {
+    const image = createIsoImage({
+      files: [{ path: "DIR/FILE.TXT", data: "directory ear lower bound\n" }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: {
+          systemIdentifier: "VALIDATION",
+        },
+      }],
+    });
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirExtendedAttributeRecordLength = image[dirRecordOffset + 1]!;
+    setPrimaryVolumeSpaceSize(image, dirExtent + dirExtendedAttributeRecordLength);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expectVolumeSpaceLowerBoundIssue(),
+      ]),
+    );
+  });
+
+  test("reports primary volume space smaller than supplementary directory tree", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supp lower bound\n" }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const supplementaryRootExtent = readBothEndianUint32(image, supplementaryDescriptorOffset + 156 + 2);
+    setPrimaryVolumeSpaceSize(image, supplementaryRootExtent);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expectVolumeSpaceLowerBoundIssue(),
+      ]),
+    );
+  });
+
+  test("reports primary volume space smaller than volume partition extent", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "partition lower bound\n" }], {
+      volumePartition: {
+        volumePartitionIdentifier: "PARTITION",
+        data: "partition payload\n",
+      },
+    });
+    const partition = parseVolumeDescriptors(image).find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+    expect(partition).toBeDefined();
+    setPrimaryVolumeSpaceSize(image, partition!.volumePartitionLocation + partition!.volumePartitionSize - 1);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
   });
@@ -636,6 +744,17 @@ function rootDirectoryExtent(image: Uint8Array): number {
 
 function setRootDirectorySize(image: Uint8Array, size: number): void {
   writeUint32Both(image, PVD_OFFSET + 156 + 10, size);
+}
+
+function setPrimaryVolumeSpaceSize(image: Uint8Array, size: number): void {
+  writeUint32Both(image, PVD_OFFSET + 80, size);
+}
+
+function expectVolumeSpaceLowerBoundIssue(): ReturnType<typeof expect.objectContaining> {
+  return expect.objectContaining({
+    code: "pvd.volume_space_size.lower_bound",
+    message: expect.stringMatching(/smaller than referenced sector end/i),
+  });
 }
 
 function findDirectoryRecordOffset(image: Uint8Array, directoryOffset: number, directorySize: number, identifier: string): number {
