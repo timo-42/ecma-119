@@ -45,7 +45,7 @@ export function normalizeDirectoryPath(path: string): NormalizedDirectoryPath {
     throw new Error(`directory path must not contain empty, current, or parent segments: ${path}`);
   }
   const parts = cleaned.split("/").map((part) => normalizeDCharacters(part.toUpperCase(), "directory path segment"));
-  if (parts.length > 8) {
+  if (parts.length > 7) {
     throw new Error("ECMA-119 Level 1 directory hierarchy depth must not exceed 8");
   }
   for (const directory of parts) {
