@@ -33,6 +33,60 @@ describe("volume descriptor sequence parsing", () => {
     expect(parsed.files[0]?.data).toEqual(new Uint8Array());
   });
 
+  test("writes, validates, and reads a local volume set member", () => {
+    const payload = new TextEncoder().encode("volume member data\n");
+    const image = createIsoImage([{
+      path: "MEMBER.TXT",
+      data: payload,
+    }], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      volumeIdentifier: "MEMBER_2",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const self = readDirectoryRecord(rootDirectory, 0);
+    const parent = readDirectoryRecord(rootDirectory, self.length);
+    const file = readDirectoryRecord(rootDirectory, self.length + parent.length);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors[0]).toMatchObject({
+      kind: "primary",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+    });
+    expect(parsed.primaryVolumeDescriptor).toMatchObject({
+      volumeIdentifier: "MEMBER_2",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+    });
+    expect(parsed.root.volumeSequenceNumber).toBe(2);
+    expect(parsed.files[0]).toMatchObject({
+      path: "MEMBER.TXT",
+      identifier: "MEMBER.TXT;1",
+      volumeSequenceNumber: 2,
+      size: payload.byteLength,
+    });
+    expect(parsed.files[0]?.data).toEqual(payload);
+    expect(self.volumeSequenceNumber).toBe(2);
+    expect(parent.volumeSequenceNumber).toBe(2);
+    expect(file.volumeSequenceNumber).toBe(2);
+  });
+
+  test("rejects invalid local volume set member options", () => {
+    expect(() => createIsoImage([], { volumeSetSize: 0 })).toThrow(/volumeSetSize/i);
+    expect(() => createIsoImage([], { volumeSetSize: 1.5 })).toThrow(/volumeSetSize/i);
+    expect(() => createIsoImage([], { volumeSetSize: 0x10000 })).toThrow(/volumeSetSize/i);
+    expect(() => createIsoImage([], { volumeSequenceNumber: 0 })).toThrow(/volumeSequenceNumber/i);
+    expect(() => createIsoImage([], { volumeSequenceNumber: 1.5 })).toThrow(/volumeSequenceNumber/i);
+    expect(() => createIsoImage([], { volumeSequenceNumber: 0x10000 })).toThrow(/volumeSequenceNumber/i);
+    expect(() => createIsoImage([], { volumeSetSize: 2, volumeSequenceNumber: 3 })).toThrow(/less than or equal to volumeSetSize/i);
+  });
+
   test("writes, validates, and reads non-interleaved multi-extent files", () => {
     const payload = new TextEncoder().encode("abcdefghijklmn");
     const image = createIsoImage([{

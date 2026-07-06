@@ -62,6 +62,8 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 
 `terminatorCount` defaults to 1 and may be set from 1 through 255 to emit one or more Volume Descriptor Set Terminators.
 
+`volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number.
+
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
@@ -78,6 +80,7 @@ Implemented support is intentionally explicit:
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - optional Type L and Type M path table copies when requested by the writer
+- local volume set member metadata and same-volume directory records
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - directory records with standard `.` and `..` entries
 - hidden flags for generated files and directories, and associated file flags for generated files
@@ -92,4 +95,4 @@ Implemented support is intentionally explicit:
 - read-side coalescing of compatible non-interleaved multi-extent file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Executable boot semantics, partition filesystem semantics, multi-volume sets, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
+Executable boot semantics, partition filesystem semantics, cross-volume file resolution across multiple images, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.

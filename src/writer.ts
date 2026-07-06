@@ -82,12 +82,18 @@ type PreparedSecondaryDescriptor = {
   directoryDataLengths: Map<DirectoryNode, number>;
 };
 
+type VolumeSetOptions = {
+  volumeSetSize: number;
+  volumeSequenceNumber: number;
+};
+
 export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInputFile[] } & CreateIsoOptions), maybeOptions: CreateIsoOptions = {}): Uint8Array {
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
   const now = options.createdAt ?? new Date();
   const timeZoneOffsetMinutes = options.timeZoneOffsetMinutes ?? 0;
   const identifierLevel = checkedIdentifierLevel(options.identifierLevel ?? 1);
+  const volumeSet = checkedVolumeSetOptions(options);
   const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes, identifierLevel);
   const directories = collectDirectories(root);
   const pathRecords: PathTableRecord[] = directories.map((directory) => ({
@@ -206,7 +212,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     if (directory.extendedAttributeRecord) {
       image.set(directory.extendedAttributeRecord, sectorOffset(directory.extent));
     }
-    image.set(encodeDirectoryExtent(directory), sectorOffset(directory.extent + directory.extendedAttributeRecordLength));
+    image.set(encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber), sectorOffset(directory.extent + directory.extendedAttributeRecordLength));
   }
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
@@ -214,7 +220,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       if (directory.extendedAttributeRecord) {
         image.set(directory.extendedAttributeRecord, sectorOffset(extent));
       }
-      image.set(encodeDirectoryExtent(directory, descriptor), sectorOffset(extent + directory.extendedAttributeRecordLength));
+      image.set(encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber, descriptor), sectorOffset(extent + directory.extendedAttributeRecordLength));
     }
   }
 
@@ -237,6 +243,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     options,
     identifierLevel,
     now,
+    volumeSet,
     volumeSpaceSize: nextSector,
     pathTableSize: pathTableBytesL.length,
     typeLPathTableSector,
@@ -254,6 +261,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       baseOptions: options,
       identifierLevel,
       now,
+      volumeSet,
       volumeSpaceSize: nextSector,
       pathTableSize: descriptor.pathTableBytesL.length,
       typeLPathTableSector: descriptor.typeLPathTableSector,
@@ -566,20 +574,20 @@ function directoryDataLength(directory: DirectoryNode): number {
   return offset;
 }
 
-function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
+function encodeDirectoryExtent(directory: DirectoryNode, volumeSequenceNumber: number, layout?: PreparedSecondaryDescriptor): Uint8Array {
   const bytes = new Uint8Array(directoryDataLengthFor(directory, layout));
   let offset = 0;
-  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory, Uint8Array.of(0), layout));
-  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1), layout));
+  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory, Uint8Array.of(0), volumeSequenceNumber, layout));
+  offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1), volumeSequenceNumber, layout));
   for (const child of [...directory.children.values()].sort(compareNode)) {
     const identifier = asciiBytes(child.isoIdentifier);
     let record: Uint8Array;
     if (child.kind === "directory") {
-      record = directoryRecordForDirectory(child, identifier, layout);
+      record = directoryRecordForDirectory(child, identifier, volumeSequenceNumber, layout);
       offset = appendRecord(bytes, offset, record);
     } else {
       for (const [sectionIndex, section] of child.sections.entries()) {
-        record = directoryRecordForFileSection(child, section, sectionIndex, identifier);
+        record = directoryRecordForFileSection(child, section, sectionIndex, identifier, volumeSequenceNumber);
         offset = appendRecord(bytes, offset, record);
       }
     }
@@ -587,7 +595,7 @@ function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecond
   return bytes;
 }
 
-function directoryRecordForFileSection(file: FileNode, section: FileSectionNode, sectionIndex: number, identifier: Uint8Array): Uint8Array {
+function directoryRecordForFileSection(file: FileNode, section: FileSectionNode, sectionIndex: number, identifier: Uint8Array, volumeSequenceNumber: number): Uint8Array {
   const isFinalSection = sectionIndex === file.sections.length - 1;
   const input = {
     extent: section.extent,
@@ -599,11 +607,12 @@ function directoryRecordForFileSection(file: FileNode, section: FileSectionNode,
     identifier,
     date: file.date,
     timeZoneOffsetMinutes: file.timeZoneOffsetMinutes,
+    volumeSequenceNumber,
   };
   return file.systemUse ? encodeDirectoryRecord({ ...input, systemUse: file.systemUse }) : encodeDirectoryRecord(input);
 }
 
-function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, layout?: PreparedSecondaryDescriptor): Uint8Array {
+function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, volumeSequenceNumber: number, layout?: PreparedSecondaryDescriptor): Uint8Array {
   const input = {
     extent: directoryExtentFor(directory, layout),
     extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
@@ -612,11 +621,12 @@ function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8
     identifier,
     date: directory.date,
     timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
+    volumeSequenceNumber,
   };
   return directory.systemUse ? encodeDirectoryRecord({ ...input, systemUse: directory.systemUse }) : encodeDirectoryRecord(input);
 }
 
-function directoryRecordForDescriptorRoot(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
+function directoryRecordForDescriptorRoot(directory: DirectoryNode, volumeSequenceNumber: number, layout?: PreparedSecondaryDescriptor): Uint8Array {
   return encodeDirectoryRecord({
     extent: directoryExtentFor(directory, layout),
     extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
@@ -625,6 +635,7 @@ function directoryRecordForDescriptorRoot(directory: DirectoryNode, layout?: Pre
     identifier: Uint8Array.of(0),
     date: directory.date,
     timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
+    volumeSequenceNumber,
   });
 }
 
@@ -665,6 +676,7 @@ function encodePrimaryVolumeDescriptor(input: {
   options: CreateIsoOptions;
   identifierLevel: IdentifierLevel;
   now: Date;
+  volumeSet: VolumeSetOptions;
   volumeSpaceSize: number;
   pathTableSize: number;
   typeLPathTableSector: number;
@@ -680,15 +692,15 @@ function encodePrimaryVolumeDescriptor(input: {
   writeAField(bytes, 8, 32, input.options.systemIdentifier ?? "");
   writeDField(bytes, 40, 32, input.options.volumeIdentifier ?? "ECMA_119");
   writeUint32Both(bytes, 80, input.volumeSpaceSize);
-  writeUint16Both(bytes, 120, 1);
-  writeUint16Both(bytes, 124, 1);
+  writeUint16Both(bytes, 120, input.volumeSet.volumeSetSize);
+  writeUint16Both(bytes, 124, input.volumeSet.volumeSequenceNumber);
   writeUint16Both(bytes, 128, SECTOR_SIZE);
   writeUint32Both(bytes, 132, input.pathTableSize);
   writeUint32LE(bytes, 140, input.typeLPathTableSector);
   writeUint32LE(bytes, 144, input.optionalTypeLPathTableSector);
   writeUint32BE(bytes, 148, input.typeMPathTableSector);
   writeUint32BE(bytes, 152, input.optionalTypeMPathTableSector);
-  bytes.set(directoryRecordForDescriptorRoot(input.root), 156);
+  bytes.set(directoryRecordForDescriptorRoot(input.root, input.volumeSet.volumeSequenceNumber), 156);
   writeDField(bytes, 190, 128, input.options.volumeSetIdentifier ?? "");
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? "");
@@ -711,6 +723,7 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   baseOptions: CreateIsoOptions;
   identifierLevel: IdentifierLevel;
   now: Date;
+  volumeSet: VolumeSetOptions;
   volumeSpaceSize: number;
   pathTableSize: number;
   typeLPathTableSector: number;
@@ -733,15 +746,15 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
     throw new Error("escape sequences field exceeds 32 bytes");
   }
   bytes.set(escapeSequences, 88);
-  writeUint16Both(bytes, 120, 1);
-  writeUint16Both(bytes, 124, 1);
+  writeUint16Both(bytes, 120, input.volumeSet.volumeSetSize);
+  writeUint16Both(bytes, 124, input.volumeSet.volumeSequenceNumber);
   writeUint16Both(bytes, 128, SECTOR_SIZE);
   writeUint32Both(bytes, 132, input.pathTableSize);
   writeUint32LE(bytes, 140, input.typeLPathTableSector);
   writeUint32LE(bytes, 144, input.optionalTypeLPathTableSector);
   writeUint32BE(bytes, 148, input.typeMPathTableSector);
   writeUint32BE(bytes, 152, input.optionalTypeMPathTableSector);
-  bytes.set(directoryRecordForDescriptorRoot(input.root, input.layout), 156);
+  bytes.set(directoryRecordForDescriptorRoot(input.root, input.volumeSet.volumeSequenceNumber, input.layout), 156);
   writeDField(bytes, 190, 128, input.options.volumeSetIdentifier ?? input.baseOptions.volumeSetIdentifier ?? "");
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? input.baseOptions.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? input.baseOptions.dataPreparerIdentifier ?? "");
@@ -924,6 +937,22 @@ function checkedIdentifierLevel(value: number): IdentifierLevel {
 function checkedTerminatorCount(value: number): number {
   if (!Number.isInteger(value) || value < 1 || value > 0xff) {
     throw new RangeError("terminatorCount must be an integer from 1 to 255");
+  }
+  return value;
+}
+
+function checkedVolumeSetOptions(options: CreateIsoOptions): VolumeSetOptions {
+  const volumeSetSize = checkedVolumeSetField(options.volumeSetSize ?? 1, "volumeSetSize");
+  const volumeSequenceNumber = checkedVolumeSetField(options.volumeSequenceNumber ?? 1, "volumeSequenceNumber");
+  if (volumeSequenceNumber > volumeSetSize) {
+    throw new RangeError("volumeSequenceNumber must be less than or equal to volumeSetSize");
+  }
+  return { volumeSetSize, volumeSequenceNumber };
+}
+
+function checkedVolumeSetField(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 1 || value > 0xffff) {
+    throw new RangeError(`${name} must be an integer from 1 to 65535`);
   }
   return value;
 }
