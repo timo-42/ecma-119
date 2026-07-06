@@ -571,7 +571,7 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
   bytes.set(encodeVolumeDate(input.baseOptions.expiresAt, timeZoneOffsetMinutes), 847);
   bytes.set(encodeVolumeDate(input.baseOptions.effectiveAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 864);
-  bytes[881] = 1;
+  bytes[881] = input.layout.kind === "enhanced" ? 2 : 1;
   writeApplicationUse(bytes, input.options.volumeDescriptorApplicationUse ?? input.baseOptions.volumeDescriptorApplicationUse);
   return bytes;
 }

@@ -1374,6 +1374,27 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports unsupported enhanced file structure versions", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    image[enhancedDescriptorOffset + 881] = 1;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "enhanced.file_structure_version",
+          message: "enhanced volume descriptor file structure version must be 2",
+        }),
+      ]),
+    );
+  });
+
   test("reports enhanced path table parent issues", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
