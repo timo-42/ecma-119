@@ -1859,6 +1859,50 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("does not traverse external child directory extents on local volume set members", () => {
+    const image = createIsoImage([
+      { path: "DIR/FILE.TXT", data: "nested\n" },
+      { path: "README.TXT", data: "not a directory\n" },
+    ], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const readmeRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    const readmeExtent = readBothEndianUint32(image, readmeRecordOffset + 2);
+    writeUint32Both(image, dirRecordOffset + 2, readmeExtent);
+    writeUint16Both(image, dirRecordOffset + 28, 1);
+
+    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 1/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.volume_sequence_unsupported",
+          path: "DIR",
+          message: expect.stringMatching(/external volume sequence number 1/i),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_malformed" }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.self_record.missing" }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
+      ]),
+    );
+  });
+
   test("reports zero child directory record volume sequence numbers as range issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "child zero sequence\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
