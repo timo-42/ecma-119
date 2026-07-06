@@ -7,6 +7,7 @@ import {
   encodeExtendedAttributeRecord,
   encodePathTable,
   parseIsoImage,
+  parseVolumeDescriptors,
   validateIsoImage,
 } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
@@ -106,6 +107,94 @@ describe("extended attribute records", () => {
     expect(file?.extendedAttributeRecordFields?.createdAt.toISOString()).toBe("2024-05-06T07:08:09.100Z");
     expect(file?.extendedAttributeRecordFields?.applicationUse).toEqual(asciiBytes("app"));
     expect(file?.extendedAttributeRecordFields?.escapeSequences).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
+  });
+
+  test("writes directory extended attribute records and parses directory fields back", () => {
+    const date = new Date(Date.UTC(2024, 6, 1, 2, 3, 4, 500));
+    const image = createIsoImage({
+      files: [{
+        path: "DIR/FILE.TXT",
+        data: "directory ear\n",
+      }],
+      directories: [{
+        path: "DIR",
+        date,
+        extendedAttributeRecord: {
+          systemIdentifier: "DIR_EAR",
+          applicationUse: asciiBytes("dir app"),
+        },
+      }],
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((node) => "children" in node && node.path === "DIR");
+    const rootRecord = findRootFileRecord(image, "DIR");
+    const directoryExtent = readBoth32(rootRecord, 2);
+    const pvd = sector(image, 16);
+    const pathTableLocation = readUint32LE(pvd, 140);
+    const pathTable = image.subarray(pathTableLocation * SECTOR_SIZE, (pathTableLocation + 1) * SECTOR_SIZE);
+    const directoryPathTableOffset = 10;
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(rootRecord[1]).toBe(1);
+    expect(pathTable[directoryPathTableOffset + 1]).toBe(1);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      extent: directoryExtent,
+      extendedAttributeRecordLength: 1,
+    });
+    expect(directory && "children" in directory ? directory.extendedAttributeRecord?.byteLength : 0).toBe(SECTOR_SIZE);
+    expect(directory && "children" in directory ? directory.extendedAttributeRecordFields?.systemIdentifier : undefined).toBe("DIR_EAR");
+    expect(directory && "children" in directory ? directory.extendedAttributeRecordFields?.applicationUse : undefined).toEqual(asciiBytes("dir app"));
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("directory ear\n");
+  });
+
+  test("duplicates directory extended attribute records into supplementary hierarchies", () => {
+    const image = createIsoImage({
+      files: [{
+        path: "DIR/FILE.TXT",
+        data: "supplementary directory ear\n",
+      }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: {
+          systemIdentifier: "DIR_EAR",
+        },
+      }],
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+    });
+    const descriptors = parseVolumeDescriptors(image);
+    const supplementary = descriptors.find((descriptor) => descriptor.kind === "supplementary");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(supplementary?.kind).toBe("supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("missing supplementary descriptor");
+    }
+    const supplementaryRoot = image.subarray(
+      (supplementary.rootDirectoryRecord.extent + supplementary.rootDirectoryRecord.extendedAttributeRecordLength) * SECTOR_SIZE,
+      (supplementary.rootDirectoryRecord.extent + supplementary.rootDirectoryRecord.extendedAttributeRecordLength) * SECTOR_SIZE + supplementary.rootDirectoryRecord.size,
+    );
+    const dirRecord = findDirectoryRecord(supplementaryRoot, "DIR");
+    const dirExtent = readBoth32(dirRecord, 2);
+    const directoryEar = image.subarray(dirExtent * SECTOR_SIZE, (dirExtent + 1) * SECTOR_SIZE);
+    const decoded = decodeExtendedAttributeRecord(directoryEar);
+
+    expect(dirRecord[1]).toBe(1);
+    expect(decoded.systemIdentifier).toBe("DIR_EAR");
+  });
+
+  test("rejects directory extended attribute records that cannot fit in the length byte", () => {
+    expect(() => createIsoImage({
+      files: [{ path: "DIR/FILE.TXT", data: "x" }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: new Uint8Array(256 * SECTOR_SIZE),
+      }],
+    })).toThrow(/255 logical blocks/i);
   });
 
   test("rejects invalid structured extended attribute field combinations", () => {
@@ -381,6 +470,27 @@ function findRootFileRecord(image: Uint8Array, identifier: string): Uint8Array {
   const rootDirectory = getRootDirectoryBytes(image);
   const offset = findRootFileRecordOffset(image, identifier);
   return rootDirectory.slice(offset, offset + rootDirectory[offset]!);
+}
+
+function findDirectoryRecord(directory: Uint8Array, identifier: string): Uint8Array {
+  const expected = asciiBytes(identifier);
+  let offset = 0;
+
+  while (offset < directory.byteLength) {
+    const length = directory[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      continue;
+    }
+    const identifierLength = directory[offset + 32]!;
+    const actual = directory.subarray(offset + 33, offset + 33 + identifierLength);
+    if (bytesEqual(actual, expected)) {
+      return directory.slice(offset, offset + length);
+    }
+    offset += length;
+  }
+
+  throw new Error(`missing directory record for ${identifier}`);
 }
 
 function findRootFileRecordOffset(image: Uint8Array, identifier: string): number {

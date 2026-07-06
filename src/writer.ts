@@ -11,9 +11,9 @@ import {
 } from "./binary.js";
 import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { normalizeFilePath } from "./identifiers.js";
+import { normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
+import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -38,6 +38,8 @@ type DirectoryNode = {
   date: Date;
   extent: number;
   dataLength: number;
+  extendedAttributeRecord?: Uint8Array;
+  extendedAttributeRecordLength: number;
   pathTableIndex: number;
 };
 
@@ -64,11 +66,12 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
   const now = options.createdAt ?? new Date();
-  const root = buildTree(files, now);
+  const root = buildTree(files, options.directories ?? [], now);
   const directories = collectDirectories(root);
   const pathRecords: PathTableRecord[] = directories.map((directory) => ({
     identifier: directory === root ? Uint8Array.of(0) : asciiBytes(directory.isoIdentifier),
     extent: 0,
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
     parentDirectoryNumber: directory.parent ? directory.parent.pathTableIndex : 1,
   }));
 
@@ -93,15 +96,17 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
 
   for (const directory of directories) {
     directory.extent = nextSector;
+    nextSector += directory.extendedAttributeRecordLength;
     const dataLength = directoryDataLength(directory);
     directory.dataLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
     nextSector += directory.dataLength / SECTOR_SIZE;
   }
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
+      descriptor.directoryExtents.set(directory, nextSector);
+      nextSector += directory.extendedAttributeRecordLength;
       const dataLength = directoryDataLength(directory);
       const paddedLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
-      descriptor.directoryExtents.set(directory, nextSector);
       descriptor.directoryDataLengths.set(directory, paddedLength);
       nextSector += paddedLength / SECTOR_SIZE;
     }
@@ -140,11 +145,18 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
 
   for (const directory of directories) {
-    image.set(encodeDirectoryExtent(directory), sectorOffset(directory.extent));
+    if (directory.extendedAttributeRecord) {
+      image.set(directory.extendedAttributeRecord, sectorOffset(directory.extent));
+    }
+    image.set(encodeDirectoryExtent(directory), sectorOffset(directory.extent + directory.extendedAttributeRecordLength));
   }
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
-      image.set(encodeDirectoryExtent(directory, descriptor), sectorOffset(descriptor.directoryExtents.get(directory)!));
+      const extent = descriptor.directoryExtents.get(directory)!;
+      if (directory.extendedAttributeRecord) {
+        image.set(directory.extendedAttributeRecord, sectorOffset(extent));
+      }
+      image.set(encodeDirectoryExtent(directory, descriptor), sectorOffset(extent + directory.extendedAttributeRecordLength));
     }
   }
 
@@ -194,7 +206,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   return image;
 }
 
-function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
+function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date): DirectoryNode {
   const root: DirectoryNode = {
     kind: "directory",
     name: "",
@@ -203,6 +215,7 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
     date: now,
     extent: 0,
     dataLength: 0,
+    extendedAttributeRecordLength: 0,
     pathTableIndex: 1,
   };
 
@@ -227,6 +240,7 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
         date: file.date ?? now,
         extent: 0,
         dataLength: 0,
+        extendedAttributeRecordLength: 0,
         pathTableIndex: 0,
       };
       directory.children.set(part, child);
@@ -267,7 +281,53 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
     directory.children.set(normalized.isoIdentifier, fileNode);
   }
 
+  for (const input of directories) {
+    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path).parts, input.date ?? now);
+    directory.date = input.date ?? directory.date;
+    if (input.extendedAttributeRecord !== undefined) {
+      directory.extendedAttributeRecord = isExtendedAttributeRecordInput(input.extendedAttributeRecord)
+        ? encodeExtendedAttributeRecord(input.extendedAttributeRecord, { defaultDate: input.date ?? now })
+        : toBytes(input.extendedAttributeRecord);
+      if (directory.extendedAttributeRecord.byteLength === 0) {
+        throw new Error("directory extended attribute record must contain at least one byte");
+      }
+      directory.extendedAttributeRecordLength = sectorsForBytes(directory.extendedAttributeRecord.byteLength);
+      if (directory.extendedAttributeRecordLength > 0xff) {
+        throw new Error("directory extended attribute record exceeds 255 logical blocks");
+      }
+    }
+  }
+
   return root;
+}
+
+function ensureDirectory(root: DirectoryNode, parts: string[], date: Date): DirectoryNode {
+  let directory = root;
+  for (const part of parts) {
+    const existing = directory.children.get(part);
+    if (existing && existing.kind !== "directory") {
+      throw new Error(`path segment conflicts with a file: ${part}`);
+    }
+    if (existing) {
+      directory = existing;
+      continue;
+    }
+    const child: DirectoryNode = {
+      kind: "directory",
+      name: part,
+      isoIdentifier: part,
+      parent: directory,
+      children: new Map(),
+      date,
+      extent: 0,
+      dataLength: 0,
+      extendedAttributeRecordLength: 0,
+      pathTableIndex: 0,
+    };
+    directory.children.set(part, child);
+    directory = child;
+  }
+  return directory;
 }
 
 function collectDirectories(root: DirectoryNode): DirectoryNode[] {
@@ -339,6 +399,7 @@ function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecond
 function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, layout?: PreparedSecondaryDescriptor): Uint8Array {
   return encodeDirectoryRecord({
     extent: directoryExtentFor(directory, layout),
+    extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
     dataLength: directoryDataLengthFor(directory, layout),
     flags: FILE_FLAG_DIRECTORY,
     identifier,
@@ -511,6 +572,7 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
     const pathRecords: PathTableRecord[] = directories.map((directory) => ({
       identifier: directory.parent ? asciiBytes(directory.isoIdentifier) : Uint8Array.of(0),
       extent: 0,
+      extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
       parentDirectoryNumber: directory.parent ? directory.parent.pathTableIndex : 1,
     }));
     const pathTableBytesL = encodePathTable(pathRecords, "little");

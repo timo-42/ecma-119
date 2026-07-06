@@ -6,6 +6,10 @@ export type NormalizedPath = {
   isoIdentifier: string;
 };
 
+export type NormalizedDirectoryPath = {
+  parts: string[];
+};
+
 export function normalizeFilePath(path: string): NormalizedPath {
   const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) {
@@ -30,6 +34,26 @@ export function normalizeFilePath(path: string): NormalizedPath {
   const fileName = rawParts.at(-1)!;
   const isoIdentifier = toLevelOneFileIdentifier(fileName);
   return { parts: [...directoryParts, isoIdentifier], fileName, isoIdentifier };
+}
+
+export function normalizeDirectoryPath(path: string): NormalizedDirectoryPath {
+  const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
+  if (cleaned.length === 0) {
+    return { parts: [] };
+  }
+  if (cleaned.includes("//") || cleaned.split("/").includes(".") || cleaned.split("/").includes("..")) {
+    throw new Error(`directory path must not contain empty, current, or parent segments: ${path}`);
+  }
+  const parts = cleaned.split("/").map((part) => normalizeDCharacters(part.toUpperCase(), "directory path segment"));
+  if (parts.length > 8) {
+    throw new Error("ECMA-119 Level 1 directory hierarchy depth must not exceed 8");
+  }
+  for (const directory of parts) {
+    if (directory.length > 8) {
+      throw new Error(`directory identifier exceeds 8 d-characters: ${directory}`);
+    }
+  }
+  return { parts };
 }
 
 export function toLevelOneFileIdentifier(name: string): string {
