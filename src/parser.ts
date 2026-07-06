@@ -1,4 +1,4 @@
-import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
+import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, isLevelOneDirectoryIdentifier, isLevelOneFileIdentifier, stripVersion } from "./identifiers.js";
@@ -51,6 +51,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
   if (image.byteLength % SECTOR_SIZE !== 0) {
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
+  issues.push(...validateRawDescriptorDateFields(image));
   let descriptors: VolumeDescriptor[] = [];
   let descriptorSequenceFailed = false;
   try {
@@ -287,6 +288,60 @@ function validateBootVolumeDescriptor(descriptor: BootVolumeDescriptor): Validat
     { start: 7, length: 32, kind: "a", code: "system_identifier.characters", label: "boot system identifier" },
     { start: 39, length: 32, kind: "a", code: "identifier.characters", label: "boot identifier" },
   ]);
+}
+
+function validateRawDescriptorDateFields(image: Uint8Array): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  let sector = SYSTEM_AREA_SECTORS;
+  while (sectorOffset(sector + 1) <= image.byteLength) {
+    const offset = sectorOffset(sector);
+    const type = image[offset]!;
+    if (readAscii(image, offset + 1, 5) !== STANDARD_IDENTIFIER) {
+      return issues;
+    }
+    if (type === 1 || type === 2) {
+      const version = image[offset + 6]!;
+      const codePrefix = type === 1 ? "pvd" : version === 2 ? "enhanced" : "supplementary";
+      const descriptorLabel = type === 1 ? "primary" : version === 2 ? "enhanced" : "supplementary";
+      issues.push(...validateRawDescriptorDateField(image, offset + 813, `${codePrefix}.creation_date`, `${descriptorLabel} volume creation date and time`));
+      issues.push(...validateRawDescriptorDateField(image, offset + 830, `${codePrefix}.modification_date`, `${descriptorLabel} volume modification date and time`));
+      issues.push(...validateRawDescriptorDateField(image, offset + 847, `${codePrefix}.expiration_date`, `${descriptorLabel} volume expiration date and time`));
+      issues.push(...validateRawDescriptorDateField(image, offset + 864, `${codePrefix}.effective_date`, `${descriptorLabel} volume effective date and time`));
+    }
+    if (type === 255) {
+      return issues;
+    }
+    sector += 1;
+  }
+  return issues;
+}
+
+function validateRawDescriptorDateField(image: Uint8Array, offset: number, code: string, label: string): ValidationIssue[] {
+  const text = readAscii(image, offset, 16);
+  if (/^0{16}$/u.test(text)) {
+    if (image[offset + 16] !== 0) {
+      return [{
+        code,
+        message: `${label} unspecified value must use zero GMT offset`,
+      }];
+    }
+    return [];
+  }
+  if (!/^[0-9]{16}$/u.test(text)) {
+    return [{
+      code,
+      message: `${label} must contain 16 decimal digits followed by a signed GMT offset byte`,
+    }];
+  }
+  try {
+    readVolumeDescriptorDateTime(image, offset);
+    return [];
+  } catch (error) {
+    return [{
+      code,
+      message: `${label} is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    }];
+  }
 }
 
 function validateVolumeSpaceSize(
