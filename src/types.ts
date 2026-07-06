@@ -6,6 +6,7 @@ export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
   multiExtent?: boolean | IsoInputFileMultiExtentOptions;
+  interleave?: IsoInputFileInterleaveOptions;
   date?: Date;
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;
@@ -16,6 +17,11 @@ export type IsoInputFile = {
 
 export type IsoInputFileMultiExtentOptions = {
   sectionSize?: number;
+};
+
+export type IsoInputFileInterleaveOptions = {
+  fileUnitSize: number;
+  interleaveGapSize: number;
 };
 
 export type IsoInputDirectory = {
