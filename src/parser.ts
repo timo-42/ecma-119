@@ -26,9 +26,9 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   if (!pvd) {
     throw new Error("missing primary volume descriptor");
   }
+  assertSingleVolumeDescriptor(pvd, "primary volume descriptor");
   validatePrimaryDescriptorReferences(image, pvd);
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".");
-  assertSingleVolumeDescriptor(pvd, "primary volume descriptor");
   const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true, new Set());
   return {
     descriptors,
