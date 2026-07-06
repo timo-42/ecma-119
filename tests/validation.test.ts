@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createIsoImage, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
-import { readBothEndianUint32, readUint32LE } from "./helpers";
+import { readBothEndianUint32, readUint32BE, readUint32LE } from "./helpers";
 
 const PVD_OFFSET = 16 * SECTOR_SIZE;
 const TERMINATOR_OFFSET = 17 * SECTOR_SIZE;
@@ -23,14 +23,12 @@ describe("validateIsoImage hardening", () => {
     const image = baselineImage();
     image[PVD_OFFSET + 6] = 2;
 
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: expect.stringMatching(/^(image\.parse|descriptor\.)/),
-          message: expect.stringMatching(/version/i),
-        }),
-      ]),
-    );
+    expect(validateIsoImage(image)).toEqual([
+      expect.objectContaining({
+        code: "descriptor.sequence",
+        message: expect.stringMatching(/^expected primary volume descriptor version 1$/i),
+      }),
+    ]);
   });
 
   test("reports a path table parent directory number outside the record range", () => {
@@ -51,6 +49,24 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports a Type M path table record that points to itself as parent", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
+    const pathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childParentDirectoryNumberOffset = pathTableOffset + rootPathTableRecordLength + 6;
+    image[childParentDirectoryNumberOffset] = 0;
+    image[childParentDirectoryNumberOffset + 1] = 2;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.big.parent",
+          message: expect.stringMatching(/Type M path table record 2 parent number 2/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports a path table record that points to itself as parent", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
@@ -62,8 +78,15 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "path_table.parent",
+          code: "path_table.little.parent",
           message: expect.stringMatching(/parent/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
@@ -170,8 +193,33 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "supplementary_path_table.parent",
+          code: "supplementary_path_table.little.parent",
           message: expect.stringMatching(/parent/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports supplementary Type M path table parent issues", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const pathTableOffset = readUint32BE(image, supplementaryDescriptorOffset + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childParentDirectoryNumberOffset = pathTableOffset + rootPathTableRecordLength + 6;
+    image[childParentDirectoryNumberOffset] = 0;
+    image[childParentDirectoryNumberOffset + 1] = 2;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.big.parent",
+          message: expect.stringMatching(/Type M path table record 2 parent number 2/i),
         }),
       ]),
     );
