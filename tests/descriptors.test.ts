@@ -87,6 +87,37 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([], { volumeSetSize: 2, volumeSequenceNumber: 3 })).toThrow(/less than or equal to volumeSetSize/i);
   });
 
+  test("writes, validates, and reads explicit file version numbers", () => {
+    const image = createIsoImage([
+      { path: "README.TXT", data: "older\n", version: 2 },
+      { path: "README.TXT", data: "newer\n", version: 12 },
+    ], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const self = readDirectoryRecord(rootDirectory, 0);
+    const parent = readDirectoryRecord(rootDirectory, self.length);
+    const firstFile = readDirectoryRecord(rootDirectory, self.length + parent.length);
+    const secondFile = readDirectoryRecord(rootDirectory, self.length + parent.length + firstFile.length);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(2);
+    expect(parsed.files.map((file) => file.identifier)).toEqual(["README.TXT;12", "README.TXT;2"]);
+    expect(parsed.files.map((file) => file.path)).toEqual(["README.TXT", "README.TXT"]);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("newer\n");
+    expect(new TextDecoder("ascii").decode(parsed.files[1]?.data)).toBe("older\n");
+    expect(new TextDecoder("ascii").decode(firstFile.fileIdentifier)).toBe("README.TXT;12");
+    expect(new TextDecoder("ascii").decode(secondFile.fileIdentifier)).toBe("README.TXT;2");
+  });
+
+  test("rejects invalid explicit file version numbers", () => {
+    expect(() => createIsoImage([{ path: "README.TXT", data: "", version: 0 }])).toThrow(/file version number/i);
+    expect(() => createIsoImage([{ path: "README.TXT", data: "", version: 1.5 }])).toThrow(/file version number/i);
+    expect(() => createIsoImage([{ path: "README.TXT", data: "", version: 32768 }])).toThrow(/file version number/i);
+  });
+
   test("writes, validates, and reads non-interleaved multi-extent files", () => {
     const payload = new TextEncoder().encode("abcdefghijklmn");
     const image = createIsoImage([{
