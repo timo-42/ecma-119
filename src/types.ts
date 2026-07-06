@@ -75,6 +75,7 @@ export type CreateIsoOptions = {
   directories?: IsoInputDirectory[];
   identifierLevel?: 1 | 2;
   systemArea?: Uint8Array | Buffer | string;
+  terminatorCount?: number;
   volumeIdentifier?: string;
   systemIdentifier?: string;
   volumeSetIdentifier?: string;

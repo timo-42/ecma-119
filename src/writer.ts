@@ -104,7 +104,8 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const bootRecords = normalizeBootRecords(options);
   const volumePartitions = normalizeVolumePartitions(options);
   const secondaryDescriptors = normalizeSecondaryDescriptors(options, directories);
-  const descriptorSectorCount = 2 + bootRecords.length + secondaryDescriptors.length + volumePartitions.length;
+  const terminatorCount = checkedTerminatorCount(options.terminatorCount ?? 1);
+  const descriptorSectorCount = 1 + bootRecords.length + secondaryDescriptors.length + volumePartitions.length + terminatorCount;
 
   let nextSector = SYSTEM_AREA_SECTORS + descriptorSectorCount;
   const typeLPathTableSector = nextSector;
@@ -267,7 +268,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   for (const partition of preparedPartitions) {
     image.set(encodeVolumePartitionDescriptor(partition.options, partition.location, partition.size), sectorOffset(descriptorSector++));
   }
-  image.set(encodeTerminator(), sectorOffset(descriptorSector));
+  for (let index = 0; index < terminatorCount; index += 1) {
+    image.set(encodeTerminator(), sectorOffset(descriptorSector++));
+  }
 
   return image;
 }
@@ -902,6 +905,13 @@ function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: stri
 function checkedIdentifierLevel(value: number): IdentifierLevel {
   if (value !== 1 && value !== 2) {
     throw new RangeError("identifierLevel must be 1 or 2");
+  }
+  return value;
+}
+
+function checkedTerminatorCount(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 0xff) {
+    throw new RangeError("terminatorCount must be an integer from 1 to 255");
   }
   return value;
 }
