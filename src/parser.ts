@@ -203,6 +203,13 @@ function validatePrimaryDescriptorReferences(image: Uint8Array, pvd: PrimaryVolu
 
 function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  issues.push(...validateZeroDescriptorRanges(pvd, "pvd", [
+    { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
+    { start: 72, end: 80, code: "unused", label: "unused field at BP 73 to 80" },
+    { start: 88, end: 120, code: "unused", label: "unused field at BP 89 to 120" },
+    { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
+    { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
+  ]));
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
   }
@@ -757,6 +764,11 @@ function validateDotDirectoryRecord(
 function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const label = descriptor.kind === "supplementary" ? "supplementary" : "enhanced";
+  issues.push(...validateZeroDescriptorRanges(descriptor, label, [
+    { start: 72, end: 80, code: "unused", label: "unused field at BP 73 to 80" },
+    { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
+    { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
+  ]));
   if ((descriptor.volumeFlags & 0xfe) !== 0) {
     issues.push({ code: `${label}.volume_flags`, message: `${label} volume descriptor flags bits 1 through 7 must be zero` });
   }
@@ -784,6 +796,9 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
     if (descriptor.kind !== "partition") {
       continue;
     }
+    issues.push(...validateZeroDescriptorRanges(descriptor, "partition", [
+      { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
+    ]));
     const location = descriptor.volumePartitionLocation;
     const size = descriptor.volumePartitionSize;
     const end = location + size;
@@ -798,6 +813,23 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
       issues.push({
         code: "partition.bounds",
         message: `volume partition extent ${location}+${size} is out of bounds`,
+      });
+    }
+  }
+  return issues;
+}
+
+function validateZeroDescriptorRanges(
+  descriptor: VolumeDescriptor,
+  codePrefix: string,
+  ranges: { start: number; end: number; code: "reserved" | "unused"; label: string }[],
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const range of ranges) {
+    if (!allZero(descriptor.raw.subarray(range.start, range.end))) {
+      issues.push({
+        code: `${codePrefix}.${range.code}`,
+        message: `${descriptor.kind} volume descriptor ${range.label} must be zero`,
       });
     }
   }
