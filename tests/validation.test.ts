@@ -1174,6 +1174,47 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      expectedPathPrefix: "supplementary:./DIR",
+    },
+    {
+      kind: "enhanced",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      expectedPathPrefix: "enhanced:./DIR",
+    },
+  ])("reports special child identifiers inside $kind hierarchies", ({ descriptorOffset, options, expectedPathPrefix }) => {
+    for (const specialIdentifier of [0, 1]) {
+      const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "special child identifier\n" }], {
+        volumeIdentifier: "VALIDATION",
+        ...options,
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+      });
+      const recordOffset = findDirectoryRecordOffsetByPath(
+        image,
+        ["DIR", "FILE.TXT;1"],
+        descriptorOffset + 156,
+      );
+      image[recordOffset + 32] = 1;
+      image[recordOffset + 33] = specialIdentifier;
+      image[recordOffset + 34] = 0;
+
+      expect(validateIsoImage(image)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "directory.record_identifier.special",
+            path: specialIdentifier === 0 ? `${expectedPathPrefix}/.` : `${expectedPathPrefix}/..`,
+            message: expect.stringMatching(new RegExp(`special identifier ${specialIdentifier}`)),
+          }),
+        ]),
+      );
+    }
+  });
+
   test("reports supplementary directory parent record extent mismatches", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supp dotdot\n" }], {
       volumeIdentifier: "VALIDATION",

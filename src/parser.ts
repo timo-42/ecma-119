@@ -751,6 +751,9 @@ function validateDirectoryHierarchy(
     if (index < 2) {
       issues.push(...validateDotDirectoryRecord(record, index, directory, parent, path));
     }
+    if (index >= 2) {
+      issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
+    }
     if (index >= 2 && validatePrimaryLevelOne) {
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
     }
@@ -785,6 +788,17 @@ function validateDirectoryHierarchy(
     }));
   }
   return issues;
+}
+
+function validateOrdinaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
+  if (record.identifier.length !== 1 || (record.identifier[0] !== 0 && record.identifier[0] !== 1)) {
+    return [];
+  }
+  return [{
+    code: "directory.record_identifier.special",
+    message: `directory record at ${path} must not use special identifier ${record.identifier[0]} outside self/parent records`,
+    path,
+  }];
 }
 
 function validatePrimaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
