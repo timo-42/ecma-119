@@ -17,6 +17,7 @@ describe("directory record System Use", () => {
     const identifierLength = record[32]!;
     const systemUseOffset = 33 + identifierLength + ((33 + identifierLength) % 2 === 0 ? 0 : 1);
 
+    expect(validateIsoImage(image)).toEqual([]);
     expect(identifierLength).toBe(8);
     expect(record.subarray(33, 33 + identifierLength)).toEqual(asciiBytes("AB.TXT;1"));
     expect(record[33 + identifierLength]).toBe(0);
@@ -85,6 +86,7 @@ describe("directory record System Use", () => {
     const supplementary = descriptors.find((descriptor) => descriptor.kind === "supplementary");
     const rootDirectory = getRootDirectoryBytes(image);
     const rootSelfRecord = rootDirectory.slice(0, rootDirectory[0]);
+    const parsed = parseIsoImage(image);
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(image[16 * SECTOR_SIZE + 156]).toBe(34);
@@ -92,6 +94,11 @@ describe("directory record System Use", () => {
     expect(primary?.kind === "primary" ? primary.volumeSetIdentifier : undefined).toBe("ROOTSYS");
     expect(supplementary?.kind).toBe("supplementary");
     expect(rootSelfRecord.subarray(34)).toEqual(systemUse);
+    expect(parsed.root).toMatchObject({
+      path: "",
+      identifier: ".",
+      flags: 0x02,
+    });
   });
 
   test("rejects file System Use bytes that would make a directory record exceed 255 bytes", () => {

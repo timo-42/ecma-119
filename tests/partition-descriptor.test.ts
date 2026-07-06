@@ -144,6 +144,7 @@ describe("volume partition descriptor writing", () => {
 
     const secondOffset = partitions[1]!.volumePartitionLocation * SECTOR_SIZE;
     const secondBytes = image.subarray(secondOffset, secondOffset + partitions[1]!.volumePartitionSize * SECTOR_SIZE);
+    expect(validateIsoImage(image)).toEqual([]);
     expect(secondBytes.every((byte) => byte === 0)).toBe(true);
     expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
   });
