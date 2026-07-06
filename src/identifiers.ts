@@ -74,6 +74,21 @@ export function toLevelOneFileIdentifier(name: string): string {
   return extension ? `${base}.${extension};1` : `${upper};1`;
 }
 
+export function isLevelOneDirectoryIdentifier(identifier: Uint8Array): boolean {
+  return identifier.byteLength >= 1
+    && identifier.byteLength <= 8
+    && identifier.every(isDCharacterByte);
+}
+
+export function isLevelOneFileIdentifier(identifier: Uint8Array): boolean {
+  const text = asciiString(identifier);
+  if (text === undefined) {
+    return false;
+  }
+  const match = /^([A-Z0-9_]{1,8})(?:\.([A-Z0-9_]{1,3}))?;([1-9][0-9]{0,4})$/u.exec(text);
+  return match !== null && Number(match[3]) <= 32767;
+}
+
 export function decodeFileIdentifier(identifier: Uint8Array): string {
   if (identifier.length === 1 && identifier[0] === 0) {
     return ".";
@@ -86,4 +101,19 @@ export function decodeFileIdentifier(identifier: Uint8Array): string {
 
 export function stripVersion(identifier: string): string {
   return identifier.replace(/;[0-9]+$/u, "");
+}
+
+function isDCharacterByte(byte: number): boolean {
+  return (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x30 && byte <= 0x39) || byte === 0x5f;
+}
+
+function asciiString(bytes: Uint8Array): string | undefined {
+  let value = "";
+  for (const byte of bytes) {
+    if (byte > 0x7f) {
+      return undefined;
+    }
+    value += String.fromCharCode(byte);
+  }
+  return value;
 }
