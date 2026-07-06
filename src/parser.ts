@@ -712,6 +712,7 @@ function validateDirectoryHierarchy(
     return [{ code: "directory.cycle", message: `directory cycle detected at ${path}`, path }];
   }
   visited.add(key);
+  issues.push(...validateDirectoryDataLength(directory, path));
   issues.push(...validateDirectoryRecordLayout(image, directory, path));
   issues.push(...validateExtendedAttributeRecords(image, directory, path));
 
@@ -788,6 +789,17 @@ function validateDirectoryHierarchy(
     }));
   }
   return issues;
+}
+
+function validateDirectoryDataLength(directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  if (directory.size > 0 && directory.size % SECTOR_SIZE === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.data_length_alignment",
+    message: `directory data length at ${path} must be a positive multiple of the logical block size`,
+    path,
+  }];
 }
 
 function validateOrdinaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
@@ -879,9 +891,7 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
-  if (descriptor.rootDirectoryRecord.size > 0) {
-    issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
-  }
+  issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
   return issues;
 }
 
