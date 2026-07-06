@@ -63,7 +63,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
-      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, ".", new Set()));
+      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", new Set()));
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
           issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor));
@@ -632,7 +632,13 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
   return issues;
 }
 
-function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEntry, path: string, visited: Set<number>): ValidationIssue[] {
+function validateDirectoryHierarchy(
+  image: Uint8Array,
+  directory: IsoDirectoryEntry,
+  parent: IsoDirectoryEntry,
+  path: string,
+  visited: Set<number>,
+): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const key = directory.extent;
   if (visited.has(key)) {
@@ -652,6 +658,11 @@ function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEn
   while (offset < end) {
     const length = image[offset]!;
     if (length === 0) {
+      if (recordIndex === 0) {
+        issues.push({ code: "directory.self_record.missing", message: `directory self record is missing at ${path}`, path });
+      } else if (recordIndex === 1) {
+        issues.push({ code: "directory.parent_record.missing", message: `directory parent record is missing at ${path}`, path });
+      }
       offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
       continue;
     }
@@ -670,6 +681,9 @@ function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEn
     const index = recordIndex++;
     const identifier = index < 2 ? "" : decodeFileIdentifier(record.identifier);
     const recordPath = index < 2 ? path : joinPath(path === "." ? "" : path, stripVersion(identifier));
+    if (index < 2) {
+      issues.push(...validateDotDirectoryRecord(record, index, directory, parent, path));
+    }
     if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
       issues.push({
         code: "directory.interleaving_unsupported",
@@ -695,8 +709,51 @@ function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEn
       continue;
     }
     const childPath = joinPath(path === "." ? "" : path, identifier);
-    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), childPath, new Set(visited)));
+    issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), directory, childPath, new Set(visited)));
   }
+  return issues;
+}
+
+function validateDotDirectoryRecord(
+  record: DecodedDirectoryRecord,
+  index: number,
+  directory: IsoDirectoryEntry,
+  parent: IsoDirectoryEntry,
+  path: string,
+): ValidationIssue[] {
+  const expectedIdentifier = index === 0 ? 0 : 1;
+  const expectedEntry = index === 0 ? directory : parent;
+  const recordName = index === 0 ? "self" : "parent";
+  const expectedName = index === 0 ? "current directory" : "parent directory";
+  const code = index === 0 ? "directory.self_record" : "directory.parent_record";
+  const issues: ValidationIssue[] = [];
+
+  if (record.identifier.length !== 1 || record.identifier[0] !== expectedIdentifier) {
+    issues.push({
+      code: `${code}.identifier`,
+      message: `directory ${recordName} record at ${path} must use identifier ${expectedIdentifier}`,
+      path,
+    });
+  }
+  if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+    issues.push({
+      code: `${code}.identifier`,
+      message: `directory ${recordName} record at ${path} must have the Directory flag set`,
+      path,
+    });
+  }
+  if (
+    record.extent !== expectedEntry.extent
+    || record.extendedAttributeRecordLength !== expectedEntry.extendedAttributeRecordLength
+    || record.dataLength !== expectedEntry.size
+  ) {
+    issues.push({
+      code: `${code}.extent`,
+      message: `directory ${recordName} record at ${path} does not match the ${expectedName} extent fields`,
+      path,
+    });
+  }
+
   return issues;
 }
 
@@ -718,7 +775,7 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   if (descriptor.rootDirectoryRecord.size > 0) {
-    issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
+    issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
   }
   return issues;
 }
