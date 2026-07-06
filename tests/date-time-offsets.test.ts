@@ -231,6 +231,68 @@ describe("ECMA-119 date/time zone offsets", () => {
       ]),
     );
   });
+
+  test("reports invalid descriptor root directory record dates", () => {
+    const image = createIsoImage([{ path: "DATE.TXT", data: "bad root directory date\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image[PVD_OFFSET + 156 + 19] = 13;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.root_directory_record.date",
+          path: ".",
+          message: expect.stringMatching(/root directory record date\/time is invalid: month/i),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/month/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports invalid directory record dates with targeted paths", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "bad directory record date\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootDirectory = getRootDirectoryBytes(image);
+    const dirRecordOffset = findDirectoryRecordOffset(rootDirectory, "DIR");
+    const dirRecord = rootDirectory.subarray(dirRecordOffset, dirRecordOffset + rootDirectory[dirRecordOffset]!);
+    const directoryExtent = readUint32Both(dirRecord, 2);
+    const directorySize = readUint32Both(dirRecord, 10);
+    const directoryBytes = image.subarray(directoryExtent * SECTOR_SIZE, directoryExtent * SECTOR_SIZE + directorySize);
+    const fileRecordOffset = findDirectoryRecordOffset(directoryBytes, "FILE.TXT;1");
+    directoryBytes[fileRecordOffset + 19] = 13;
+
+    const issues = validateIsoImage(image);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_date",
+          path: "DIR/FILE.TXT",
+          message: expect.stringMatching(/directory record date\/time at DIR\/FILE\.TXT is invalid: month/i),
+        }),
+      ]),
+    );
+    expect(issues).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_malformed",
+          path: "DIR",
+        }),
+      ]),
+    );
+    expect(issues).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
 });
 
 function getRootDirectoryBytes(image: Uint8Array): Uint8Array {
@@ -240,6 +302,11 @@ function getRootDirectoryBytes(image: Uint8Array): Uint8Array {
 }
 
 function findDirectoryRecord(directory: Uint8Array, identifier: string): Uint8Array {
+  const offset = findDirectoryRecordOffset(directory, identifier);
+  return directory.slice(offset, offset + directory[offset]!);
+}
+
+function findDirectoryRecordOffset(directory: Uint8Array, identifier: string): number {
   const expected = asciiBytes(identifier);
   let offset = 0;
 
@@ -252,7 +319,7 @@ function findDirectoryRecord(directory: Uint8Array, identifier: string): Uint8Ar
     const identifierLength = directory[offset + 32]!;
     const actual = directory.subarray(offset + 33, offset + 33 + identifierLength);
     if (bytesEqual(actual, expected)) {
-      return directory.slice(offset, offset + length);
+      return offset;
     }
     offset += length;
   }
