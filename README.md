@@ -42,6 +42,8 @@ const image = createIsoImage([
 
 const parsed = parseIsoImage(image);
 console.log(parsed.files.map((file) => file.path));
+const partition = parsed.descriptors.find((descriptor) => descriptor.kind === "partition");
+console.log(partition?.data?.subarray(0, 4));
 ```
 
 The root package entry intentionally exposes these API groups:
@@ -52,6 +54,8 @@ The root package entry intentionally exposes these API groups:
 - low-level ECMA-119 helpers: binary/date/string helpers, directory record codecs, Extended Attribute Record codecs, identifier helpers, and path table codecs
 
 `timeZoneOffsetMinutes` is signed minutes east of UTC, must be divisible by 15, supports -720 through 780, and defaults to 0. File, directory, and structured Extended Attribute Record inputs can override the global value for their own ECMA-119 date/time fields.
+
+`parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
 
