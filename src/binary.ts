@@ -263,17 +263,19 @@ export function dateToVolumeDescriptorDateTime(date: Date, timeZoneOffsetMinutes
 
 export function dateTimeToDate(value: DirectoryDateTime | VolumeDescriptorDateTime): Date {
   validateDateTime(value);
-  return new Date(
+  const local = new Date(
     Date.UTC(
-      value.year,
+      2000,
       value.month - 1,
       value.day,
       value.hour,
       value.minute,
       value.second,
       "hundredths" in value ? value.hundredths * 10 : 0,
-    ) - value.timeZoneOffsetMinutes * 60_000,
+    ),
   );
+  local.setUTCFullYear(value.year);
+  return new Date(local.getTime() - value.timeZoneOffsetMinutes * 60_000);
 }
 
 export function writeDirectoryDateTime(value: DirectoryDateTime, bytes: Uint8Array, offset?: number): number;
@@ -322,6 +324,7 @@ export function writeVolumeDescriptorDateTime(first: VolumeDescriptorDateTime | 
     return first instanceof Uint8Array ? undefined : offset + 17;
   }
   validateDateTime(value);
+  validateVolumeDescriptorDateYear(value.year);
   const text = [
     value.year.toString().padStart(4, "0"),
     value.month.toString().padStart(2, "0"),
@@ -353,6 +356,7 @@ export function readVolumeDescriptorDateTime(bytes: Uint8Array, offset = 0): Vol
     timeZoneOffsetMinutes: decodeOffset(bytes[offset + 16]!),
   };
   validateDateTime(value);
+  validateVolumeDescriptorDateYear(value.year);
   return value;
 }
 
@@ -393,13 +397,20 @@ function validateDateTime(value: DirectoryDateTime | VolumeDescriptorDateTime): 
   if ("hundredths" in value && (!Number.isInteger(value.hundredths) || value.hundredths < 0 || value.hundredths > 99)) {
     throw new RangeError("hundredths must be an integer from 0 to 99");
   }
-  const roundTrip = new Date(Date.UTC(value.year, value.month - 1, value.day, value.hour, value.minute, value.second));
+  const roundTrip = new Date(Date.UTC(2000, value.month - 1, value.day, value.hour, value.minute, value.second));
+  roundTrip.setUTCFullYear(value.year);
   if (
     roundTrip.getUTCFullYear() !== value.year
     || roundTrip.getUTCMonth() + 1 !== value.month
     || roundTrip.getUTCDate() !== value.day
   ) {
     throw new RangeError("day is not valid for the supplied month and year");
+  }
+}
+
+function validateVolumeDescriptorDateYear(year: number): void {
+  if (!Number.isInteger(year) || year < 1 || year > 9999) {
+    throw new RangeError("volume descriptor date year must be an integer from 1 to 9999");
   }
 }
 
