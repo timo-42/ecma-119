@@ -62,7 +62,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     if (!pvd) {
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
-      issues.push(...validatePrimaryVolumeDescriptor(image, pvd));
+      issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
       issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, ".", new Set()));
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
@@ -201,13 +201,20 @@ function validatePrimaryDescriptorReferences(image: Uint8Array, pvd: PrimaryVolu
   decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
 }
 
-function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor): ValidationIssue[] {
+function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
   }
   if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
     issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
+  }
+  const minimumVolumeSpaceSize = minimumReferencedVolumeSpaceSize(image, descriptors);
+  if (Number.isFinite(minimumVolumeSpaceSize) && pvd.volumeSpaceSize < minimumVolumeSpaceSize) {
+    issues.push({
+      code: "pvd.volume_space_size.lower_bound",
+      message: `volume space size ${pvd.volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`,
+    });
   }
   if (pvd.fileStructureVersion !== 1) {
     issues.push({ code: "pvd.file_structure_version", message: "primary volume descriptor file structure version must be 1" });
@@ -218,6 +225,117 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
+}
+
+function minimumReferencedVolumeSpaceSize(image: Uint8Array, descriptors: VolumeDescriptor[]): number {
+  let minimum = 0;
+  for (const descriptor of descriptors) {
+    minimum = Math.max(minimum, descriptor.sector + 1);
+    if (descriptor.kind === "primary" || descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+      minimum = Math.max(
+        minimum,
+        pathTableEndSector(descriptor.typeLPathTableLocation, descriptor.pathTableSize),
+        pathTableEndSector(descriptor.typeMPathTableLocation, descriptor.pathTableSize),
+        optionalPathTableEndSector(descriptor.optionalTypeLPathTableLocation, descriptor.pathTableSize),
+        optionalPathTableEndSector(descriptor.optionalTypeMPathTableLocation, descriptor.pathTableSize),
+        directoryTreeEndSector(image, descriptor.rootDirectoryRecord, new Set()),
+      );
+    } else if (descriptor.kind === "partition") {
+      minimum = Math.max(minimum, descriptor.volumePartitionLocation + descriptor.volumePartitionSize);
+    }
+  }
+  return minimum;
+}
+
+function pathTableEndSector(location: number, size: number): number {
+  if (!Number.isInteger(location) || !Number.isInteger(size) || location < 0 || size < 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return location + sectorsForBytes(size);
+}
+
+function optionalPathTableEndSector(location: number, size: number): number {
+  return location === 0 ? 0 : pathTableEndSector(location, size);
+}
+
+function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry, visited: Set<number>): number {
+  let end = directoryExtentEndSector(directory);
+  if (!Number.isFinite(end) || visited.has(directory.extent)) {
+    return end;
+  }
+  visited.add(directory.extent);
+
+  const start = (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE;
+  const directoryEnd = start + directory.size;
+  if (!Number.isInteger(start) || !Number.isInteger(directoryEnd) || start < 0 || directoryEnd < start) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (directoryEnd > image.byteLength) {
+    return end;
+  }
+
+  let offset = start;
+  let recordIndex = 0;
+  while (offset < directoryEnd) {
+    const length = image[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset - start + 1) / SECTOR_SIZE) * SECTOR_SIZE + start;
+      continue;
+    }
+    if (length < 34 || offset + length > directoryEnd || (offset - start) % SECTOR_SIZE + length > SECTOR_SIZE) {
+      offset += Math.max(1, length);
+      continue;
+    }
+    let record: DecodedDirectoryRecord;
+    try {
+      record = decodeDirectoryRecord(image, offset);
+    } catch {
+      offset += length;
+      continue;
+    }
+    offset += record.length;
+    if (recordIndex++ < 2) {
+      continue;
+    }
+    if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
+      const identifier = decodeFileIdentifier(record.identifier);
+      const child = directoryEntryFromRecord(record, identifier, []);
+      end = Math.max(end, directoryExtentEndSector(child));
+      end = Math.max(end, directoryTreeEndSector(image, child, new Set(visited)));
+    } else {
+      end = Math.max(end, fileExtentEndSector(record));
+    }
+  }
+  return end;
+}
+
+function directoryExtentEndSector(directory: IsoDirectoryEntry): number {
+  return extentEndSector(directory.extent, directory.extendedAttributeRecordLength, sectorsForBytes(directory.size));
+}
+
+function fileExtentEndSector(record: DecodedDirectoryRecord): number {
+  return extentEndSector(record.extent, record.extendedAttributeRecordLength, Math.max(1, sectorsForBytes(record.dataLength)));
+}
+
+function extentEndSector(extent: number, extendedAttributeRecordLength: number, dataSectors: number): number {
+  if (
+    !Number.isInteger(extent)
+    || !Number.isInteger(extendedAttributeRecordLength)
+    || !Number.isInteger(dataSectors)
+    || extent < 0
+    || extendedAttributeRecordLength < 0
+    || dataSectors < 0
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return extent + extendedAttributeRecordLength + dataSectors;
+}
+
+function sectorsForBytes(size: number): number {
+  if (!Number.isInteger(size) || size < 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.ceil(size / SECTOR_SIZE);
 }
 
 type PathTableValidationInput = PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor;
