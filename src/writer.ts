@@ -10,9 +10,10 @@ import {
   writeUint32LE,
 } from "./binary.js";
 import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
+import { encodeExtendedAttributeRecord } from "./extended-attribute-record.js";
 import { normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, CreateIsoOptions, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type VolumePartitionOptions } from "./types.js";
+import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -186,7 +187,9 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
       extent: 0,
     };
     if (file.extendedAttributeRecord !== undefined) {
-      fileNode.extendedAttributeRecord = toBytes(file.extendedAttributeRecord);
+      fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
+        ? encodeExtendedAttributeRecord(file.extendedAttributeRecord, { defaultDate: file.date ?? now })
+        : toBytes(file.extendedAttributeRecord);
       if (fileNode.extendedAttributeRecord.byteLength === 0) {
         throw new Error("extended attribute record must contain at least one byte");
       }
@@ -438,6 +441,10 @@ function toBytes(data: Uint8Array | Buffer | string): Uint8Array {
     return data;
   }
   return new Uint8Array(data);
+}
+
+function isExtendedAttributeRecordInput(data: Uint8Array | Buffer | string | ExtendedAttributeRecordInput): data is ExtendedAttributeRecordInput {
+  return typeof data === "object" && !(data instanceof Uint8Array);
 }
 
 function asciiBytes(value: string): Uint8Array {

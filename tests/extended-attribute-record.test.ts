@@ -1,9 +1,159 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, encodeDirectoryRecord, encodePathTable, parseIsoImage, validateIsoImage } from "../src/index";
+import {
+  createIsoImage,
+  decodeExtendedAttributeRecord,
+  encodeDirectoryRecord,
+  encodeExtendedAttributeRecord,
+  encodePathTable,
+  parseIsoImage,
+  validateIsoImage,
+} from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 describe("extended attribute records", () => {
+  test("encodes and decodes structured extended attribute record fields", () => {
+    const createdAt = new Date(Date.UTC(2024, 0, 2, 3, 4, 5, 120));
+    const modifiedAt = new Date(Date.UTC(2024, 1, 3, 4, 5, 6, 340));
+    const expiresAt = new Date(Date.UTC(2025, 2, 4, 5, 6, 7, 560));
+    const effectiveAt = new Date(Date.UTC(2024, 3, 5, 6, 7, 8, 780));
+    const systemUse = Uint8Array.of(0xde, 0xad, 0xbe, 0xef);
+    const applicationUse = asciiBytes("application data");
+    const escapeSequences = Uint8Array.of(0x25, 0x2f, 0x45);
+
+    const bytes = encodeExtendedAttributeRecord({
+      ownerIdentification: 42,
+      groupIdentification: 77,
+      permissions: 0xaaab,
+      createdAt,
+      modifiedAt,
+      expiresAt,
+      effectiveAt,
+      recordFormat: 1,
+      recordAttributes: 2,
+      recordLength: 128,
+      systemIdentifier: "EAR_SYSTEM",
+      systemUse,
+      version: 1,
+      applicationUse,
+      escapeSequences,
+    });
+    const decoded = decodeExtendedAttributeRecord(bytes);
+
+    expect(bytes.byteLength).toBe(SECTOR_SIZE);
+    expect(decoded).toMatchObject({
+      ownerIdentification: 42,
+      groupIdentification: 77,
+      permissions: 0xaaab,
+      recordFormat: 1,
+      recordAttributes: 2,
+      recordLength: 128,
+      systemIdentifier: "EAR_SYSTEM",
+      version: 1,
+    });
+    expect(decoded.createdAt.toISOString()).toBe("2024-01-02T03:04:05.120Z");
+    expect(decoded.modifiedAt.toISOString()).toBe("2024-02-03T04:05:06.340Z");
+    expect(decoded.expiresAt?.toISOString()).toBe("2025-03-04T05:06:07.560Z");
+    expect(decoded.effectiveAt.toISOString()).toBe("2024-04-05T06:07:08.780Z");
+    expect(decoded.systemUse.subarray(0, systemUse.byteLength)).toEqual(systemUse);
+    expect(decoded.applicationUse).toEqual(applicationUse);
+    expect(decoded.escapeSequences).toEqual(escapeSequences);
+  });
+
+  test("writes structured extended attribute records and parses fields back from the ISO", () => {
+    const data = asciiBytes("structured ear data\n");
+    const createdAt = new Date(Date.UTC(2024, 4, 6, 7, 8, 9, 100));
+    const image = createIsoImage([{
+      path: "STRUCT.TXT",
+      data,
+      date: createdAt,
+      extendedAttributeRecord: {
+        ownerIdentification: 12,
+        groupIdentification: 34,
+        permissions: 0xaaaa,
+        createdAt,
+        modifiedAt: createdAt,
+        effectiveAt: createdAt,
+        recordFormat: 0,
+        recordAttributes: 0,
+        recordLength: 0,
+        systemIdentifier: "STRUCTURED",
+        systemUse: Uint8Array.of(1, 2, 3),
+        applicationUse: asciiBytes("app"),
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+      },
+    }]);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(file?.data).toEqual(data);
+    expect(file?.extendedAttributeRecordLength).toBe(1);
+    expect(file?.extendedAttributeRecord?.byteLength).toBe(SECTOR_SIZE);
+    expect(file?.extendedAttributeRecordFields).toMatchObject({
+      ownerIdentification: 12,
+      groupIdentification: 34,
+      permissions: 0xaaaa,
+      recordFormat: 0,
+      recordAttributes: 0,
+      recordLength: 0,
+      systemIdentifier: "STRUCTURED",
+      version: 1,
+    });
+    expect(file?.extendedAttributeRecordFields?.createdAt.toISOString()).toBe("2024-05-06T07:08:09.100Z");
+    expect(file?.extendedAttributeRecordFields?.applicationUse).toEqual(asciiBytes("app"));
+    expect(file?.extendedAttributeRecordFields?.escapeSequences).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
+  });
+
+  test("rejects invalid structured extended attribute field combinations", () => {
+    expect(() => encodeExtendedAttributeRecord({
+      ownerIdentification: 1,
+      groupIdentification: 0,
+    })).toThrow(/owner identification and group identification/i);
+
+    expect(() => encodeExtendedAttributeRecord({
+      permissions: 0,
+    })).toThrow(/permissions bits/i);
+
+    expect(() => encodeExtendedAttributeRecord({
+      recordFormat: 0,
+      recordLength: 1,
+    })).toThrow(/record length must be zero/i);
+
+    expect(() => encodeExtendedAttributeRecord({
+      recordFormat: 4,
+    })).toThrow(/reserved/i);
+
+    expect(() => encodeExtendedAttributeRecord({
+      recordAttributes: 3,
+    })).toThrow(/reserved/i);
+
+    expect(() => encodeExtendedAttributeRecord({
+      version: 2,
+    })).toThrow(/version must be 1/i);
+  });
+
+  test("reports malformed structured fields in raw extended attribute records", () => {
+    const image = createIsoImage([{
+      path: "BAD_EAR.TXT",
+      data: "x",
+      extendedAttributeRecord: makeExtendedAttributeRecord("bad reserved"),
+    }]);
+    const record = findRootFileRecord(image, "BAD_EAR.TXT;1");
+    const extent = readBoth32(record, 2);
+    sector(image, extent)[182] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+          message: expect.stringMatching(/reserved bytes/i),
+        }),
+      ]),
+    );
+  });
+
   test("writes raw extended attribute logical blocks before file data and parses them back", () => {
     const data = asciiBytes("file data after ear\n");
     const extendedAttributeRecord = makeExtendedAttributeRecord("writer ear");
@@ -165,7 +315,7 @@ function makeExtendedAttributeRecord(label: string): Uint8Array {
   const bytes = new Uint8Array(SECTOR_SIZE);
   writeBoth16(bytes, 0, 0);
   writeBoth16(bytes, 4, 0);
-  writeBoth16(bytes, 8, 0);
+  writeUint16BE(bytes, 8, 0xaaaa);
   bytes.set(volumeDate(new Date(Date.UTC(2024, 0, 1, 0, 0, 0))), 10);
   bytes.set(volumeDate(new Date(Date.UTC(2024, 0, 1, 0, 0, 0))), 27);
   bytes.set(volumeDate(null), 44);
