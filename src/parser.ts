@@ -71,7 +71,10 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     try {
       parseIsoImage(image, { includeData: false });
     } catch (error) {
-      issues.push({ code: "image.parse", message: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      if (!hasTargetedIssueForParseFailure(issues, message)) {
+        issues.push({ code: "image.parse", message });
+      }
     }
   }
   return dedupeIssues(issues);
@@ -88,7 +91,10 @@ export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): Vo
     try {
       descriptor = parseVolumeDescriptorAt(image, offset, sector);
     } catch (error) {
-      throw new Error(`missing volume descriptor set terminator before sector ${sector}: ${error instanceof Error ? error.message : String(error)}`);
+      if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
+        throw new Error(`missing volume descriptor set terminator before sector ${sector}`);
+      }
+      throw error;
     }
     descriptors.push(descriptor);
     if (descriptor.type === 255) {
@@ -192,32 +198,48 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   return issues;
 }
 
+type PathTableValidationInput = PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor;
+
 function validatePathTableReferences(
   image: Uint8Array,
-  descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  descriptor: PathTableValidationInput,
   codePrefix: string,
 ): ValidationIssue[] {
+  return [
+    ...validatePathTableReference(image, descriptor, codePrefix, "little"),
+    ...validatePathTableReference(image, descriptor, codePrefix, "big"),
+  ];
+}
+
+function validatePathTableReference(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  codePrefix: string,
+  endian: "little" | "big",
+): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const pathTableStart = descriptor.typeLPathTableLocation * SECTOR_SIZE;
+  const location = endian === "little" ? descriptor.typeLPathTableLocation : descriptor.typeMPathTableLocation;
+  const label = endian === "little" ? "Type L" : "Type M";
+  const pathTableStart = location * SECTOR_SIZE;
   const pathTableEnd = pathTableStart + descriptor.pathTableSize;
   if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
-    issues.push({ code: `${codePrefix}.bounds`, message: "Type L path table extent is out of bounds" });
+    issues.push({ code: `${codePrefix}.${endian}.bounds`, message: `${label} path table extent is out of bounds` });
     return issues;
   }
   let pathTable: PathTableRecord[];
   try {
-    pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
+    pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), endian);
   } catch (error) {
-    issues.push({ code: `${codePrefix}.parse`, message: error instanceof Error ? error.message : String(error) });
+    issues.push({ code: `${codePrefix}.${endian}.parse`, message: error instanceof Error ? error.message : String(error) });
     return issues;
   }
   if (pathTable.length === 0) {
-    issues.push({ code: `${codePrefix}.empty`, message: "path table must contain the root directory record" });
+    issues.push({ code: `${codePrefix}.${endian}.empty`, message: `${label} path table must contain the root directory record` });
     return issues;
   }
   const root = pathTable[0]!;
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
-    issues.push({ code: `${codePrefix}.root`, message: "first path table record must be the root directory with parent number 1" });
+    issues.push({ code: `${codePrefix}.${endian}.root`, message: `first ${label} path table record must be the root directory with parent number 1` });
   }
   for (const [index, record] of pathTable.entries()) {
     const isRoot = index === 0;
@@ -226,8 +248,8 @@ function validatePathTableReferences(
       : record.parentDirectoryNumber < 1 || record.parentDirectoryNumber >= index + 1;
     if (invalidParent) {
       issues.push({
-        code: `${codePrefix}.parent`,
-        message: `path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
+        code: `${codePrefix}.${endian}.parent`,
+        message: `${label} path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
       });
     }
   }
@@ -654,6 +676,15 @@ function dedupeIssues(issues: ValidationIssue[]): ValidationIssue[] {
     }
     seen.add(key);
     return true;
+  });
+}
+
+function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: string): boolean {
+  return issues.some((issue) => {
+    if (issue.code === "image.parse" || issue.code === "descriptor.sequence") {
+      return false;
+    }
+    return message.includes(issue.message) || issue.message.includes(message);
   });
 }
 
