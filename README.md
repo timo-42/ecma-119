@@ -67,6 +67,8 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 
 File input `version` defaults to 1 and may be set from 1 through 32767 to write a non-default ECMA-119 file version number. The parser preserves the full identifier, such as `README.TXT;2`, while `path` omits the version suffix.
 
+Files marked with `associated: true` may share the same path, identifier, and version as a regular file in the same directory. The parser returns both records with the same `path` and `identifier`; the associated file is distinguished by the Associated File flag.
+
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
@@ -87,7 +89,7 @@ Implemented support is intentionally explicit:
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - file version number authoring from 1 through 32767
 - directory records with standard `.` and `..` entries
-- hidden flags for generated files and directories, and associated file flags for generated files
+- hidden flags for generated files and directories, associated file flags for generated files, and regular/associated file pairs with the same identifier
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records
 - opaque directory record System Use bytes
 - raw and structured file and directory Extended Attribute Records
