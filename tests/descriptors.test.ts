@@ -515,10 +515,15 @@ describe("volume descriptor sequence parsing", () => {
 
   test("writes primary volume descriptor file identifier fields", () => {
     const applicationUse = Uint8Array.of(1, 2, 3, 4);
-    const image = createIsoImage([{
-      path: "README.TXT",
-      data: "descriptor file identifiers\n",
-    }], {
+    const image = createIsoImage([
+      {
+        path: "README.TXT",
+        data: "descriptor file identifiers\n",
+      },
+      { path: "COPY.TXT", data: "copyright\n" },
+      { path: "ABSTRACT.TXT", data: "abstract\n" },
+      { path: "BIBLIO.TXT", data: "bibliographic\n" },
+    ], {
       copyrightFileIdentifier: "COPY.TXT",
       abstractFileIdentifier: "ABSTRACT.TXT",
       bibliographicFileIdentifier: "BIBLIO.TXT",
@@ -543,10 +548,16 @@ describe("volume descriptor sequence parsing", () => {
 
   test("writes, validates, and reads Level 2 primary identifiers", () => {
     const payload = "level two primary identifiers\n";
-    const image = createIsoImage([{
-      path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
-      data: payload,
-    }], {
+    const image = createIsoImage([
+      {
+        path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
+        data: payload,
+      },
+      {
+        path: "LONGCOPYRIGHTFILENAME.TXT",
+        data: "copyright\n",
+      },
+    ], {
       identifierLevel: 2,
       copyrightFileIdentifier: "LONGCOPYRIGHTFILENAME.TXT",
       createdAt: new Date("2024-01-01T00:00:00Z"),
@@ -556,14 +567,15 @@ describe("volume descriptor sequence parsing", () => {
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(parsed.primaryVolumeDescriptor.copyrightFileIdentifier).toBe("LONGCOPYRIGHTFILENAME.TXT;1");
-    expect(parsed.files).toHaveLength(1);
-    expect(parsed.files[0]).toMatchObject({
+    expect(parsed.files).toHaveLength(2);
+    expect(parsed.files.find((file) => file.path === "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT")).toMatchObject({
       path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
       identifier: "LONGFILENAME1234567890.TXT;1",
       size: payload.length,
     });
-    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe(payload);
-    expect(parsed.root.children[0]).toMatchObject({
+    const file = parsed.files.find((entry) => entry.path === "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT");
+    expect(new TextDecoder("ascii").decode(file?.data)).toBe(payload);
+    expect(parsed.root.children.find((entry) => entry.path === "LONGDIRECTORYNAME")).toMatchObject({
       path: "LONGDIRECTORYNAME",
       identifier: "LONGDIRECTORYNAME",
     });
@@ -645,10 +657,16 @@ describe("volume descriptor sequence parsing", () => {
   });
 
   test("writes enhanced volume descriptors with separate path tables and directory hierarchy", () => {
-    const image = createIsoImage([{
-      path: "DIR/README.TXT",
-      data: "enhanced descriptor\n",
-    }], {
+    const image = createIsoImage([
+      {
+        path: "DIR/README.TXT",
+        data: "enhanced descriptor\n",
+      },
+      { path: "COPY.TXT", data: "copyright\n" },
+      { path: "ABSTRACT.TXT", data: "abstract\n" },
+      { path: "BIBLIO.TXT", data: "bibliographic\n" },
+      { path: "ENHABS.TXT", data: "enhanced abstract\n" },
+    ], {
       volumeIdentifier: "PRIMARY",
       copyrightFileIdentifier: "COPY.TXT",
       abstractFileIdentifier: "ABSTRACT.TXT",
@@ -719,15 +737,22 @@ describe("volume descriptor sequence parsing", () => {
     expect(enhancedDir && "children" in enhancedDir && !("children" in enhancedDir.children[0]!)
       ? new TextDecoder("ascii").decode(enhancedDir.children[0].data)
       : undefined).toBe("enhanced descriptor\n");
-    expect(parsed.files.map((file) => file.path)).toEqual(["DIR/README.TXT"]);
+    const readme = parsed.files.find((file) => file.path === "DIR/README.TXT");
+    expect(parsed.files.map((file) => file.path).sort()).toEqual([
+      "ABSTRACT.TXT",
+      "BIBLIO.TXT",
+      "COPY.TXT",
+      "DIR/README.TXT",
+      "ENHABS.TXT",
+    ]);
     expect(parsed.root.fileUnitSize).toBe(0);
     expect(parsed.root.interleaveGapSize).toBe(0);
-    expect(parsed.files[0]).toMatchObject({
+    expect(readme).toMatchObject({
       fileUnitSize: 0,
       interleaveGapSize: 0,
       volumeSequenceNumber: 1,
     });
-    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("enhanced descriptor\n");
+    expect(new TextDecoder("ascii").decode(readme?.data)).toBe("enhanced descriptor\n");
   });
 
   test("validates descriptor unused and reserved zero byte fields", () => {

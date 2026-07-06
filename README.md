@@ -89,6 +89,7 @@ Implemented support is intentionally explicit:
 - Type L and Type M path tables
 - optional Type L and Type M path table copies when requested by the writer
 - local volume set member metadata and same-volume directory records
+- validation that descriptor file-reference fields resolve to files described in the root directory
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - file version number authoring from 1 through 32767
 - directory records with standard `.` and `..` entries

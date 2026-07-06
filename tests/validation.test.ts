@@ -2189,6 +2189,58 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports primary descriptor file references missing from the root directory", () => {
+    const image = createIsoImage([{ path: "COPY.TXT", data: "root reference\n" }], {
+      publisherIdentifier: "_MISSING.TXT;1",
+      copyrightFileIdentifier: "COPY.TXT",
+      abstractFileIdentifier: "ABSENT.TXT",
+      bibliographicFileIdentifier: "BIBLIO.TXT",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    expect(parseIsoImage(image).primaryVolumeDescriptor).toMatchObject({
+      publisherIdentifier: "_MISSING.TXT;1",
+      copyrightFileIdentifier: "COPY.TXT;1",
+      abstractFileIdentifier: "ABSENT.TXT;1",
+      bibliographicFileIdentifier: "BIBLIO.TXT;1",
+    });
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.publisher_identifier.file_reference",
+          message: expect.stringMatching(/publisher identifier references MISSING\.TXT;1.*root directory/i),
+        }),
+        expect.objectContaining({
+          code: "pvd.abstract_file_identifier.file_reference",
+          message: expect.stringMatching(/abstract file identifier references ABSENT\.TXT;1.*root directory/i),
+        }),
+        expect.objectContaining({
+          code: "pvd.bibliographic_file_identifier.file_reference",
+          message: expect.stringMatching(/bibliographic file identifier references BIBLIO\.TXT;1.*root directory/i),
+        }),
+      ]),
+    );
+  });
+
+  test("accepts descriptor file references that resolve to root directory files", () => {
+    const image = createIsoImage([
+      { path: "COPY.TXT", data: "copyright\n" },
+      { path: "PUB.TXT", data: "publisher\n" },
+      { path: "PREP.TXT", data: "preparer\n" },
+      { path: "APP.TXT", data: "application\n" },
+    ], {
+      publisherIdentifier: "_PUB.TXT;1",
+      dataPreparerIdentifier: "_PREP.TXT;1",
+      applicationIdentifier: "_APP.TXT;1",
+      copyrightFileIdentifier: "COPY.TXT",
+      abstractFileIdentifier: "",
+      bibliographicFileIdentifier: "",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    expect(validateIsoImage(image)).toEqual([]);
+  });
+
   test.each([
     {
       kind: "supplementary",
@@ -2308,6 +2360,38 @@ describe("validateIsoImage hardening", () => {
         ]),
       );
     }
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP", abstractFileIdentifier: "SUPABS.TXT" }] },
+      codePrefix: "supplementary",
+      code: "abstract_file_identifier.file_reference",
+      reference: "SUPABS.TXT;1",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH", applicationIdentifier: "_ENHAPP.TXT;1" }] },
+      codePrefix: "enhanced",
+      code: "application_identifier.file_reference",
+      reference: "ENHAPP.TXT;1",
+    },
+  ])("reports $kind descriptor file references missing from the root directory", ({ options, codePrefix, code, reference }) => {
+    const image = createIsoImage([{ path: "COPY.TXT", data: "secondary descriptor file references\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.${code}`,
+          message: expect.stringMatching(new RegExp(`${reference}.*root directory`, "i")),
+        }),
+      ]),
+    );
   });
 
   test("reports enhanced path table parent issues", () => {
