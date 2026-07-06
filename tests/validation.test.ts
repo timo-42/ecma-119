@@ -2298,6 +2298,52 @@ describe("validateIsoImage hardening", () => {
       kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
+      label: "supplementary volume",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+      label: "enhanced volume",
+    },
+  ])("reports $kind descriptor both-endian numeric mismatches", ({ options, codePrefix, label }) => {
+    const fields = [
+      { fieldOffset: 80, bytes: 4, code: "volume_space_size", fieldLabel: "volume space size" },
+      { fieldOffset: 120, bytes: 2, code: "volume_set_size", fieldLabel: "volume set size" },
+      { fieldOffset: 124, bytes: 2, code: "volume_sequence_number", fieldLabel: "volume sequence number" },
+      { fieldOffset: 128, bytes: 2, code: "logical_block_size", fieldLabel: "logical block size" },
+      { fieldOffset: 132, bytes: 4, code: "path_table_size", fieldLabel: "path table size" },
+    ];
+
+    for (const field of fields) {
+      const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary both endian\n" }], {
+        volumeIdentifier: "VALIDATION",
+        ...options,
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+      });
+      const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+      image[secondaryDescriptorOffset + field.fieldOffset + (field.bytes * 2) - 1] ^= 0xff;
+
+      expect(validateIsoImage(image)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: `${codePrefix}.${field.code}.endian_mismatch`,
+            message: expect.stringContaining(`${label} descriptor ${field.fieldLabel} must store matching little- and big-endian values`),
+          }),
+          expect.objectContaining({
+            code: "descriptor.sequence",
+            message: expect.stringMatching(/both-endian uint(16|32) mismatch/i),
+          }),
+        ]),
+      );
+    }
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
       identifierByte: 1,
     },
     {

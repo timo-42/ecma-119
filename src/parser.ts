@@ -54,7 +54,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
   issues.push(...validateRawDescriptorHeaders(image));
-  issues.push(...validateRawPrimaryDescriptorBothEndianFields(image));
+  issues.push(...validateRawDescriptorBothEndianFields(image));
   issues.push(...validateRawDescriptorDateFields(image));
   let descriptors: VolumeDescriptor[] = [];
   let descriptorSequenceFailed = false;
@@ -209,7 +209,7 @@ function rawDescriptorLabel(type: number, version: number): string {
   }
 }
 
-function validateRawPrimaryDescriptorBothEndianFields(image: Uint8Array): ValidationIssue[] {
+function validateRawDescriptorBothEndianFields(image: Uint8Array): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   let sector = SYSTEM_AREA_SECTORS;
   while (sectorOffset(sector + 1) <= image.byteLength) {
@@ -217,8 +217,9 @@ function validateRawPrimaryDescriptorBothEndianFields(image: Uint8Array): Valida
     if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
       return issues;
     }
-    if (isPrimaryVolumeDescriptorHeaderAt(image, offset)) {
-      issues.push(...validateRawPrimaryDescriptorBothEndianFieldsAt(image, offset, sector));
+    const profile = rawDescriptorBothEndianProfileAt(image, offset);
+    if (profile) {
+      issues.push(...validateRawDescriptorBothEndianFieldsAt(image, offset, sector, profile));
     }
     if (isVolumeDescriptorSetTerminatorAt(image, offset)) {
       return issues;
@@ -228,8 +229,13 @@ function validateRawPrimaryDescriptorBothEndianFields(image: Uint8Array): Valida
   return issues;
 }
 
-function validateRawPrimaryDescriptorBothEndianFieldsAt(image: Uint8Array, offset: number, sector: number): ValidationIssue[] {
-  return rawPrimaryDescriptorBothEndianFields.flatMap((field) => {
+function validateRawDescriptorBothEndianFieldsAt(
+  image: Uint8Array,
+  offset: number,
+  sector: number,
+  profile: RawDescriptorBothEndianProfile,
+): ValidationIssue[] {
+  return profile.fields.flatMap((field) => {
     const little = field.bytes === 2
       ? readUint16LEAt(image, offset + field.start)
       : readUint32LEAt(image, offset + field.start);
@@ -240,13 +246,26 @@ function validateRawPrimaryDescriptorBothEndianFieldsAt(image: Uint8Array, offse
     return little === big
       ? []
       : [{
-          code: `pvd.${field.code}.endian_mismatch`,
-          message: `primary volume descriptor ${field.label} must store matching little- and big-endian values at sector ${sector}: ${little} !== ${big}`,
+          code: `${profile.codePrefix}.${field.code}.endian_mismatch`,
+          message: `${profile.label} descriptor ${field.label} must store matching little- and big-endian values at sector ${sector}: ${little} !== ${big}`,
         }];
   });
 }
 
-const rawPrimaryDescriptorBothEndianFields = [
+type RawDescriptorBothEndianField = {
+  start: number;
+  bytes: 2 | 4;
+  code: string;
+  label: string;
+};
+
+type RawDescriptorBothEndianProfile = {
+  codePrefix: "pvd" | "supplementary" | "enhanced" | "partition";
+  label: string;
+  fields: readonly RawDescriptorBothEndianField[];
+};
+
+const rawVolumeDescriptorBothEndianFields = [
   { start: 80, bytes: 4, code: "volume_space_size", label: "volume space size" },
   { start: 120, bytes: 2, code: "volume_set_size", label: "volume set size" },
   { start: 124, bytes: 2, code: "volume_sequence_number", label: "volume sequence number" },
@@ -254,10 +273,30 @@ const rawPrimaryDescriptorBothEndianFields = [
   { start: 132, bytes: 4, code: "path_table_size", label: "path table size" },
 ] as const;
 
-function isPrimaryVolumeDescriptorHeaderAt(image: Uint8Array, offset: number): boolean {
-  return image[offset] === 1
-    && readAscii(image, offset + 1, 5) === STANDARD_IDENTIFIER
-    && image[offset + 6] === 1;
+const rawPartitionDescriptorBothEndianFields = [
+  { start: 72, bytes: 4, code: "volume_partition_location", label: "volume partition location" },
+  { start: 80, bytes: 4, code: "volume_partition_size", label: "volume partition size" },
+] as const;
+
+function rawDescriptorBothEndianProfileAt(image: Uint8Array, offset: number): RawDescriptorBothEndianProfile | undefined {
+  if (readAscii(image, offset + 1, 5) !== STANDARD_IDENTIFIER) {
+    return undefined;
+  }
+  const type = image[offset];
+  const version = image[offset + 6];
+  if (type === 1 && version === 1) {
+    return { codePrefix: "pvd", label: "primary volume", fields: rawVolumeDescriptorBothEndianFields };
+  }
+  if (type === 2 && version === 1) {
+    return { codePrefix: "supplementary", label: "supplementary volume", fields: rawVolumeDescriptorBothEndianFields };
+  }
+  if (type === 2 && version === 2) {
+    return { codePrefix: "enhanced", label: "enhanced volume", fields: rawVolumeDescriptorBothEndianFields };
+  }
+  if (type === 3 && version === 1) {
+    return { codePrefix: "partition", label: "volume partition", fields: rawPartitionDescriptorBothEndianFields };
+  }
+  return undefined;
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
