@@ -8,6 +8,8 @@ import {
 } from "./binary.js";
 
 export const FILE_FLAG_DIRECTORY = 0x02;
+export const FILE_FLAG_HIDDEN = 0x01;
+export const FILE_FLAG_ASSOCIATED = 0x04;
 export const FILE_FLAG_MULTI_EXTENT = 0x80;
 
 export type DirectoryRecordInput = {

@@ -19,6 +19,8 @@ const image = createIsoImage([
   {
     path: "README.TXT",
     data: "Hello from ECMA-119\n",
+    hidden: false,
+    associated: false,
     extendedAttributeRecord: {
       systemIdentifier: "EXAMPLE",
       applicationUse: new Uint8Array([0x01, 0x02])
@@ -57,6 +59,7 @@ Implemented support is intentionally explicit:
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
+- hidden/existence and associated directory record flags for generated files and directories
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records
 - opaque directory record System Use bytes
 - raw and structured file and directory Extended Attribute Records
