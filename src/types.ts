@@ -273,6 +273,7 @@ export type VolumePartitionDescriptor = BaseVolumeDescriptor & {
   volumePartitionLocation: number;
   volumePartitionSize: number;
   systemUse: Uint8Array;
+  data?: Uint8Array;
 };
 
 export type VolumeDescriptorSetTerminator = BaseVolumeDescriptor & {
