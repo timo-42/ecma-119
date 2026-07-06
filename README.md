@@ -22,6 +22,10 @@ const image = createIsoImage([
   bootRecord: {
     bootSystemIdentifier: "EL TORITO SPECIFICATION",
     bootIdentifier: "BOOT CATALOG"
+  },
+  volumePartition: {
+    volumePartitionIdentifier: "PARTITION",
+    data: new Uint8Array([1, 2, 3, 4])
   }
 });
 
@@ -36,9 +40,10 @@ Implemented support is intentionally explicit:
 - ECMA-119 logical sectors of 2,048 bytes
 - primary volume descriptor and descriptor set terminator
 - optional boot record volume descriptor
+- optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Supplementary/enhanced descriptors, executable boot semantics, extended attributes, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record volume descriptors are supported as raw descriptor metadata.
+Supplementary/enhanced descriptors, executable boot semantics, partition filesystem semantics, extended attributes, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record and volume partition descriptors are supported as raw descriptor metadata.
