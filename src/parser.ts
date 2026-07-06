@@ -27,6 +27,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
     throw new Error("missing primary volume descriptor");
   }
   validatePrimaryDescriptorReferences(image, pvd);
+  assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".");
   const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true, new Set());
   return {
     descriptors,
@@ -194,6 +195,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
     issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
   }
+  issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
 }
@@ -364,6 +366,7 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
+  issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   if (descriptor.rootDirectoryRecord.size > 0) {
     issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
@@ -636,6 +639,23 @@ function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: st
   if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
+}
+
+function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string): void {
+  if (entry.fileUnitSize !== 0 || entry.interleaveGapSize !== 0) {
+    throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
+  }
+}
+
+function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  if (entry.fileUnitSize === 0 && entry.interleaveGapSize === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.interleaving_unsupported",
+    message: `directory record at ${path} uses unsupported interleaved file section fields`,
+    path,
+  }];
 }
 
 function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {

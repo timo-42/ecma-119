@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   createIsoImage,
+  decodeDirectoryRecord,
   decodeExtendedAttributeRecord,
   encodeDirectoryRecord,
   encodeExtendedAttributeRecord,
@@ -432,6 +433,30 @@ describe("extended attribute records", () => {
       parentDirectoryNumber: 1,
       extendedAttributeRecordLength: 1.5,
     }], "little")).toThrow(/0 to 255 logical blocks/i);
+  });
+
+  test("low-level directory record codec preserves interleave metadata bytes", () => {
+    const identifier = asciiBytes("INTER.TXT;1");
+    const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+
+    const record = encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      fileUnitSize: 3,
+      interleaveGapSize: 4,
+      identifier,
+      date,
+      volumeSequenceNumber: 1,
+    });
+
+    expect(record[26]).toBe(3);
+    expect(record[27]).toBe(4);
+    expect(decodeDirectoryRecord(record, 0)).toMatchObject({
+      fileUnitSize: 3,
+      interleaveGapSize: 4,
+      volumeSequenceNumber: 1,
+    });
   });
 });
 
