@@ -1,7 +1,7 @@
 import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { decodeFileIdentifier, stripVersion } from "./identifiers.js";
+import { decodeFileIdentifier, isLevelOneDirectoryIdentifier, isLevelOneFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
   type IsoDirectoryEntry,
@@ -449,8 +449,7 @@ function validatePathTableReference(
       });
     }
     if (descriptor.kind === "primary" && !isRoot) {
-      const identifier = readAscii(record.identifier, 0, record.identifier.byteLength);
-      if (record.identifier.byteLength > 8 || !isDString(identifier)) {
+      if (!isLevelOneDirectoryIdentifier(record.identifier)) {
         issues.push({
           code: `${codePrefix}.${endian}.identifier.characters`,
           message: `${label} path table record ${index + 1} directory identifier contains invalid ECMA-119 Level 1 d-characters`,
@@ -785,36 +784,6 @@ function validatePrimaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord
   }];
 }
 
-function isLevelOneDirectoryIdentifier(identifier: Uint8Array): boolean {
-  return identifier.byteLength >= 1
-    && identifier.byteLength <= 8
-    && identifier.every(isDCharacterByte);
-}
-
-function isLevelOneFileIdentifier(identifier: Uint8Array): boolean {
-  const text = asciiString(identifier);
-  if (text === undefined) {
-    return false;
-  }
-  const match = /^([A-Z0-9_]{1,8})(?:\.([A-Z0-9_]{1,3}))?;([1-9][0-9]{0,4})$/u.exec(text);
-  return match !== null && Number(match[3]) <= 32767;
-}
-
-function isDCharacterByte(byte: number): boolean {
-  return (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x30 && byte <= 0x39) || byte === 0x5f;
-}
-
-function asciiString(bytes: Uint8Array): string | undefined {
-  let value = "";
-  for (const byte of bytes) {
-    if (byte > 0x7f) {
-      return undefined;
-    }
-    value += String.fromCharCode(byte);
-  }
-  return value;
-}
-
 function validateDotDirectoryRecord(
   record: DecodedDirectoryRecord,
   index: number,
@@ -963,11 +932,7 @@ function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boo
   if (kind === "d") {
     return isDString(value);
   }
-  if (value === "") {
-    return true;
-  }
-  const match = /^([A-Z0-9_]{1,8}(?:\.[A-Z0-9_]{1,3})?);([1-9][0-9]{0,4})$/u.exec(value);
-  return match !== null && Number(match[2]) <= 32767;
+  return value === "" || isLevelOneFileIdentifier(new TextEncoder().encode(value));
 }
 
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
