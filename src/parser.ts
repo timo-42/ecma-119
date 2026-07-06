@@ -451,8 +451,10 @@ function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry,
     if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
       const identifier = decodeFileIdentifier(record.identifier);
       const child = directoryEntryFromRecord(record, identifier, []);
-      end = Math.max(end, directoryExtentEndSector(child));
-      end = Math.max(end, directoryTreeEndSector(image, child, localVolumeSequenceNumber, new Set(visited)));
+      if (child.volumeSequenceNumber === localVolumeSequenceNumber) {
+        end = Math.max(end, directoryExtentEndSector(child));
+        end = Math.max(end, directoryTreeEndSector(image, child, localVolumeSequenceNumber, new Set(visited)));
+      }
     } else {
       if (record.volumeSequenceNumber === localVolumeSequenceNumber) {
         end = Math.max(end, fileExtentEndSector(record));
@@ -824,7 +826,11 @@ function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): C
         continue;
       }
       offset += record.length;
-      if (recordIndex++ < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+      if (
+        recordIndex++ < 2
+        || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY
+        || record.volumeSequenceNumber !== directory.volumeSequenceNumber
+      ) {
         continue;
       }
       childDirectories.push({ directory: directoryEntryFromRecord(record, "", []), identifier: record.identifier });
@@ -1077,7 +1083,7 @@ function validateDirectoryHierarchy(
         path: recordPath || ".",
       });
     }
-    if (record.volumeSequenceNumber !== 1) {
+    if (record.volumeSequenceNumber !== localVolumeSequenceNumber) {
       issues.push(...validateDirectoryRecordVolumeSequence(record, recordPath || ".", localVolumeSequenceNumber));
     }
     if ((record.flags & FILE_FLAG_MULTI_EXTENT) !== 0 && (record.flags & FILE_FLAG_DIRECTORY) !== 0) {
@@ -1087,7 +1093,11 @@ function validateDirectoryHierarchy(
         path: recordPath || ".",
       });
     }
-    if (index < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+    if (
+      index < 2
+      || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY
+      || record.volumeSequenceNumber !== localVolumeSequenceNumber
+    ) {
       continue;
     }
     const childPath = recordPath || ".";
