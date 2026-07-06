@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, decodePathTable, parseIsoImage, parseVolumeDescriptors, validateIsoImage, type VolumePartitionDescriptor } from "../src/index";
+import { createIsoImage, decodePathTable, encodeExtendedAttributeRecord, parseIsoImage, parseVolumeDescriptors, validateIsoImage, type VolumePartitionDescriptor } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import { readBothEndianUint32, readUint32BE, readUint32LE } from "./helpers";
 
@@ -809,6 +809,108 @@ describe("validateIsoImage hardening", () => {
           code: "extended_attribute_record.parse",
           path: "DIR/FILE.TXT",
           message: expect.stringMatching(/reserved bytes/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports malformed primary descriptor root extended attribute records", () => {
+    const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    }));
+    const rootExtent = rootDirectoryExtent(image);
+    image[rootExtent * SECTOR_SIZE + 182] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: ".",
+          message: expect.stringMatching(/reserved bytes/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      path: "supplementary:.",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      path: "enhanced:.",
+    },
+  ])("reports malformed $kind descriptor root extended attribute records", ({ options, path }) => {
+    const image = withDescriptorRootExtendedAttributeRecord(createIsoImage([{ path: "FILE.TXT", data: "secondary root ear\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    }), 17 * SECTOR_SIZE, encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    }));
+    const rootExtent = rootDirectoryExtentAt(image, 17 * SECTOR_SIZE);
+    image[rootExtent * SECTOR_SIZE + 182] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path,
+          message: expect.stringMatching(/reserved bytes/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports primary descriptor root extended attribute flag mismatches", () => {
+    const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
+      ownerIdentification: 1,
+      groupIdentification: 1,
+      systemIdentifier: "VALIDATION",
+    }));
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.file_flags",
+          path: ".",
+          message: "directory record flags for . do not match associated extended attribute record fields",
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      path: "supplementary:.",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      path: "enhanced:.",
+    },
+  ])("reports $kind descriptor root extended attribute flag mismatches", ({ options, path }) => {
+    const image = withDescriptorRootExtendedAttributeRecord(createIsoImage([{ path: "FILE.TXT", data: "secondary root ear flags\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    }), 17 * SECTOR_SIZE, encodeExtendedAttributeRecord({
+      ownerIdentification: 1,
+      groupIdentification: 1,
+      systemIdentifier: "VALIDATION",
+    }));
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.file_flags",
+          path,
+          message: `directory record flags for ${path} do not match associated extended attribute record fields`,
         }),
       ]),
     );
@@ -1873,7 +1975,23 @@ function baselineImage(files = [{ path: "README.TXT", data: "hello ecma-119\n" }
 }
 
 function rootDirectoryExtent(image: Uint8Array): number {
-  return readBothEndianUint32(image, PVD_OFFSET + 156 + 2);
+  return rootDirectoryExtentAt(image, PVD_OFFSET);
+}
+
+function rootDirectoryExtentAt(image: Uint8Array, descriptorOffset: number): number {
+  return readBothEndianUint32(image, descriptorOffset + 156 + 2);
+}
+
+function rootDirectorySizeAt(image: Uint8Array, descriptorOffset: number): number {
+  return readBothEndianUint32(image, descriptorOffset + 156 + 10);
+}
+
+function descriptorVolumeSpaceSize(image: Uint8Array, descriptorOffset: number): number {
+  return readBothEndianUint32(image, descriptorOffset + 80);
+}
+
+function setDescriptorVolumeSpaceSize(image: Uint8Array, descriptorOffset: number, size: number): void {
+  writeUint32Both(image, descriptorOffset + 80, size);
 }
 
 function setRootDirectorySize(image: Uint8Array, size: number): void {
@@ -1882,6 +2000,39 @@ function setRootDirectorySize(image: Uint8Array, size: number): void {
 
 function setPrimaryVolumeSpaceSize(image: Uint8Array, size: number): void {
   writeUint32Both(image, PVD_OFFSET + 80, size);
+}
+
+function withDescriptorRootExtendedAttributeRecord(image: Uint8Array, descriptorOffset: number, extendedAttributeRecord: Uint8Array): Uint8Array {
+  const rootExtent = rootDirectoryExtentAt(image, descriptorOffset);
+  const rootSize = rootDirectorySizeAt(image, descriptorOffset);
+  const rootDirectory = image.slice(rootExtent * SECTOR_SIZE, rootExtent * SECTOR_SIZE + rootSize);
+  const oldSectorCount = image.byteLength / SECTOR_SIZE;
+  const newRootExtent = oldSectorCount;
+  const result = new Uint8Array(image.byteLength + 2 * SECTOR_SIZE);
+  result.set(image);
+  result.set(extendedAttributeRecord.subarray(0, SECTOR_SIZE), newRootExtent * SECTOR_SIZE);
+  result.set(rootDirectory, (newRootExtent + 1) * SECTOR_SIZE);
+
+  setDescriptorVolumeSpaceSize(result, PVD_OFFSET, Math.max(descriptorVolumeSpaceSize(result, PVD_OFFSET), oldSectorCount + 2));
+  setDescriptorVolumeSpaceSize(result, descriptorOffset, Math.max(descriptorVolumeSpaceSize(result, descriptorOffset), oldSectorCount + 2));
+  writeDirectoryRecordExtentFields(result, descriptorOffset + 156, newRootExtent, 1);
+  const littlePathTableOffset = readUint32LE(result, descriptorOffset + 140) * SECTOR_SIZE;
+  const bigPathTableOffset = readUint32BE(result, descriptorOffset + 148) * SECTOR_SIZE;
+  result[littlePathTableOffset + 1] = 1;
+  writeUint32LE(result, littlePathTableOffset + 2, newRootExtent);
+  result[bigPathTableOffset + 1] = 1;
+  writeUint32BE(result, bigPathTableOffset + 2, newRootExtent);
+
+  const rootDirectoryOffset = (newRootExtent + 1) * SECTOR_SIZE;
+  const parentRecordOffset = rootDirectoryOffset + result[rootDirectoryOffset]!;
+  writeDirectoryRecordExtentFields(result, rootDirectoryOffset, newRootExtent, 1);
+  writeDirectoryRecordExtentFields(result, parentRecordOffset, newRootExtent, 1);
+  return result;
+}
+
+function writeDirectoryRecordExtentFields(image: Uint8Array, offset: number, extent: number, extendedAttributeRecordLength: number): void {
+  image[offset + 1] = extendedAttributeRecordLength;
+  writeUint32Both(image, offset + 2, extent);
 }
 
 function expectVolumeSpaceLowerBoundIssue(): ReturnType<typeof expect.objectContaining> {

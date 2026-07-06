@@ -249,6 +249,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateDirectoryEntryDirectoryFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
 }
@@ -1042,6 +1043,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   issues.push(...validateDirectoryEntryDirectoryFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, new Set()));
   return issues;
@@ -1382,6 +1384,31 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     }
   }
   return issues;
+}
+
+function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
+  if (entry.extendedAttributeRecordLength === 0) {
+    return [];
+  }
+  const extendedAttributeRecord = image.slice(entry.extent * SECTOR_SIZE, (entry.extent + entry.extendedAttributeRecordLength) * SECTOR_SIZE);
+  try {
+    const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
+    const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
+    if ((entry.flags & 0x10) !== expected) {
+      return [{
+        code: "extended_attribute_record.file_flags",
+        message: `directory record flags for ${path} do not match associated extended attribute record fields`,
+        path,
+      }];
+    }
+  } catch (error) {
+    return [{
+      code: "extended_attribute_record.parse",
+      message: error instanceof Error ? error.message : String(error),
+      path,
+    }];
+  }
+  return [];
 }
 
 function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttributeRecordLength: number, length: number, path: string): void {
