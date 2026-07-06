@@ -492,6 +492,44 @@ describe("extended attribute records", () => {
     }], "little")).toThrow(/0 to 255 logical blocks/i);
   });
 
+  test("low-level encoders reject invalid identifier lengths", () => {
+    const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+
+    expect(() => encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      identifier: new Uint8Array(),
+      date,
+    })).toThrow(/identifier length/i);
+
+    expect(() => encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      identifier: new Uint8Array(256),
+      date,
+    })).toThrow(/identifier length/i);
+
+    expect(encodePathTable([{
+      identifier: Uint8Array.of(0),
+      extent: 20,
+      parentDirectoryNumber: 1,
+    }], "little")[0]).toBe(1);
+
+    expect(() => encodePathTable([{
+      identifier: new Uint8Array(),
+      extent: 20,
+      parentDirectoryNumber: 1,
+    }], "little")).toThrow(/identifier length/i);
+
+    expect(() => encodePathTable([{
+      identifier: new Uint8Array(256),
+      extent: 20,
+      parentDirectoryNumber: 1,
+    }], "big")).toThrow(/identifier length/i);
+  });
+
   test("low-level directory record encoder rejects unsupported file flag bits", () => {
     const identifier = asciiBytes("FLAGS.TXT;1");
     const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));

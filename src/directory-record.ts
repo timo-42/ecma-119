@@ -51,6 +51,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   if (!Number.isInteger(extendedAttributeRecordLength) || extendedAttributeRecordLength < 0 || extendedAttributeRecordLength > 0xff) {
     throw new RangeError("extended attribute record length must be an integer from 0 to 255 logical blocks");
   }
+  checkedIdentifierLength(input.identifier.length, "directory record identifier");
   const systemUseOffset = directoryRecordLength(input.identifier.length);
   const length = directoryRecordLength(input.identifier.length, systemUse.byteLength);
   if (length > 255) {
@@ -98,6 +99,13 @@ export function decodeDirectoryRecord(bytes: Uint8Array, offset: number): Decode
 function checkedByte(value: number, name: string): number {
   if (!Number.isInteger(value) || value < 0 || value > 0xff) {
     throw new RangeError(`${name} must be an integer from 0 to 255`);
+  }
+  return value;
+}
+
+function checkedIdentifierLength(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 1 || value > 0xff) {
+    throw new RangeError(`${name} length must be an integer from 1 to 255 bytes`);
   }
   return value;
 }

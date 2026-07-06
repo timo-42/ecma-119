@@ -15,17 +15,18 @@ export function pathTableRecordLength(identifierLength: number): number {
 }
 
 export function encodePathTable(records: PathTableRecord[], endian: PathTableEndian): Uint8Array {
-  const size = records.reduce((sum, record) => sum + pathTableRecordLength(record.identifier.length), 0);
+  const size = records.reduce((sum, record) => sum + pathTableRecordLength(checkedIdentifierLength(record.identifier.length)), 0);
   const bytes = new Uint8Array(size);
   let offset = 0;
 
   for (const record of records) {
-    const length = pathTableRecordLength(record.identifier.length);
+    const identifierLength = checkedIdentifierLength(record.identifier.length);
+    const length = pathTableRecordLength(identifierLength);
     const extendedAttributeRecordLength = record.extendedAttributeRecordLength ?? 0;
     if (!Number.isInteger(extendedAttributeRecordLength) || extendedAttributeRecordLength < 0 || extendedAttributeRecordLength > 0xff) {
       throw new RangeError("extended attribute record length must be an integer from 0 to 255 logical blocks");
     }
-    bytes[offset] = record.identifier.length;
+    bytes[offset] = identifierLength;
     bytes[offset + 1] = extendedAttributeRecordLength;
     if (endian === "little") {
       writeUint32LE(bytes, offset + 2, record.extent);
@@ -39,6 +40,13 @@ export function encodePathTable(records: PathTableRecord[], endian: PathTableEnd
   }
 
   return bytes;
+}
+
+function checkedIdentifierLength(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 0xff) {
+    throw new RangeError("path table identifier length must be an integer from 1 to 255 bytes");
+  }
+  return value;
 }
 
 export function decodePathTable(bytes: Uint8Array, endian: PathTableEndian): PathTableRecord[] {
