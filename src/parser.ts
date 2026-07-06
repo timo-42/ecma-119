@@ -29,10 +29,16 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   assertSingleVolumeDescriptor(pvd, "primary volume descriptor");
   validatePrimaryDescriptorReferences(image, pvd);
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".");
-  const root = readDirectoryTree(image, pvd.rootDirectoryRecord, "", options.includeData ?? true, new Set());
+  const includeData = options.includeData ?? true;
+  const populatedDescriptors = descriptors.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
+  const primaryVolumeDescriptor = populatedDescriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
+  if (!primaryVolumeDescriptor) {
+    throw new Error("missing primary volume descriptor");
+  }
+  const root = primaryVolumeDescriptor.rootDirectoryRecord;
   return {
-    descriptors,
-    primaryVolumeDescriptor: { ...pvd, rootDirectoryRecord: root },
+    descriptors: populatedDescriptors,
+    primaryVolumeDescriptor,
     root,
     files: collectParsedFiles(root),
   };
@@ -506,6 +512,19 @@ function parsePartitionDescriptor(image: Uint8Array, offset: number, sector: num
     volumePartitionLocation: readUint32Both(image, offset + 72),
     volumePartitionSize: readUint32Both(image, offset + 80),
     systemUse: image.slice(offset + 88, offset + SECTOR_SIZE),
+  };
+}
+
+function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDescriptor, includeData: boolean): VolumeDescriptor {
+  if (descriptor.kind !== "primary" && descriptor.kind !== "supplementary" && descriptor.kind !== "enhanced") {
+    return descriptor;
+  }
+  if (descriptor.rootDirectoryRecord.size === 0) {
+    return descriptor;
+  }
+  return {
+    ...descriptor,
+    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, "", includeData, new Set()),
   };
 }
 

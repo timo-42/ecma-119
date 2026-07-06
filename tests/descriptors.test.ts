@@ -31,6 +31,7 @@ describe("volume descriptor sequence parsing", () => {
     const parsed = parseIsoImage(image, { includeData: true });
     const primary = descriptors[0];
     const supplementary = descriptors[1];
+    const parsedSupplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "terminator"]);
@@ -50,6 +51,16 @@ describe("volume descriptor sequence parsing", () => {
     expect(primary?.kind === "primary" && supplementary?.kind === "supplementary"
       ? supplementary.rootDirectoryRecord.extent
       : 0).not.toBe(primary?.kind === "primary" ? primary.rootDirectoryRecord.extent : 0);
+    expect(parsedSupplementary?.kind === "supplementary"
+      ? parsedSupplementary.rootDirectoryRecord.children[0]
+      : undefined).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      size: "descriptor shifted\n".length,
+    });
+    expect(parsedSupplementary?.kind === "supplementary" && !("children" in parsedSupplementary.rootDirectoryRecord.children[0]!)
+      ? new TextDecoder("ascii").decode(parsedSupplementary.rootDirectoryRecord.children[0].data)
+      : undefined).toBe("descriptor shifted\n");
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("descriptor shifted\n");
   });
 
@@ -106,6 +117,7 @@ describe("volume descriptor sequence parsing", () => {
     const parsed = parseIsoImage(image, { includeData: true });
     const primary = descriptors[0];
     const enhanced = descriptors[1];
+    const parsedEnhanced = parsed.descriptors.find((descriptor) => descriptor.kind === "enhanced");
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "enhanced", "terminator"]);
@@ -132,6 +144,21 @@ describe("volume descriptor sequence parsing", () => {
     expect(primary?.kind === "primary" && enhanced?.kind === "enhanced"
       ? enhanced.rootDirectoryRecord.extent
       : 0).not.toBe(primary?.kind === "primary" ? primary.rootDirectoryRecord.extent : 0);
+    const enhancedDir = parsedEnhanced?.kind === "enhanced"
+      ? parsedEnhanced.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR")
+      : undefined;
+    expect(enhancedDir).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+    });
+    expect(enhancedDir && "children" in enhancedDir ? enhancedDir.children[0] : undefined).toMatchObject({
+      path: "DIR/README.TXT",
+      identifier: "README.TXT;1",
+      size: "enhanced descriptor\n".length,
+    });
+    expect(enhancedDir && "children" in enhancedDir && !("children" in enhancedDir.children[0]!)
+      ? new TextDecoder("ascii").decode(enhancedDir.children[0].data)
+      : undefined).toBe("enhanced descriptor\n");
     expect(parsed.files.map((file) => file.path)).toEqual(["DIR/README.TXT"]);
     expect(parsed.root.fileUnitSize).toBe(0);
     expect(parsed.root.interleaveGapSize).toBe(0);
@@ -141,6 +168,35 @@ describe("volume descriptor sequence parsing", () => {
       volumeSequenceNumber: 1,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("enhanced descriptor\n");
+  });
+
+  test("omits file data from parsed secondary descriptor trees when includeData is false", () => {
+    const image = createIsoImage([{
+      path: "DIR/README.TXT",
+      data: "secondary no data\n",
+    }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENHANCED" }],
+    });
+
+    const parsed = parseIsoImage(image, { includeData: false });
+    const secondaryDescriptors = parsed.descriptors.filter(
+      (descriptor) => descriptor.kind === "supplementary" || descriptor.kind === "enhanced",
+    );
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files[0]?.data).toBeUndefined();
+    expect(secondaryDescriptors).toHaveLength(2);
+    for (const descriptor of secondaryDescriptors) {
+      const dir = descriptor.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR");
+      const file = dir && "children" in dir ? dir.children[0] : undefined;
+      expect(file).toMatchObject({
+        path: "DIR/README.TXT",
+        identifier: "README.TXT;1",
+        size: "secondary no data\n".length,
+      });
+      expect(file && !("children" in file) ? file.data : undefined).toBeUndefined();
+    }
   });
 
   test("writes supplementary and enhanced descriptors in descriptor order", () => {
