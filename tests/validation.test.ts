@@ -1450,6 +1450,66 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports $kind volume space sizes that exceed the image length", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary volume space\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint32Both(image, secondaryDescriptorOffset + 80, image.length / SECTOR_SIZE + 1);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.volume_space_size`,
+          message: `${codePrefix} volume space size exceeds image length`,
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports $kind volume space sizes smaller than referenced sectors", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary volume lower bound\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint32Both(image, secondaryDescriptorOffset + 80, 17);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.volume_space_size.lower_bound`,
+          message: expect.stringMatching(new RegExp(`^${codePrefix} volume space size 17 is smaller than referenced sector end`, "i")),
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported supplementary volume sequence number", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
