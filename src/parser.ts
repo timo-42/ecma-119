@@ -289,7 +289,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateDirectoryProtectionExtendedAttributeFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
-  issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
   return issues;
 }
@@ -982,7 +982,7 @@ function validateDirectoryHierarchy(
   visited.add(key);
   issues.push(...validateDirectoryDataLength(directory, path));
   issues.push(...validateDirectoryRecordLayout(image, directory, path));
-  issues.push(...validateExtendedAttributeRecords(image, directory, path));
+  issues.push(...validateExtendedAttributeRecords(image, directory, path, localVolumeSequenceNumber));
 
   const directoryBytes = readDirectoryExtentBytes(image, directory);
   if (!directoryBytes) {
@@ -1257,7 +1257,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   issues.push(...validateDirectoryProtectionExtendedAttributeFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
-  issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber, new Set()));
   return issues;
@@ -1694,7 +1694,7 @@ function readSectionPayload(
   return writeOffset;
 }
 
-function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
+function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirectoryEntry, path: string, localVolumeSequenceNumber: number): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const directoryBytes = readDirectoryExtentBytes(image, directory);
   if (!directoryBytes) {
@@ -1720,7 +1720,11 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
       continue;
     }
     offset += record.length;
-    if (recordIndex++ < 2 || record.extendedAttributeRecordLength === 0) {
+    if (
+      recordIndex++ < 2
+      || record.extendedAttributeRecordLength === 0
+      || record.volumeSequenceNumber !== localVolumeSequenceNumber
+    ) {
       continue;
     }
 
@@ -1766,8 +1770,8 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
   return issues;
 }
 
-function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
-  if (entry.extendedAttributeRecordLength === 0) {
+function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry: IsoDirectoryEntry, path: string, localVolumeSequenceNumber: number): ValidationIssue[] {
+  if (entry.extendedAttributeRecordLength === 0 || entry.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return [];
   }
   const extendedAttributeRecord = image.slice(entry.extent * SECTOR_SIZE, (entry.extent + entry.extendedAttributeRecordLength) * SECTOR_SIZE);
