@@ -5,6 +5,18 @@
   "type": "module",
   "license": "MIT",
   "author": "Timo Haas",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timo-42/ecma-119.git"
+  },
+  "bugs": {
+    "url": "https://github.com/timo-42/ecma-119/issues"
+  },
+  "homepage": "https://github.com/timo-42/ecma-119#readme",
+  "packageManager": "npm@10.9.8",
+  "publishConfig": {
+    "access": "public"
+  },
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
