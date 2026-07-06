@@ -83,6 +83,94 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports malformed path table record layout", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table layout\n" }]);
+    const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const pathTableSize = readBothEndianUint32(image, PVD_OFFSET + 132);
+    const childRecordOffset = pathTableOffset + 10;
+    image[childRecordOffset] = pathTableSize;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.record_length",
+          message: expect.stringMatching(/invalid length/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports zero-length records inside declared path table data", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table zero\n" }]);
+    const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const childRecordOffset = pathTableOffset + 10;
+    image[childRecordOffset] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.record_length",
+          message: expect.stringMatching(/zero identifier length/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports nonzero path table identifier padding", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table padding\n" }]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const childRecordOffset = 10;
+    image[littlePathTableOffset + childRecordOffset + 8 + "DIR".length] = 0xff;
+    image[bigPathTableOffset + childRecordOffset + 8 + "DIR".length] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.record_padding",
+          message: expect.stringMatching(/padding byte/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.big.record_padding",
+          message: expect.stringMatching(/padding byte/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports primary path table directory identifiers outside Level 1 d-character rules", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table chars\n" }]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const childIdentifierOffset = 10 + 8;
+    image[littlePathTableOffset + childIdentifierOffset] = "#".charCodeAt(0);
+    image[bigPathTableOffset + childIdentifierOffset] = "#".charCodeAt(0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.identifier.characters",
+          message: expect.stringMatching(/Level 1 d-characters/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.big.identifier.characters",
+          message: expect.stringMatching(/Level 1 d-characters/i),
+        }),
+      ]),
+    );
+
+    const tooLong = baselineImage([{ path: "DIR/FILE.TXT", data: "path table length\n" }]);
+    appendPrimaryPathTableRecord(tooLong, "TOO_LONG1", 1, rootDirectoryExtent(tooLong), 0);
+    expect(validateIsoImage(tooLong)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.identifier.characters",
+          message: expect.stringMatching(/Level 1 d-characters/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports path table records that disagree with the directory hierarchy", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "hierarchy mismatch\n" }]);
     const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
@@ -102,11 +190,7 @@ describe("validateIsoImage hardening", () => {
 
   test("reports path table directories missing from the directory hierarchy", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "missing path table\n" }]);
-    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
-    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
-    const rootPathTableRecordLength = 10;
-    image[littlePathTableOffset + rootPathTableRecordLength] = 0;
-    image[bigPathTableOffset + rootPathTableRecordLength] = 0;
+    writeUint32Both(image, PVD_OFFSET + 132, 10);
 
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([

@@ -56,7 +56,14 @@ export function decodePathTable(bytes: Uint8Array, endian: PathTableEndian): Pat
   while (offset < bytes.length) {
     const identifierLength = bytes[offset]!;
     if (identifierLength === 0) {
-      break;
+      throw new Error(`path table record at offset ${offset} has invalid zero identifier length`);
+    }
+    const recordLength = pathTableRecordLength(identifierLength);
+    if (offset + recordLength > bytes.length) {
+      throw new Error(`path table record at offset ${offset} has invalid length`);
+    }
+    if (identifierLength % 2 === 1 && bytes[offset + 8 + identifierLength] !== 0) {
+      throw new Error(`path table record at offset ${offset} has nonzero padding byte`);
     }
     const extent = endian === "little" ? readUint32LE(bytes, offset + 2) : readUint32BE(bytes, offset + 2);
     const parentDirectoryNumber = endian === "little" ? readUint16LE(bytes, offset + 6) : readUint16BE(bytes, offset + 6);
@@ -66,7 +73,7 @@ export function decodePathTable(bytes: Uint8Array, endian: PathTableEndian): Pat
       parentDirectoryNumber,
       extendedAttributeRecordLength: bytes[offset + 1]!,
     });
-    offset += pathTableRecordLength(identifierLength);
+    offset += recordLength;
   }
 
   return records;
