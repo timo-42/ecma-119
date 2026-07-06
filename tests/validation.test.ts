@@ -1872,6 +1872,7 @@ describe("validateIsoImage hardening", () => {
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     const readmeRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
     const readmeExtent = readBothEndianUint32(image, readmeRecordOffset + 2);
+    image[dirRecordOffset + 1] = 1;
     writeUint32Both(image, dirRecordOffset + 2, readmeExtent);
     writeUint16Both(image, dirRecordOffset + 28, 1);
 
@@ -1898,6 +1899,11 @@ describe("validateIsoImage hardening", () => {
     );
     expect(issues).not.toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ code: "extended_attribute_record.parse" }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
         expect.objectContaining({ code: "image.parse" }),
       ]),
     );
@@ -1915,6 +1921,7 @@ describe("validateIsoImage hardening", () => {
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const readmeRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
     const readmeExtent = readBothEndianUint32(image, readmeRecordOffset + 2);
+    image[PVD_OFFSET + 156 + 1] = 1;
     writeUint32Both(image, PVD_OFFSET + 156 + 2, readmeExtent);
     writeUint16Both(image, PVD_OFFSET + 156 + 28, 1);
 
@@ -1942,6 +1949,11 @@ describe("validateIsoImage hardening", () => {
     expect(issues).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "directory.self_record.missing" }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "extended_attribute_record.parse" }),
       ]),
     );
     expect(issues).not.toEqual(
