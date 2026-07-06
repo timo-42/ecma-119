@@ -70,7 +70,13 @@ function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
   writeUint32LE(pvd, 140, 18);
   writeUint32BE(pvd, 148, 19);
   pvd.set(self, 156);
+  writeAscii(pvd, 190, 128, "", 0x20);
+  writeAscii(pvd, 318, 128, "", 0x20);
+  writeAscii(pvd, 446, 128, "", 0x20);
   writeAscii(pvd, 574, 128, "HANDCRAFTED TEST", 0x20);
+  writeAscii(pvd, 702, 37, "", 0x20);
+  writeAscii(pvd, 739, 37, "", 0x20);
+  writeAscii(pvd, 776, 37, "", 0x20);
   pvd.set(volumeDate(date), 813);
   pvd.set(volumeDate(date), 830);
   pvd.set(volumeDate(null), 847);
