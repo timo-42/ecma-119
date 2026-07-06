@@ -19,9 +19,21 @@ describe("handcrafted ISO reader fixture", () => {
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hello handmade\n");
   });
+
+  test("reads hidden and associated flags from an image not produced by createIsoImage", () => {
+    const image = handcraftedIso({ fileFlags: 0x05 });
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files[0]).toMatchObject({
+      path: "HELLO.TXT",
+      identifier: "HELLO.TXT;1",
+      flags: 0x05,
+    });
+  });
 });
 
-function handcraftedIso(): Uint8Array {
+function handcraftedIso(options: { fileFlags?: number } = {}): Uint8Array {
   const image = new Uint8Array(24 * SECTOR_SIZE);
   const pvd = sector(image, 16);
   const rootDirectory = sector(image, 20);
@@ -38,7 +50,7 @@ function handcraftedIso(): Uint8Array {
   let offset = 0;
   const self = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
   const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
-  const file = directoryRecord({ extent: 21, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("HELLO.TXT;1"), date });
+  const file = directoryRecord({ extent: 21, size: filePayload.byteLength, flags: options.fileFlags ?? 0, identifier: asciiBytes("HELLO.TXT;1"), date });
   rootDirectory.set(self, offset);
   offset += self.byteLength;
   rootDirectory.set(parent, offset);
