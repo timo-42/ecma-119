@@ -53,6 +53,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
   if (image.byteLength % SECTOR_SIZE !== 0) {
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
+  issues.push(...validateRawDescriptorHeaders(image));
   issues.push(...validateRawDescriptorDateFields(image));
   let descriptors: VolumeDescriptor[] = [];
   let descriptorSequenceFailed = false;
@@ -122,6 +123,89 @@ function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): Val
     }
   }
   return issues;
+}
+
+function validateRawDescriptorHeaders(image: Uint8Array): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  let sector = SYSTEM_AREA_SECTORS;
+  while (sectorOffset(sector + 1) <= image.byteLength) {
+    const offset = sectorOffset(sector);
+    if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
+      return issues;
+    }
+    const type = image[offset]!;
+    const version = image[offset + 6]!;
+    const identifier = readAscii(image, offset + 1, 5);
+    const codePrefix = rawDescriptorCodePrefix(type, version);
+    const label = rawDescriptorLabel(type, version);
+    if (identifier !== STANDARD_IDENTIFIER) {
+      issues.push({
+        code: `${codePrefix}.identifier`,
+        message: `${label} descriptor at sector ${sector} must use ${STANDARD_IDENTIFIER} standard identifier`,
+      });
+      return issues;
+    }
+    const allowedVersions = rawDescriptorAllowedVersions(type);
+    if (allowedVersions && !allowedVersions.includes(version)) {
+      issues.push({
+        code: `${codePrefix}.version`,
+        message: `${label} descriptor at sector ${sector} must use version ${allowedVersions.join(" or ")}`,
+      });
+    }
+    if (type === 255) {
+      return issues;
+    }
+    sector += 1;
+  }
+  return issues;
+}
+
+function rawDescriptorAllowedVersions(type: number): number[] | undefined {
+  switch (type) {
+    case 0:
+    case 1:
+    case 3:
+    case 255:
+      return [1];
+    case 2:
+      return [1, 2];
+    default:
+      return undefined;
+  }
+}
+
+function rawDescriptorCodePrefix(type: number, version: number): string {
+  switch (type) {
+    case 0:
+      return "boot";
+    case 1:
+      return "pvd";
+    case 2:
+      return version === 1 ? "supplementary" : version === 2 ? "enhanced" : "secondary";
+    case 3:
+      return "partition";
+    case 255:
+      return "terminator";
+    default:
+      return "descriptor";
+  }
+}
+
+function rawDescriptorLabel(type: number, version: number): string {
+  switch (type) {
+    case 0:
+      return "boot record";
+    case 1:
+      return "primary volume";
+    case 2:
+      return version === 1 ? "supplementary volume" : version === 2 ? "enhanced volume" : "supplementary or enhanced volume";
+    case 3:
+      return "volume partition";
+    case 255:
+      return "volume descriptor set terminator";
+    default:
+      return `volume descriptor type ${type}`;
+  }
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {

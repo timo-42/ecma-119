@@ -19,16 +19,69 @@ describe("validateIsoImage hardening", () => {
     ]);
   });
 
-  test("reports a bad descriptor version as a validation issue", () => {
+  test("reports malformed descriptor standard identifiers with targeted issues", () => {
+    const image = baselineImage();
+    image[PVD_OFFSET + 1] = "X".charCodeAt(0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.identifier",
+          message: "primary volume descriptor at sector 16 must use CD001 standard identifier",
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/expected CD001 descriptor identifier/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports a bad descriptor version as a targeted validation issue", () => {
     const image = baselineImage();
     image[PVD_OFFSET + 6] = 2;
 
-    expect(validateIsoImage(image)).toEqual([
-      expect.objectContaining({
-        code: "descriptor.sequence",
-        message: expect.stringMatching(/^expected primary volume descriptor version 1$/i),
-      }),
-    ]);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.version",
+          message: "primary volume descriptor at sector 16 must use version 1",
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/^expected primary volume descriptor version 1$/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    { sector: 17, code: "boot.version", message: "boot record descriptor at sector 17 must use version 1" },
+    { sector: 18, code: "secondary.version", message: "supplementary or enhanced volume descriptor at sector 18 must use version 1 or 2" },
+    { sector: 20, code: "partition.version", message: "volume partition descriptor at sector 20 must use version 1" },
+    { sector: 21, code: "terminator.version", message: "volume descriptor set terminator descriptor at sector 21 must use version 1" },
+  ])("reports invalid descriptor version bytes for $code", ({ sector, code, message }) => {
+    const image = createIsoImage([{ path: "README.TXT", data: "descriptor versions\n" }], {
+      bootRecord: { bootSystemIdentifier: "BOOT" },
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      volumePartition: {
+        volumePartitionIdentifier: "PARTITION",
+        data: "partition\n",
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image[sector * SECTOR_SIZE + 6] = 3;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code, message }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/expected .* version/i),
+        }),
+      ]),
+    );
   });
 
   test("reports unknown volume descriptors as outside the supported profile", () => {
