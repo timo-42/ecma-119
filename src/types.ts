@@ -87,6 +87,7 @@ export type CreateIsoOptions = {
   volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
   optionalPathTables?: OptionalPathTableCopies;
   bootRecord?: BootRecordOptions;
+  bootRecords?: BootRecordOptions[];
   supplementaryVolumeDescriptors?: SupplementaryVolumeDescriptorOptions[];
   enhancedVolumeDescriptors?: EnhancedVolumeDescriptorOptions[];
   volumePartition?: VolumePartitionOptions;

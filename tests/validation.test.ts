@@ -73,7 +73,7 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports duplicate boot record descriptors", () => {
+  test("accepts multiple boot record descriptors", () => {
     const image = createIsoImage([{ path: "README.TXT", data: "duplicate boot descriptor\n" }], {
       bootRecord: {
         bootSystemIdentifier: "BOOT",
@@ -89,14 +89,7 @@ describe("validateIsoImage hardening", () => {
     image.set(image.subarray(bootDescriptorOffset, bootDescriptorOffset + SECTOR_SIZE), partitionDescriptorOffset);
 
     expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "boot", "terminator"]);
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "descriptor.boot_duplicate",
-          message: "volume descriptor sequence contains 2 boot record descriptors; the supported profile allows at most one",
-        }),
-      ]),
-    );
+    expect(validateIsoImage(image)).toEqual([]);
   });
 
   test("accepts the deepest valid primary directory hierarchy with write-read validation", () => {
