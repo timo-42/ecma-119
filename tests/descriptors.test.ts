@@ -53,6 +53,64 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("descriptor shifted\n");
   });
 
+  test("writes enhanced volume descriptors with separate path tables and directory hierarchy", () => {
+    const image = createIsoImage([{
+      path: "DIR/README.TXT",
+      data: "enhanced descriptor\n",
+    }], {
+      volumeIdentifier: "PRIMARY",
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+        systemIdentifier: "ENH_SYS",
+        volumeFlags: 1,
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        applicationIdentifier: "ENH_APP",
+      }],
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const primary = descriptors[0];
+    const enhanced = descriptors[1];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "enhanced", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18]);
+    expect(enhanced).toMatchObject({
+      type: 2,
+      kind: "enhanced",
+      version: 2,
+      volumeFlags: 1,
+      systemIdentifier: "ENH_SYS",
+      volumeIdentifier: "ENHANCED",
+    });
+    expect(enhanced?.kind === "enhanced" ? enhanced.escapeSequences.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
+    expect(primary?.kind === "primary" && enhanced?.kind === "enhanced"
+      ? enhanced.typeLPathTableLocation
+      : 0).not.toBe(primary?.kind === "primary" ? primary.typeLPathTableLocation : 0);
+    expect(primary?.kind === "primary" && enhanced?.kind === "enhanced"
+      ? enhanced.rootDirectoryRecord.extent
+      : 0).not.toBe(primary?.kind === "primary" ? primary.rootDirectoryRecord.extent : 0);
+    expect(parsed.files.map((file) => file.path)).toEqual(["DIR/README.TXT"]);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("enhanced descriptor\n");
+  });
+
+  test("writes supplementary and enhanced descriptors in descriptor order", () => {
+    const image = createIsoImage([{
+      path: "README.TXT",
+      data: "both descriptors\n",
+    }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENHANCED" }],
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "enhanced", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18, 19]);
+  });
+
   test("validates supplementary descriptor option bounds", () => {
     expect(() => createIsoImage([], {
       supplementaryVolumeDescriptors: [{
@@ -62,6 +120,18 @@ describe("volume descriptor sequence parsing", () => {
 
     expect(() => createIsoImage([], {
       supplementaryVolumeDescriptors: [{
+        escapeSequences: new Uint8Array(33),
+      }],
+    })).toThrow(/escape sequences/i);
+
+    expect(() => createIsoImage([], {
+      enhancedVolumeDescriptors: [{
+        volumeFlags: 2,
+      }],
+    })).toThrow(/flags bits/i);
+
+    expect(() => createIsoImage([], {
+      enhancedVolumeDescriptors: [{
         escapeSequences: new Uint8Array(33),
       }],
     })).toThrow(/escape sequences/i);

@@ -49,6 +49,7 @@ Implemented support is intentionally explicit:
 - primary volume descriptor and descriptor set terminator
 - optional boot record volume descriptor
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
+- optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries

@@ -13,7 +13,7 @@ import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.j
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
+import { type BootRecordOptions, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -52,7 +52,8 @@ type PreparedVolumePartition = {
 };
 
 type PreparedSecondaryDescriptor = {
-  options: SupplementaryVolumeDescriptorOptions;
+  kind: "supplementary" | "enhanced";
+  options: SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions;
   pathRecords: PathTableRecord[];
   pathTableBytesL: Uint8Array;
   pathTableBytesM: Uint8Array;
@@ -491,7 +492,7 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   const bytes = new Uint8Array(SECTOR_SIZE);
   bytes[0] = 2;
   writeAsciiPadded(bytes, 1, 5, STANDARD_IDENTIFIER, 0x00);
-  bytes[6] = 1;
+  bytes[6] = input.layout.kind === "enhanced" ? 2 : 1;
   bytes[7] = checkedVolumeFlags(input.options.volumeFlags ?? 0);
   writeAField(bytes, 8, 32, input.options.systemIdentifier ?? input.baseOptions.systemIdentifier ?? "");
   writeDField(bytes, 40, 32, input.options.volumeIdentifier ?? input.baseOptions.volumeIdentifier ?? "ECMA_119");
@@ -576,7 +577,15 @@ function normalizeVolumePartitions(options: CreateIsoOptions): VolumePartitionOp
 }
 
 function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: DirectoryNode[]): PreparedSecondaryDescriptor[] {
-  return (options.supplementaryVolumeDescriptors ?? []).map((descriptor) => {
+  const descriptors: Array<{
+    kind: PreparedSecondaryDescriptor["kind"];
+    options: SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions;
+  }> = [
+    ...(options.supplementaryVolumeDescriptors ?? []).map((descriptor) => ({ kind: "supplementary" as const, options: descriptor })),
+    ...(options.enhancedVolumeDescriptors ?? []).map((descriptor) => ({ kind: "enhanced" as const, options: descriptor })),
+  ];
+
+  return descriptors.map((descriptor) => {
     const pathRecords: PathTableRecord[] = directories.map((directory) => ({
       identifier: directory.parent ? asciiBytes(directory.isoIdentifier) : Uint8Array.of(0),
       extent: 0,
@@ -586,7 +595,8 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
     const pathTableBytesL = encodePathTable(pathRecords, "little");
     const pathTableBytesM = encodePathTable(pathRecords, "big");
     return {
-      options: descriptor,
+      kind: descriptor.kind,
+      options: descriptor.options,
       pathRecords,
       pathTableBytesL,
       pathTableBytesM,
@@ -648,7 +658,7 @@ function checkedByte(value: number, name: string): number {
 function checkedVolumeFlags(value: number): number {
   const flags = checkedByte(value, "volume flags");
   if ((flags & 0xfe) !== 0) {
-    throw new Error("supplementary volume descriptor flags bits 1 through 7 must be zero");
+    throw new Error("secondary volume descriptor flags bits 1 through 7 must be zero");
   }
   return flags;
 }
