@@ -64,6 +64,24 @@ describe("handcrafted ISO reader fixture", () => {
     expect(parsed.files[0]?.data).toEqual(filePayload);
   });
 
+  test("reads Level 2 primary file identifiers from an image not produced by createIsoImage", () => {
+    const filePayload = new TextEncoder().encode("handmade level two\n");
+    const image = handcraftedIso({
+      fileIdentifier: "LONGFILENAME1234567890.TXT;1",
+      filePayload,
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "LONGFILENAME1234567890.TXT",
+      identifier: "LONGFILENAME1234567890.TXT;1",
+      size: filePayload.byteLength,
+    });
+    expect(parsed.files[0]?.data).toEqual(filePayload);
+  });
+
   test("reads a non-interleaved multi-extent file from an image not produced by createIsoImage", () => {
     const image = handcraftedMultiExtentIso();
     const parsed = parseIsoImage(image, { includeData: true });

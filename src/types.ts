@@ -62,6 +62,7 @@ export type ExtendedAttributeRecord = {
 
 export type CreateIsoOptions = {
   directories?: IsoInputDirectory[];
+  identifierLevel?: 1 | 2;
   volumeIdentifier?: string;
   systemIdentifier?: string;
   volumeSetIdentifier?: string;
