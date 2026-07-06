@@ -74,7 +74,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       }));
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
-          issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor));
+          issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor, descriptors));
         }
       }
       issues.push(...validateVolumePartitionDescriptors(image, descriptors, pvd));
@@ -239,16 +239,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
   }
-  if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
-    issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
-  }
-  const minimumVolumeSpaceSize = minimumReferencedVolumeSpaceSize(image, descriptors);
-  if (Number.isFinite(minimumVolumeSpaceSize) && pvd.volumeSpaceSize < minimumVolumeSpaceSize) {
-    issues.push({
-      code: "pvd.volume_space_size.lower_bound",
-      message: `volume space size ${pvd.volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`,
-    });
-  }
+  issues.push(...validateVolumeSpaceSize(image, pvd, descriptors, "pvd"));
   if (pvd.fileStructureVersion !== 1) {
     issues.push({ code: "pvd.file_structure_version", message: "primary volume descriptor file structure version must be 1" });
   }
@@ -266,6 +257,30 @@ function validateBootVolumeDescriptor(descriptor: BootVolumeDescriptor): Validat
     { start: 7, length: 32, kind: "a", code: "system_identifier.characters", label: "boot system identifier" },
     { start: 39, length: 32, kind: "a", code: "identifier.characters", label: "boot identifier" },
   ]);
+}
+
+function validateVolumeSpaceSize(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  descriptors: VolumeDescriptor[],
+  codePrefix: string,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (descriptor.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
+    const message = codePrefix === "pvd" ? "volume space size exceeds image length" : `${codePrefix} volume space size exceeds image length`;
+    issues.push({ code: `${codePrefix}.volume_space_size`, message });
+  }
+  const minimumVolumeSpaceSize = minimumReferencedVolumeSpaceSize(image, descriptors);
+  if (Number.isFinite(minimumVolumeSpaceSize) && descriptor.volumeSpaceSize < minimumVolumeSpaceSize) {
+    const message = codePrefix === "pvd"
+      ? `volume space size ${descriptor.volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`
+      : `${codePrefix} volume space size ${descriptor.volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`;
+    issues.push({
+      code: `${codePrefix}.volume_space_size.lower_bound`,
+      message,
+    });
+  }
+  return issues;
 }
 
 function minimumReferencedVolumeSpaceSize(image: Uint8Array, descriptors: VolumeDescriptor[]): number {
@@ -978,7 +993,11 @@ function validateDotDirectoryRecord(
   return issues;
 }
 
-function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): ValidationIssue[] {
+function validateSupplementaryLikeVolumeDescriptor(
+  image: Uint8Array,
+  descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  descriptors: VolumeDescriptor[],
+): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const label = descriptor.kind === "supplementary" ? "supplementary" : "enhanced";
   issues.push(...validateZeroDescriptorRanges(descriptor, label, [
@@ -992,6 +1011,7 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
+  issues.push(...validateVolumeSpaceSize(image, descriptor, descriptors, label));
   if (descriptor.fileStructureVersion !== 1) {
     issues.push({ code: `${label}.file_structure_version`, message: `${label} volume descriptor file structure version must be 1` });
   }
