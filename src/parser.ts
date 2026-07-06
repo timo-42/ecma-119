@@ -559,7 +559,23 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     const extendedAttributeRecord = readExtendedAttributeRecord(image, record);
     try {
       const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
-      if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+      if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
+        const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
+        if ((record.flags & 0x10) !== expected) {
+          issues.push({
+            code: "extended_attribute_record.file_flags",
+            message: `directory record flags for ${recordPath} do not match associated extended attribute record fields`,
+            path: recordPath,
+          });
+        }
+        if ((record.flags & 0x08) !== 0) {
+          issues.push({
+            code: "directory.file_flags_record",
+            message: `directory record flags for ${recordPath} must not set the Record bit`,
+            path: recordPath,
+          });
+        }
+      } else {
         const expected = extendedAttributeRecordFileFlags(fields);
         if ((record.flags & 0x18) !== expected) {
           issues.push({
