@@ -77,7 +77,8 @@ Implemented support is intentionally explicit:
 - opaque directory record System Use bytes
 - raw and structured file and directory Extended Attribute Records
 - non-interleaved file sections
+- read-side reconstruction of compatible interleaved regular file sections
 - read-side coalescing of compatible non-interleaved multi-extent file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, writer-generated multi-extent file sections, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
+Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaved directory records, writer-generated interleaving, writer-generated multi-extent file sections, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.

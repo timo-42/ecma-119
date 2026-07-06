@@ -1233,20 +1233,35 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported interleaved directory record fields without duplicate parse issues", () => {
+  test("accepts interleaved regular file record fields", () => {
     const image = baselineImage([{ path: "README.TXT", data: "interleaved metadata\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
     image[fileRecordOffset + 26] = 1;
     image[fileRecordOffset + 27] = 2;
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported interleaved file section fields/i);
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parseIsoImage(image).files[0]).toMatchObject({
+      path: "README.TXT",
+      fileUnitSize: 1,
+      interleaveGapSize: 2,
+    });
+  });
+
+  test("reports invalid interleaved file fields without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "invalid interleaved metadata\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    image[fileRecordOffset + 26] = 0;
+    image[fileRecordOffset + 27] = 2;
+
+    expect(() => parseIsoImage(image)).toThrow(/invalid interleaved file section fields/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "directory.interleaving_unsupported",
+          code: "directory.interleaving_invalid",
           path: "README.TXT",
-          message: expect.stringMatching(/unsupported interleaved/i),
+          message: expect.stringMatching(/invalid interleaved/i),
         }),
       ]),
     );
