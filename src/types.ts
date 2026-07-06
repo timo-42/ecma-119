@@ -5,6 +5,7 @@ export const STANDARD_IDENTIFIER = "CD001";
 export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
+  version?: number;
   multiExtent?: boolean | IsoInputFileMultiExtentOptions;
   interleave?: IsoInputFileInterleaveOptions;
   date?: Date;

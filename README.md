@@ -19,6 +19,7 @@ const image = createIsoImage([
   {
     path: "README.TXT",
     data: "Hello from ECMA-119\n",
+    version: 1,
     hidden: false,
     associated: false,
     extendedAttributeRecord: {
@@ -64,6 +65,8 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 
 `volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number.
 
+File input `version` defaults to 1 and may be set from 1 through 32767 to write a non-default ECMA-119 file version number. The parser preserves the full identifier, such as `README.TXT;2`, while `path` omits the version suffix.
+
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
@@ -82,6 +85,7 @@ Implemented support is intentionally explicit:
 - optional Type L and Type M path table copies when requested by the writer
 - local volume set member metadata and same-volume directory records
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
+- file version number authoring from 1 through 32767
 - directory records with standard `.` and `..` entries
 - hidden flags for generated files and directories, and associated file flags for generated files
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records

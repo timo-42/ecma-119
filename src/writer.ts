@@ -298,7 +298,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   };
 
   for (const file of files) {
-    const normalized = normalizeFilePath(file.path, identifierLevel);
+    const normalized = normalizeFilePath(file.path, identifierLevel, file.version ?? 1);
     const fileTimeZoneOffsetMinutes = file.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     let directory = root;
     for (const part of normalized.parts.slice(0, -1)) {

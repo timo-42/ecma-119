@@ -12,7 +12,7 @@ export type NormalizedDirectoryPath = {
   parts: string[];
 };
 
-export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel = 1): NormalizedPath {
+export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel = 1, version = 1): NormalizedPath {
   const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) {
     throw new Error("file path must not be empty");
@@ -35,7 +35,7 @@ export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel
   }
 
   const fileName = rawParts.at(-1)!;
-  const isoIdentifier = identifierLevel === 1 ? toLevelOneFileIdentifier(fileName) : toLevelTwoFileIdentifier(fileName);
+  const isoIdentifier = identifierLevel === 1 ? toLevelOneFileIdentifier(fileName, version) : toLevelTwoFileIdentifier(fileName, version);
   return { parts: [...directoryParts, isoIdentifier], fileName, isoIdentifier };
 }
 
@@ -60,7 +60,8 @@ export function normalizeDirectoryPath(path: string, identifierLevel: Identifier
   return { parts };
 }
 
-export function toLevelOneFileIdentifier(name: string): string {
+export function toLevelOneFileIdentifier(name: string, version = 1): string {
+  const versionText = String(checkedFileVersionNumber(version));
   const upper = normalizeDCharacters(name.toUpperCase().replace(/\./gu, "_DOT_"), "file identifier");
   const original = name.toUpperCase();
   const pieces = original.split(".");
@@ -75,10 +76,11 @@ export function toLevelOneFileIdentifier(name: string): string {
   if (extension.length > 3) {
     throw new Error(`file extension exceeds 3 d-characters: ${name}`);
   }
-  return extension ? `${base}.${extension};1` : `${upper};1`;
+  return extension ? `${base}.${extension};${versionText}` : `${upper};${versionText}`;
 }
 
-export function toLevelTwoFileIdentifier(name: string): string {
+export function toLevelTwoFileIdentifier(name: string, version = 1): string {
+  const versionText = String(checkedFileVersionNumber(version));
   const original = name.toUpperCase();
   const pieces = original.split(".");
   if (pieces.length > 2 || pieces[0]!.length === 0 || (pieces.length === 2 && pieces[1]!.length === 0)) {
@@ -89,7 +91,7 @@ export function toLevelTwoFileIdentifier(name: string): string {
   if (base.length + extension.length > 30) {
     throw new Error(`file name and extension exceed 30 d-characters: ${name}`);
   }
-  return extension ? `${base}.${extension};1` : `${base};1`;
+  return extension ? `${base}.${extension};${versionText}` : `${base};${versionText}`;
 }
 
 export function isLevelOneDirectoryIdentifier(identifier: Uint8Array): boolean {
@@ -158,6 +160,13 @@ function asciiString(bytes: Uint8Array): string | undefined {
       return undefined;
     }
     value += String.fromCharCode(byte);
+  }
+  return value;
+}
+
+function checkedFileVersionNumber(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 32767) {
+    throw new RangeError("file version number must be an integer from 1 to 32767");
   }
   return value;
 }

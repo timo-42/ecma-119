@@ -7,6 +7,7 @@ import {
   isLevelTwoFileIdentifier,
   isSupportedPrimaryDirectoryIdentifier,
   isSupportedPrimaryFileIdentifier,
+  toLevelOneFileIdentifier,
   toLevelTwoFileIdentifier,
 } from "../src/index";
 
@@ -29,6 +30,13 @@ describe("Level 1 identifier predicates", () => {
     expect(isLevelOneFileIdentifier(bytes("TOO_LONG1.TXT;1"))).toBe(false);
     expect(isLevelOneFileIdentifier(bytes("README.TOOL;1"))).toBe(false);
     expect(isLevelOneFileIdentifier(bytes("README.TXT"))).toBe(false);
+  });
+
+  test("normalizes file identifiers with explicit versions", () => {
+    expect(toLevelOneFileIdentifier("readme.txt", 12)).toBe("README.TXT;12");
+    expect(toLevelOneFileIdentifier("readme", 32767)).toBe("README;32767");
+    expect(() => toLevelOneFileIdentifier("README.TXT", 0)).toThrow(/file version number/i);
+    expect(() => toLevelOneFileIdentifier("README.TXT", 32768)).toThrow(/file version number/i);
   });
 });
 
@@ -54,6 +62,7 @@ describe("Level 2 identifier predicates", () => {
 
   test("normalizes file identifiers", () => {
     expect(toLevelTwoFileIdentifier("longfilename1234567890.txt")).toBe("LONGFILENAME1234567890.TXT;1");
+    expect(toLevelTwoFileIdentifier("longfilename1234567890.txt", 42)).toBe("LONGFILENAME1234567890.TXT;42");
     expect(() => toLevelTwoFileIdentifier(`${"A".repeat(28)}.TXT`)).toThrow(/30 d-characters/i);
   });
 });
