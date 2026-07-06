@@ -84,6 +84,28 @@ describe("handcrafted ISO reader fixture", () => {
     expect(parsed.files[0]?.data).toEqual(expectedData);
   });
 
+  test("reads an interleaved file from an image not produced by createIsoImage", () => {
+    const image = handcraftedInterleavedIso();
+    const parsed = parseIsoImage(image, { includeData: true });
+    const firstUnit = new Uint8Array(SECTOR_SIZE);
+    firstUnit.fill(0x31);
+    const secondUnit = new TextEncoder().encode("second unit\n");
+    const expectedData = new Uint8Array(firstUnit.byteLength + secondUnit.byteLength);
+    expectedData.set(firstUnit);
+    expectedData.set(secondUnit, firstUnit.byteLength);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "INTER.BIN",
+      identifier: "INTER.BIN;1",
+      size: expectedData.byteLength,
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parsed.files[0]?.data).toEqual(expectedData);
+  });
+
   test("reads a nested directory hierarchy and path tables from an image not produced by createIsoImage", () => {
     const image = handcraftedNestedIso();
     const parsed = parseIsoImage(image);
@@ -346,6 +368,59 @@ function handcraftedMultiExtentIso(): Uint8Array {
   return image;
 }
 
+function handcraftedInterleavedIso(): Uint8Array {
+  const image = new Uint8Array(25 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const pathTableL = sector(image, 18);
+  const pathTableM = sector(image, 19);
+  const rootDirectory = sector(image, 20);
+  const firstFileUnit = sector(image, 21);
+  const gap = sector(image, 22);
+  const secondFileUnit = sector(image, 23);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const firstPayload = new Uint8Array(SECTOR_SIZE);
+  const secondPayload = new TextEncoder().encode("second unit\n");
+
+  firstPayload.fill(0x31);
+  firstFileUnit.set(firstPayload);
+  gap.fill(0xa5);
+  secondFileUnit.set(secondPayload);
+  writePathTableRoot(pathTableL, "little", 20);
+  writePathTableRoot(pathTableM, "big", 20);
+
+  const self = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const file = directoryRecord({
+    extent: 21,
+    size: firstPayload.byteLength + secondPayload.byteLength,
+    flags: 0,
+    identifier: asciiBytes("INTER.BIN;1"),
+    date,
+    fileUnitSize: 1,
+    interleaveGapSize: 1,
+  });
+  rootDirectory.set(self, 0);
+  rootDirectory.set(parent, self.byteLength);
+  rootDirectory.set(file, self.byteLength + parent.byteLength);
+
+  writePrimaryDescriptor(pvd, {
+    volumeIdentifier: "INTERLEAVED",
+    rootDirectoryRecord: self,
+    pathTableSize: 10,
+    typeLPathTableLocation: 18,
+    typeMPathTableLocation: 19,
+    volumeSpaceSize: 25,
+    date,
+  });
+
+  const terminator = sector(image, 17);
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
 function handcraftedNestedIso(): Uint8Array {
   const image = new Uint8Array(24 * SECTOR_SIZE);
   const pvd = sector(image, 16);
@@ -564,7 +639,15 @@ function sector(image: Uint8Array, sectorNumber: number): Uint8Array {
   return image.subarray(sectorNumber * SECTOR_SIZE, (sectorNumber + 1) * SECTOR_SIZE);
 }
 
-function directoryRecord(input: { extent: number; size: number; flags: number; identifier: Uint8Array; date: Date }): Uint8Array {
+function directoryRecord(input: {
+  extent: number;
+  size: number;
+  flags: number;
+  identifier: Uint8Array;
+  date: Date;
+  fileUnitSize?: number;
+  interleaveGapSize?: number;
+}): Uint8Array {
   const baseLength = 33 + input.identifier.byteLength;
   const length = baseLength + (baseLength % 2 === 0 ? 0 : 1);
   const bytes = new Uint8Array(length);
@@ -573,6 +656,8 @@ function directoryRecord(input: { extent: number; size: number; flags: number; i
   writeBoth32(bytes, 10, input.size);
   bytes.set(directoryDate(input.date), 18);
   bytes[25] = input.flags;
+  bytes[26] = input.fileUnitSize ?? 0;
+  bytes[27] = input.interleaveGapSize ?? 0;
   writeBoth16(bytes, 28, 1);
   bytes[32] = input.identifier.byteLength;
   bytes.set(input.identifier, 33);

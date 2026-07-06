@@ -457,7 +457,7 @@ function directoryExtentEndSector(directory: IsoDirectoryEntry): number {
 }
 
 function fileExtentEndSector(record: DecodedDirectoryRecord): number {
-  return extentEndSector(record.extent, record.extendedAttributeRecordLength, Math.max(1, sectorsForBytes(record.dataLength)));
+  return extentEndSector(record.extent, record.extendedAttributeRecordLength, fileSectionStorageSectors(record));
 }
 
 function extentEndSector(extent: number, extendedAttributeRecordLength: number, dataSectors: number): number {
@@ -1062,10 +1062,16 @@ function validateDirectoryHierarchy(
     if (index >= 2 && validatePrimaryLevelOne) {
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
     }
-    if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
+    if ((record.flags & FILE_FLAG_DIRECTORY) !== 0 && (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0)) {
       issues.push({
         code: "directory.interleaving_unsupported",
         message: `directory record at ${recordPath || "."} uses unsupported interleaved file section fields`,
+        path: recordPath || ".",
+      });
+    } else if ((record.flags & FILE_FLAG_DIRECTORY) === 0 && record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
+      issues.push({
+        code: "directory.interleaving_invalid",
+        message: `directory record at ${recordPath || "."} has invalid interleaved file section fields`,
         path: recordPath || ".",
       });
     }
@@ -1502,8 +1508,8 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       recordIndex += chain.records.length - 1;
       const firstRecord = chain.records[0]!;
       for (const section of chain.records) {
-        assertSupportedDirectoryRecord(section, filePath || ".", { allowMultiExtent: true });
-        assertExtentInBounds(image, section.extent, section.extendedAttributeRecordLength, section.dataLength, filePath);
+        assertSupportedDirectoryRecord(section, filePath || ".", { allowInterleaving: true, allowMultiExtent: true });
+        assertFileSectionInBounds(image, section, filePath);
       }
       const file: IsoFileEntry = fileEntryFromSectionChain(chain.records, filePath, identifier);
       if (firstRecord.extendedAttributeRecordLength > 0) {
@@ -1622,11 +1628,31 @@ function readFileSectionData(image: Uint8Array, records: DecodedDirectoryRecord[
   const data = new Uint8Array(totalSize);
   let offset = 0;
   for (const record of records) {
-    const dataStart = (record.extent + record.extendedAttributeRecordLength) * SECTOR_SIZE;
-    data.set(image.subarray(dataStart, dataStart + record.dataLength), offset);
-    offset += record.dataLength;
+    offset = readFileSectionPayload(image, record, data, offset);
   }
   return data;
+}
+
+function readFileSectionPayload(image: Uint8Array, record: DecodedDirectoryRecord, target: Uint8Array, targetOffset: number): number {
+  const dataStart = (record.extent + record.extendedAttributeRecordLength) * SECTOR_SIZE;
+  if (record.fileUnitSize === 0) {
+    target.set(image.subarray(dataStart, dataStart + record.dataLength), targetOffset);
+    return targetOffset + record.dataLength;
+  }
+
+  const unitBytes = record.fileUnitSize * SECTOR_SIZE;
+  const strideBytes = (record.fileUnitSize + record.interleaveGapSize) * SECTOR_SIZE;
+  let remaining = record.dataLength;
+  let sourceOffset = dataStart;
+  let writeOffset = targetOffset;
+  while (remaining > 0) {
+    const chunk = Math.min(unitBytes, remaining);
+    target.set(image.subarray(sourceOffset, sourceOffset + chunk), writeOffset);
+    sourceOffset += strideBytes;
+    writeOffset += chunk;
+    remaining -= chunk;
+  }
+  return writeOffset;
 }
 
 function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
@@ -1744,10 +1770,42 @@ function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttribu
   }
 }
 
-function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: string, options: { allowMultiExtent?: boolean } = {}): void {
+function assertFileSectionInBounds(image: Uint8Array, record: DecodedDirectoryRecord, path: string): void {
+  assertExtentInBounds(image, record.extent, record.extendedAttributeRecordLength, fileSectionStorageByteLength(record), path);
+}
+
+function fileSectionStorageByteLength(record: Pick<DecodedDirectoryRecord, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (record.fileUnitSize === 0) {
+    return record.dataLength;
+  }
+  const unitBytes = record.fileUnitSize * SECTOR_SIZE;
+  const units = Math.ceil(record.dataLength / unitBytes);
+  if (units === 0) {
+    return 0;
+  }
+  const fullStrides = (units - 1) * (record.fileUnitSize + record.interleaveGapSize) * SECTOR_SIZE;
+  const finalUnitBytes = record.dataLength - (units - 1) * unitBytes;
+  return fullStrides + finalUnitBytes;
+}
+
+function fileSectionStorageSectors(record: Pick<DecodedDirectoryRecord, "dataLength" | "fileUnitSize" | "interleaveGapSize">): number {
+  if (record.fileUnitSize === 0) {
+    return Math.max(1, sectorsForBytes(record.dataLength));
+  }
+  return sectorsForBytes(fileSectionStorageByteLength(record));
+}
+
+function assertSupportedDirectoryRecord(
+  record: DecodedDirectoryRecord,
+  path: string,
+  options: { allowInterleaving?: boolean; allowMultiExtent?: boolean } = {},
+): void {
   assertSupportedDirectoryFileFlags(record.flags, path);
-  if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
+  if (!options.allowInterleaving && (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0)) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
+  }
+  if (options.allowInterleaving && record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
+    throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
   }
   if (!options.allowMultiExtent && (record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
