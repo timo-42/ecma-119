@@ -37,6 +37,7 @@ const image = createIsoImage([
     volumePartitionIdentifier: "PARTITION",
     data: new Uint8Array([1, 2, 3, 4])
   },
+  optionalPathTables: true,
   timeZoneOffsetMinutes: 0
 });
 
@@ -69,6 +70,7 @@ Implemented support is intentionally explicit:
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
+- optional Type L and Type M path table copies when requested by the writer
 - directory records with standard `.` and `..` entries
 - hidden flags for generated files and directories, and associated file flags for generated files
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records
