@@ -1983,6 +1983,83 @@ describe("validateIsoImage hardening", () => {
   test.each([
     {
       kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP", escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40) }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH", escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45) }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports $kind escape sequence bytes after zero padding", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "escape sequence padding\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    image[secondaryDescriptorOffset + 91] = 0;
+    image[secondaryDescriptorOffset + 92] = 0x41;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.escape_sequences.padding`,
+          message: expect.stringMatching(/zero after the last escape sequence byte/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports $kind escape sequence fields that start after BP 89", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "escape sequence start\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    image[secondaryDescriptorOffset + 88] = 0;
+    image[secondaryDescriptorOffset + 89] = 0x25;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.escape_sequences.start`,
+          message: expect.stringMatching(/must start at BP 89/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    { kind: "supplementary", options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] } },
+    { kind: "enhanced", options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] } },
+  ])("accepts all-zero $kind escape sequence fields", ({ options }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "zero escape sequence field\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+
+    expect(image.subarray(secondaryDescriptorOffset + 88, secondaryDescriptorOffset + 120).every((byte) => byte === 0)).toBe(true);
+    expect(validateIsoImage(image)).toEqual([]);
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
     },

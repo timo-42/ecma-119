@@ -1185,6 +1185,7 @@ function validateSupplementaryLikeVolumeDescriptor(
     { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
     { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
   ]));
+  issues.push(...validateSecondaryEscapeSequences(descriptor, label));
   issues.push(...validateVolumeSpaceSize(image, descriptor, descriptors, label));
   const expectedFileStructureVersion = descriptor.kind === "enhanced" ? 2 : 1;
   if (descriptor.fileStructureVersion !== expectedFileStructureVersion) {
@@ -1284,6 +1285,30 @@ function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boo
     return isDString(value);
   }
   return value === "" || isLevelOneFileIdentifier(new TextEncoder().encode(value));
+}
+
+function validateSecondaryEscapeSequences(
+  descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  codePrefix: "supplementary" | "enhanced",
+): ValidationIssue[] {
+  const bytes = descriptor.raw.subarray(88, 120);
+  if (allZero(bytes)) {
+    return [];
+  }
+  if (bytes[0] === 0) {
+    return [{
+      code: `${codePrefix}.escape_sequences.start`,
+      message: `${descriptor.kind} volume descriptor escape sequences must start at BP 89 when present`,
+    }];
+  }
+  const firstZero = bytes.indexOf(0);
+  if (firstZero !== -1 && !allZero(bytes.subarray(firstZero))) {
+    return [{
+      code: `${codePrefix}.escape_sequences.padding`,
+      message: `${descriptor.kind} volume descriptor escape sequences field must be zero after the last escape sequence byte`,
+    }];
+  }
+  return [];
 }
 
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
