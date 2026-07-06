@@ -55,6 +55,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd));
       issues.push(...validateDirectoryRecordLayout(image, pvd.rootDirectoryRecord, "."));
+      issues.push(...validateVolumePartitionDescriptors(image, descriptors, pvd));
     }
   } catch (error) {
     descriptorSequenceFailed = true;
@@ -253,6 +254,33 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       issues.push({ code: "directory.file_flags_reserved", message: `directory record has reserved file flag bits set at ${path}`, path });
     }
     offset += length;
+  }
+  return issues;
+}
+
+function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: VolumeDescriptor[], pvd: PrimaryVolumeDescriptor): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const volumeSpaceSectors = Math.min(Math.floor(image.byteLength / SECTOR_SIZE), pvd.volumeSpaceSize);
+  for (const descriptor of descriptors) {
+    if (descriptor.kind !== "partition") {
+      continue;
+    }
+    const location = descriptor.volumePartitionLocation;
+    const size = descriptor.volumePartitionSize;
+    const end = location + size;
+    if (
+      !Number.isInteger(location)
+      || !Number.isInteger(size)
+      || size < 1
+      || end > 0xffffffff
+      || end > volumeSpaceSectors
+      || location > volumeSpaceSectors
+    ) {
+      issues.push({
+        code: "partition.bounds",
+        message: `volume partition extent ${location}+${size} is out of bounds`,
+      });
+    }
   }
   return issues;
 }

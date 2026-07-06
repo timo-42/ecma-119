@@ -6,6 +6,8 @@ import {
   parseVolumeDescriptors,
   readUint32Both,
   SECTOR_SIZE,
+  validateIsoImage,
+  writeUint32Both,
   type CreateIsoOptions,
   type IsoInputFile,
   type VolumePartitionDescriptor,
@@ -168,6 +170,30 @@ describe("volume partition descriptor writing", () => {
       data: "x",
       systemUse: new Uint8Array(1961),
     })).toThrow(/system use/i);
+  });
+
+  test("validateIsoImage reports partition extents outside the image", () => {
+    const image = createWithVolumePartition([{ path: "README.TXT", data: "x" }], {
+      volumePartitionIdentifier: "PARTITION",
+      data: "partition\n",
+    });
+    const partition = parseVolumeDescriptors(image).find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+    expect(partition).toBeDefined();
+
+    writeUint32Both(partition!.raw, 72, 0xfffffff0);
+    writeUint32Both(partition!.raw, 80, 0x20);
+    image.set(partition!.raw, partition!.offset);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "partition.bounds",
+          message: expect.stringMatching(/out of bounds/i),
+        }),
+      ]),
+    );
   });
 });
 
