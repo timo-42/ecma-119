@@ -81,6 +81,9 @@ describe("volume partition descriptor writing", () => {
     expect(partitionBytes.subarray(partitionData.byteLength).every((byte) => byte === 0)).toBe(true);
 
     const parsed = parseIsoImage(image, { includeData: true });
+    const parsedPartition = parsed.descriptors.find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
     expect(parsed.files).toHaveLength(1);
     expect(parsed.files[0]).toMatchObject({
       path: "README.TXT",
@@ -88,6 +91,23 @@ describe("volume partition descriptor writing", () => {
       size: fileContents.byteLength,
     });
     expect(parsed.files[0]?.data).toEqual(fileContents);
+    expect(parsedPartition?.data?.byteLength).toBe(SECTOR_SIZE);
+    expect(parsedPartition?.data?.subarray(0, partitionData.byteLength)).toEqual(partitionData);
+    expect(parsedPartition?.data?.subarray(partitionData.byteLength).every((byte) => byte === 0)).toBe(true);
+  });
+
+  test("omits parsed partition payloads when includeData is false", () => {
+    const image = createWithVolumePartition([{ path: "README.TXT", data: "regular\n" }], {
+      volumePartitionIdentifier: "PARTITION",
+      data: "partition payload\n",
+    });
+    const parsed = parseIsoImage(image, { includeData: false });
+    const partition = parsed.descriptors.find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+
+    expect(partition).toBeDefined();
+    expect(partition?.data).toBeUndefined();
   });
 
   test("rejects invalid partition descriptor identifiers", () => {

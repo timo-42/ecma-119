@@ -1254,6 +1254,18 @@ function parsePartitionDescriptor(image: Uint8Array, offset: number, sector: num
 }
 
 function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDescriptor, includeData: boolean): VolumeDescriptor {
+  if (descriptor.kind === "partition") {
+    if (!includeData) {
+      return descriptor;
+    }
+    const start = descriptor.volumePartitionLocation * SECTOR_SIZE;
+    const end = start + descriptor.volumePartitionSize * SECTOR_SIZE;
+    assertExtentInBounds(image, descriptor.volumePartitionLocation, 0, descriptor.volumePartitionSize * SECTOR_SIZE, `partition:${descriptor.volumePartitionIdentifier}`);
+    return {
+      ...descriptor,
+      data: image.slice(start, end),
+    };
+  }
   if (descriptor.kind !== "primary" && descriptor.kind !== "supplementary" && descriptor.kind !== "enhanced") {
     return descriptor;
   }
