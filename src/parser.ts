@@ -246,6 +246,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateSingleVolumeDescriptor(pvd, "pvd", "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryReservedFileFlags(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryEntryDirectoryFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validatePathTableReferences(image, pvd, "path_table"));
@@ -885,6 +886,9 @@ function validateDirectoryHierarchy(
     if (index < 2) {
       issues.push(...validateDotDirectoryRecord(record, index, directory, parent, path));
     }
+    if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
+      issues.push(...validateDirectoryRecordDirectoryFlags(record.flags, recordPath || path));
+    }
     if (index >= 2) {
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
       if (previousOrdinaryRecord && compareDirectoryRecordOrder(previousOrdinaryRecord, record) > 0) {
@@ -1035,6 +1039,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryReservedFileFlags(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryEntryDirectoryFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
@@ -1470,6 +1475,21 @@ function validateDirectoryEntryReservedFileFlags(entry: Pick<IsoDirectoryEntry, 
   return [{
     code: "directory.file_flags_reserved",
     message: `directory record has reserved file flag bits set at ${path}`,
+    path,
+  }];
+}
+
+function validateDirectoryEntryDirectoryFlags(entry: Pick<IsoDirectoryEntry, "flags">, path: string): ValidationIssue[] {
+  return validateDirectoryRecordDirectoryFlags(entry.flags, path);
+}
+
+function validateDirectoryRecordDirectoryFlags(flags: number, path: string): ValidationIssue[] {
+  if ((flags & 0x0c) === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.file_flags_directory",
+    message: `directory record at ${path} identifies a directory and must not set Associated File or Record bits`,
     path,
   }];
 }
