@@ -106,6 +106,9 @@ export type IsoFileEntry = {
   size: number;
   date: Date;
   flags: number;
+  fileUnitSize: number;
+  interleaveGapSize: number;
+  volumeSequenceNumber: number;
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordFields?: ExtendedAttributeRecord;
   data?: Uint8Array;
@@ -120,6 +123,9 @@ export type IsoDirectoryEntry = {
   size: number;
   date: Date;
   flags: number;
+  fileUnitSize: number;
+  interleaveGapSize: number;
+  volumeSequenceNumber: number;
   children: IsoNode[];
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordFields?: ExtendedAttributeRecord;

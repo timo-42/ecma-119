@@ -30,6 +30,8 @@ export interface IsoRecord {
   extent: number;
   dataLength: number;
   flags: number;
+  fileUnitSize: number;
+  interleaveGapSize: number;
   fileIdentifier: Uint8Array;
 }
 
@@ -179,6 +181,8 @@ export function readDirectoryRecord(bytes: Uint8Array, offset: number): IsoRecor
     extent: readBothEndianUint32(bytes, offset + 2),
     dataLength: readBothEndianUint32(bytes, offset + 10),
     flags: bytes[offset + 25],
+    fileUnitSize: bytes[offset + 26],
+    interleaveGapSize: bytes[offset + 27],
     fileIdentifier: bytes.subarray(offset + 33, offset + 33 + identifierLength),
   };
 }

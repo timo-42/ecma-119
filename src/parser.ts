@@ -336,10 +336,19 @@ function validateDirectoryHierarchy(image: Uint8Array, directory: IsoDirectoryEn
       continue;
     }
     offset += record.length;
-    if (recordIndex++ < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+    const index = recordIndex++;
+    const identifier = index < 2 ? "" : decodeFileIdentifier(record.identifier);
+    const recordPath = index < 2 ? path : joinPath(path === "." ? "" : path, stripVersion(identifier));
+    if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
+      issues.push({
+        code: "directory.interleaving_unsupported",
+        message: `directory record at ${recordPath || "."} uses unsupported interleaved file section fields`,
+        path: recordPath || ".",
+      });
+    }
+    if (index < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
       continue;
     }
-    const identifier = decodeFileIdentifier(record.identifier);
     const childPath = joinPath(path === "." ? "" : path, identifier);
     issues.push(...validateDirectoryHierarchy(image, directoryEntryFromRecord(record, childPath, []), childPath, new Set(visited)));
   }
@@ -421,6 +430,9 @@ function emptyDirectoryEntry(): IsoDirectoryEntry {
     size: 0,
     date: new Date(0),
     flags: FILE_FLAG_DIRECTORY,
+    fileUnitSize: 0,
+    interleaveGapSize: 0,
+    volumeSequenceNumber: 1,
     children: [],
   };
 }
@@ -465,11 +477,16 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     }
     offset += record.length;
 
-    if (recordIndex++ < 2) {
+    const index = recordIndex++;
+    if (index < 2) {
+      assertSupportedDirectoryRecord(record, path || ".");
       continue;
     }
 
     const identifier = decodeFileIdentifier(record.identifier);
+    const cleanName = stripVersion(identifier);
+    const recordPath = joinPath(path, cleanName);
+    assertSupportedDirectoryRecord(record, recordPath || ".");
     if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromRecord(record, childPath, []);
@@ -482,8 +499,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
       }
       children.push(readDirectoryTree(image, child, childPath, includeData, new Set(visited)));
     } else {
-      assertExtentInBounds(image, record.extent, record.extendedAttributeRecordLength, record.dataLength, joinPath(path, stripVersion(identifier)));
-      const cleanName = stripVersion(identifier);
+      assertExtentInBounds(image, record.extent, record.extendedAttributeRecordLength, record.dataLength, recordPath);
       const filePath = joinPath(path, cleanName);
       const file: IsoFileEntry = {
         path: filePath,
@@ -493,6 +509,9 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
         size: record.dataLength,
         date: record.date,
         flags: record.flags,
+        fileUnitSize: record.fileUnitSize,
+        interleaveGapSize: record.interleaveGapSize,
+        volumeSequenceNumber: record.volumeSequenceNumber,
       };
       if (record.extendedAttributeRecordLength > 0) {
         file.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
@@ -613,6 +632,12 @@ function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttribu
   }
 }
 
+function assertSupportedDirectoryRecord(record: DecodedDirectoryRecord, path: string): void {
+  if (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0) {
+    throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
+  }
+}
+
 function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {
   const entry: IsoDirectoryEntry = {
     path,
@@ -622,6 +647,9 @@ function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, 
     size: record.dataLength,
     date: record.date,
     flags: record.flags,
+    fileUnitSize: record.fileUnitSize,
+    interleaveGapSize: record.interleaveGapSize,
+    volumeSequenceNumber: record.volumeSequenceNumber,
     children,
   };
   if (record.systemUse.byteLength > 0) {
