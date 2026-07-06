@@ -703,6 +703,44 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports nested directory data lengths that are not logical block multiples", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested alignment\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
+    writeUint32Both(image, dirRecordOffset + 10, SECTOR_SIZE - 1);
+    writeUint32Both(image, dirDirectoryOffset + 10, SECTOR_SIZE - 1);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.data_length_alignment",
+          path: "DIR",
+          message: "directory data length at DIR must be a positive multiple of the logical block size",
+        }),
+      ]),
+    );
+  });
+
+  test("reports descriptor root directory data lengths that are not logical block multiples", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root alignment\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    writeUint32Both(image, PVD_OFFSET + 156 + 10, SECTOR_SIZE - 1);
+    writeUint32Both(image, rootDirectoryOffset + 10, SECTOR_SIZE - 1);
+    writeUint32Both(image, rootDirectoryOffset + image[rootDirectoryOffset]! + 10, SECTOR_SIZE - 1);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.data_length_alignment",
+          path: ".",
+          message: "directory data length at . must be a positive multiple of the logical block size",
+        }),
+      ]),
+    );
+  });
+
   test("reports directory self record extended attribute length mismatches", () => {
     const image = createIsoImage({
       files: [{ path: "DIR/FILE.TXT", data: "dir ear self\n" }],
@@ -1140,6 +1178,57 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "enhanced_path_table.little.parent",
           message: expect.stringMatching(/parent/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      path: "supplementary:.",
+      size: 0,
+    },
+    {
+      kind: "supplementary",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      path: "supplementary:.",
+      size: SECTOR_SIZE - 1,
+    },
+    {
+      kind: "enhanced",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      path: "enhanced:.",
+      size: 0,
+    },
+    {
+      kind: "enhanced",
+      descriptorOffset: 17 * SECTOR_SIZE,
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      path: "enhanced:.",
+      size: SECTOR_SIZE - 1,
+    },
+  ])("reports $kind root directory data lengths of $size", ({ descriptorOffset, options, path, size }) => {
+    const image = createIsoImage([{ path: "README.TXT", data: "secondary root alignment\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootDirectoryOffset = readBothEndianUint32(image, descriptorOffset + 156 + 2) * SECTOR_SIZE;
+    writeUint32Both(image, descriptorOffset + 156 + 10, size);
+    writeUint32Both(image, rootDirectoryOffset + 10, size);
+    writeUint32Both(image, rootDirectoryOffset + image[rootDirectoryOffset]! + 10, size);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.data_length_alignment",
+          path,
+          message: `directory data length at ${path} must be a positive multiple of the logical block size`,
         }),
       ]),
     );
