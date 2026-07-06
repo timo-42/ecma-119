@@ -64,6 +64,26 @@ describe("handcrafted ISO reader fixture", () => {
     expect(parsed.files[0]?.data).toEqual(filePayload);
   });
 
+  test("reads a non-interleaved multi-extent file from an image not produced by createIsoImage", () => {
+    const image = handcraftedMultiExtentIso();
+    const parsed = parseIsoImage(image, { includeData: true });
+    const expectedData = new TextEncoder().encode("first section second section\n");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "MULTI.BIN",
+      identifier: "MULTI.BIN;1",
+      size: expectedData.byteLength,
+      flags: 0x80,
+      sections: [
+        expect.objectContaining({ extent: 21, size: "first section ".length, flags: 0x80 }),
+        expect.objectContaining({ extent: 22, size: "second section\n".length, flags: 0 }),
+      ],
+    });
+    expect(parsed.files[0]?.data).toEqual(expectedData);
+  });
+
   test("reads a nested directory hierarchy and path tables from an image not produced by createIsoImage", () => {
     const image = handcraftedNestedIso();
     const parsed = parseIsoImage(image);
@@ -275,6 +295,50 @@ function handcraftedBootPartitionIso(): Uint8Array {
   writeBoth32(partition, 80, 1);
   partition.set(Uint8Array.of(0xde, 0xad), 88);
 
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
+function handcraftedMultiExtentIso(): Uint8Array {
+  const image = new Uint8Array(24 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const pathTableL = sector(image, 18);
+  const pathTableM = sector(image, 19);
+  const rootDirectory = sector(image, 20);
+  const firstFileData = sector(image, 21);
+  const secondFileData = sector(image, 22);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const firstPayload = new TextEncoder().encode("first section ");
+  const secondPayload = new TextEncoder().encode("second section\n");
+
+  firstFileData.set(firstPayload);
+  secondFileData.set(secondPayload);
+  writePathTableRoot(pathTableL, "little", 20);
+  writePathTableRoot(pathTableM, "big", 20);
+
+  const self = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
+  const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const firstSection = directoryRecord({ extent: 21, size: firstPayload.byteLength, flags: 0x80, identifier: asciiBytes("MULTI.BIN;1"), date });
+  const secondSection = directoryRecord({ extent: 22, size: secondPayload.byteLength, flags: 0, identifier: asciiBytes("MULTI.BIN;1"), date });
+  rootDirectory.set(self, 0);
+  rootDirectory.set(parent, self.byteLength);
+  rootDirectory.set(firstSection, self.byteLength + parent.byteLength);
+  rootDirectory.set(secondSection, self.byteLength + parent.byteLength + firstSection.byteLength);
+
+  writePrimaryDescriptor(pvd, {
+    volumeIdentifier: "MULTI_EXTENT",
+    rootDirectoryRecord: self,
+    pathTableSize: 10,
+    typeLPathTableLocation: 18,
+    typeMPathTableLocation: 19,
+    volumeSpaceSize: 24,
+    date,
+  });
+
+  const terminator = sector(image, 17);
   terminator[0] = 255;
   writeAscii(terminator, 1, 5, "CD001", 0);
   terminator[6] = 1;

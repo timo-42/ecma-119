@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents, path tables, and Level 1 compatible primary file identifiers.
+This package is in initial development. The supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents including read-side multi-extent file sections, path tables, and Level 1 compatible primary file identifiers.
 
 ## Install
 
@@ -75,6 +75,7 @@ Implemented support is intentionally explicit:
 - opaque directory record System Use bytes
 - raw and structured file and directory Extended Attribute Records
 - non-interleaved file sections
+- read-side coalescing of compatible non-interleaved multi-extent file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, multi-extent file sections, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
+Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, writer-generated multi-extent file sections, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
