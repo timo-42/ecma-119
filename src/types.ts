@@ -184,6 +184,7 @@ export type IsoDirectoryEntry = {
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordFields?: ExtendedAttributeRecord;
   systemUse?: Uint8Array;
+  sections?: IsoFileSection[];
 };
 
 export type IsoNode = IsoFileEntry | IsoDirectoryEntry;
