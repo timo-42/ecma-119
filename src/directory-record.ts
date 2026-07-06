@@ -67,7 +67,7 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   bytes[25] = checkedFileFlags(input.flags);
   bytes[26] = checkedByte(input.fileUnitSize ?? 0, "file unit size");
   bytes[27] = checkedByte(input.interleaveGapSize ?? 0, "interleave gap size");
-  writeUint16Both(bytes, 28, input.volumeSequenceNumber ?? 1);
+  writeUint16Both(bytes, 28, checkedVolumeSequenceNumber(input.volumeSequenceNumber ?? 1));
   bytes[32] = input.identifier.length;
   bytes.set(input.identifier, 33);
   bytes.set(systemUse, systemUseOffset);
@@ -120,6 +120,13 @@ function checkedByte(value: number, name: string): number {
 function checkedIdentifierLength(value: number, name: string): number {
   if (!Number.isInteger(value) || value < 1 || value > 0xff) {
     throw new RangeError(`${name} length must be an integer from 1 to 255 bytes`);
+  }
+  return value;
+}
+
+function checkedVolumeSequenceNumber(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 0xffff) {
+    throw new RangeError("volume sequence number must be an integer from 1 to 65535");
   }
   return value;
 }

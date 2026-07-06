@@ -123,6 +123,32 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports zero path table parent directory numbers as range issues", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path parent zero\n" }]);
+    const littlePathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childLittleParentDirectoryNumberOffset = littlePathTableOffset + rootPathTableRecordLength + 6;
+    const childBigParentDirectoryNumberOffset = bigPathTableOffset + rootPathTableRecordLength + 6;
+    image[childLittleParentDirectoryNumberOffset] = 0;
+    image[childLittleParentDirectoryNumberOffset + 1] = 0;
+    image[childBigParentDirectoryNumberOffset] = 0;
+    image[childBigParentDirectoryNumberOffset + 1] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.parent_directory_number.range",
+          message: expect.stringMatching(/record 2 parent directory number must be at least 1/i),
+        }),
+        expect.objectContaining({
+          code: "path_table.big.parent_directory_number.range",
+          message: expect.stringMatching(/record 2 parent directory number must be at least 1/i),
+        }),
+      ]),
+    );
+  });
+
   test("writes path table records in ECMA-119 breadth-first order", () => {
     const image = baselineImage([
       { path: "A/AA/FILE.TXT", data: "nested a\n" },
@@ -1067,6 +1093,28 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports zero primary volume set sizes as range issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "zero volume set\n" }]);
+    writeUint16Both(image, PVD_OFFSET + 120, 0);
+
+    expect(() => parseIsoImage(image)).toThrow(/volume set size must be at least 1/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.volume_set_size.range",
+          message: "primary volume descriptor volume set size must be at least 1",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported primary volume sequence number before path table parsing", () => {
     const image = baselineImage([{ path: "README.TXT", data: "multi-volume descriptor\n" }]);
     writeUint16Both(image, PVD_OFFSET + 124, 2);
@@ -1078,6 +1126,29 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "pvd.single_volume_profile",
           message: "primary volume descriptor uses unsupported multi-volume fields",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("reports zero primary volume sequence numbers as range issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "zero volume sequence\n" }]);
+    writeUint16Both(image, PVD_OFFSET + 124, 0);
+    writeUint32Both(image, PVD_OFFSET + 140, 0xffff);
+
+    expect(() => parseIsoImage(image)).toThrow(/volume sequence number must be at least 1/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.volume_sequence_number.range",
+          message: "primary volume descriptor volume sequence number must be at least 1",
         }),
       ]),
     );
@@ -1113,6 +1184,29 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports zero descriptor root volume sequence numbers as range issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root zero sequence\n" }]);
+    writeUint16Both(image, PVD_OFFSET + 156 + 28, 0);
+
+    expect(() => parseIsoImage(image)).toThrow(/invalid volume sequence number 0/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.volume_sequence_number.range",
+          path: ".",
+          message: "directory record at . has invalid volume sequence number 0",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports unsupported child directory record volume sequence numbers without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "child sequence\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
@@ -1126,6 +1220,31 @@ describe("validateIsoImage hardening", () => {
           code: "directory.volume_sequence_unsupported",
           path: "README.TXT",
           message: expect.stringMatching(/volume sequence number 2/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("reports zero child directory record volume sequence numbers as range issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "child zero sequence\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    writeUint16Both(image, fileRecordOffset + 28, 0);
+
+    expect(() => parseIsoImage(image)).toThrow(/invalid volume sequence number 0/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.volume_sequence_number.range",
+          path: "README.TXT",
+          message: "directory record at README.TXT has invalid volume sequence number 0",
         }),
       ]),
     );
@@ -1505,6 +1624,66 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: `${codePrefix}.volume_space_size.lower_bound`,
           message: expect.stringMatching(new RegExp(`^${codePrefix} volume space size 17 is smaller than referenced sector end`, "i")),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports zero $kind volume set sizes as range issues", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary zero set\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint16Both(image, secondaryDescriptorOffset + 120, 0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.volume_set_size.range`,
+          message: `${codePrefix} volume descriptor volume set size must be at least 1`,
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+    },
+  ])("reports zero $kind volume sequence numbers as range issues", ({ options, codePrefix }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary zero sequence\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint16Both(image, secondaryDescriptorOffset + 124, 0);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: `${codePrefix}.volume_sequence_number.range`,
+          message: `${codePrefix} volume descriptor volume sequence number must be at least 1`,
         }),
       ]),
     );

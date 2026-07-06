@@ -26,14 +26,15 @@ export function encodePathTable(records: PathTableRecord[], endian: PathTableEnd
     if (!Number.isInteger(extendedAttributeRecordLength) || extendedAttributeRecordLength < 0 || extendedAttributeRecordLength > 0xff) {
       throw new RangeError("extended attribute record length must be an integer from 0 to 255 logical blocks");
     }
+    const parentDirectoryNumber = checkedParentDirectoryNumber(record.parentDirectoryNumber);
     bytes[offset] = identifierLength;
     bytes[offset + 1] = extendedAttributeRecordLength;
     if (endian === "little") {
       writeUint32LE(bytes, offset + 2, record.extent);
-      writeUint16LE(bytes, offset + 6, record.parentDirectoryNumber);
+      writeUint16LE(bytes, offset + 6, parentDirectoryNumber);
     } else {
       writeUint32BE(bytes, offset + 2, record.extent);
-      writeUint16BE(bytes, offset + 6, record.parentDirectoryNumber);
+      writeUint16BE(bytes, offset + 6, parentDirectoryNumber);
     }
     bytes.set(record.identifier, offset + 8);
     offset += length;
@@ -45,6 +46,13 @@ export function encodePathTable(records: PathTableRecord[], endian: PathTableEnd
 function checkedIdentifierLength(value: number): number {
   if (!Number.isInteger(value) || value < 1 || value > 0xff) {
     throw new RangeError("path table identifier length must be an integer from 1 to 255 bytes");
+  }
+  return value;
+}
+
+function checkedParentDirectoryNumber(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 0xffff) {
+    throw new RangeError("path table parent directory number must be an integer from 1 to 65535");
   }
   return value;
 }
