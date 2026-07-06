@@ -4,6 +4,7 @@ import {
   createIsoImage,
   decodeDirectoryRecord,
   decodeExtendedAttributeRecord,
+  decodePathTable,
   encodeDirectoryRecord,
   encodeExtendedAttributeRecord,
   encodePathTable,
@@ -528,6 +529,33 @@ describe("extended attribute records", () => {
       extent: 20,
       parentDirectoryNumber: 1,
     }], "big")).toThrow(/identifier length/i);
+  });
+
+  test("low-level path table decoder rejects malformed layout", () => {
+    const valid = encodePathTable([{
+      identifier: asciiBytes("DIR"),
+      extent: 20,
+      parentDirectoryNumber: 1,
+    }], "little");
+
+    expect(decodePathTable(valid, "little")).toEqual([
+      expect.objectContaining({
+        identifier: asciiBytes("DIR"),
+        extent: 20,
+        parentDirectoryNumber: 1,
+      }),
+    ]);
+
+    const truncated = valid.subarray(0, valid.byteLength - 1);
+    expect(() => decodePathTable(truncated, "little")).toThrow(/invalid length/i);
+
+    const nonzeroPadding = valid.slice();
+    nonzeroPadding[8 + "DIR".length] = 0xff;
+    expect(() => decodePathTable(nonzeroPadding, "little")).toThrow(/padding byte/i);
+
+    const zeroIdentifierLength = valid.slice();
+    zeroIdentifierLength[0] = 0;
+    expect(() => decodePathTable(zeroIdentifierLength, "little")).toThrow(/zero identifier length/i);
   });
 
   test("low-level directory record encoder rejects unsupported file flag bits", () => {

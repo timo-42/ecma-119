@@ -418,7 +418,8 @@ function validatePathTableReference(
   try {
     pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), endian);
   } catch (error) {
-    issues.push({ code: `${codePrefix}.${endian}.parse`, message: error instanceof Error ? error.message : String(error) });
+    const message = error instanceof Error ? error.message : String(error);
+    issues.push({ code: pathTableParseIssueCode(codePrefix, endian, message), message });
     return { issues };
   }
   if (pathTable.length === 0) {
@@ -440,8 +441,27 @@ function validatePathTableReference(
         message: `${label} path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
       });
     }
+    if (descriptor.kind === "primary" && !isRoot) {
+      const identifier = readAscii(record.identifier, 0, record.identifier.byteLength);
+      if (record.identifier.byteLength > 8 || !isDString(identifier)) {
+        issues.push({
+          code: `${codePrefix}.${endian}.identifier.characters`,
+          message: `${label} path table record ${index + 1} directory identifier contains invalid ECMA-119 Level 1 d-characters`,
+        });
+      }
+    }
   }
   return { issues, records: pathTable };
+}
+
+function pathTableParseIssueCode(codePrefix: string, endian: "little" | "big", message: string): string {
+  if (message.includes("padding byte")) {
+    return `${codePrefix}.${endian}.record_padding`;
+  }
+  if (message.includes("invalid length") || message.includes("zero identifier length")) {
+    return `${codePrefix}.${endian}.record_length`;
+  }
+  return `${codePrefix}.${endian}.parse`;
 }
 
 function validateOptionalPathTableReference(
