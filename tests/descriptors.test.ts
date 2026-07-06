@@ -170,6 +170,62 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("enhanced descriptor\n");
   });
 
+  test("validates descriptor unused and reserved zero byte fields", () => {
+    const image = createIsoImage([{
+      path: "README.TXT",
+      data: "descriptor reserved bytes\n",
+    }], {
+      volumeDescriptorApplicationUse: Uint8Array.of(1, 2, 3),
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        volumeDescriptorApplicationUse: Uint8Array.of(4, 5, 6),
+      }],
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+        volumeDescriptorApplicationUse: Uint8Array.of(7, 8, 9),
+      }],
+      volumePartition: {
+        volumePartitionIdentifier: "PARTITION",
+        systemUse: Uint8Array.of(0xaa, 0xbb),
+        data: Uint8Array.of(0xcc),
+      },
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "enhanced", "partition", "terminator"]);
+    expect(parsed.files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    const mutations = [
+      { sector: 16, offset: 7, code: "pvd.unused", message: /BP 8/i },
+      { sector: 16, offset: 72, code: "pvd.unused", message: /BP 73 to 80/i },
+      { sector: 16, offset: 88, code: "pvd.unused", message: /BP 89 to 120/i },
+      { sector: 16, offset: 882, code: "pvd.unused", message: /BP 883/i },
+      { sector: 16, offset: 1395, code: "pvd.reserved", message: /BP 1396 to 2048/i },
+      { sector: 17, offset: 72, code: "supplementary.unused", message: /BP 73 to 80/i },
+      { sector: 17, offset: 882, code: "supplementary.unused", message: /BP 883/i },
+      { sector: 17, offset: 1395, code: "supplementary.reserved", message: /BP 1396 to 2048/i },
+      { sector: 18, offset: 72, code: "enhanced.unused", message: /BP 73 to 80/i },
+      { sector: 18, offset: 882, code: "enhanced.unused", message: /BP 883/i },
+      { sector: 18, offset: 1395, code: "enhanced.reserved", message: /BP 1396 to 2048/i },
+      { sector: 19, offset: 7, code: "partition.unused", message: /BP 8/i },
+    ];
+
+    for (const mutation of mutations) {
+      const mutated = imageWithDescriptorByte(image, mutation.sector, mutation.offset, 0xff);
+      expect(validateIsoImage(mutated)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: mutation.code,
+            message: expect.stringMatching(mutation.message),
+          }),
+        ]),
+      );
+    }
+  });
+
   test("omits file data from parsed secondary descriptor trees when includeData is false", () => {
     const image = createIsoImage([{
       path: "DIR/README.TXT",
@@ -408,4 +464,10 @@ function makeDescriptor(type: number, version: number): Uint8Array {
 function writeAscii(bytes: Uint8Array, offset: number, length: number, value: string): void {
   bytes.fill(0x20, offset, offset + length);
   bytes.set(new TextEncoder().encode(value), offset);
+}
+
+function imageWithDescriptorByte(image: Uint8Array, sectorNumber: number, descriptorOffset: number, value: number): Uint8Array {
+  const mutated = image.slice();
+  mutated[sectorNumber * SECTOR_SIZE + descriptorOffset] = value;
+  return mutated;
 }
