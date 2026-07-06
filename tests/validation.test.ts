@@ -79,6 +79,33 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports PVD both-endian mismatches when a boot descriptor precedes the PVD", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "boot before pvd\n" }], {
+      bootRecord: { bootSystemIdentifier: "BOOT" },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const bootOffset = 17 * SECTOR_SIZE;
+    const shiftedPvdOffset = bootOffset;
+    const pvd = image.slice(PVD_OFFSET, PVD_OFFSET + SECTOR_SIZE);
+    const boot = image.slice(bootOffset, bootOffset + SECTOR_SIZE);
+    image.set(boot, PVD_OFFSET);
+    image.set(pvd, shiftedPvdOffset);
+    image[shiftedPvdOffset + 80 + 7] ^= 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.volume_space_size.endian_mismatch",
+          message: expect.stringContaining("at sector 17"),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/both-endian uint32 mismatch/i),
+        }),
+      ]),
+    );
+  });
+
   test.each([
     { sector: 17, code: "boot.version", message: "boot record descriptor at sector 17 must use version 1" },
     { sector: 18, code: "secondary.version", message: "supplementary or enhanced volume descriptor at sector 18 must use version 1 or 2" },
