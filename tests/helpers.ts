@@ -73,6 +73,18 @@ export function findImageCreator(
   );
 }
 
+export function findIsoParser(module: Ecma119Module): ((image: Uint8Array, options?: { includeData?: boolean }) => unknown) | undefined {
+  return typeof module.parseIsoImage === "function"
+    ? module.parseIsoImage as (image: Uint8Array, options?: { includeData?: boolean }) => unknown
+    : undefined;
+}
+
+export function findIsoValidator(module: Ecma119Module): ((image: Uint8Array) => unknown) | undefined {
+  return typeof module.validateIsoImage === "function"
+    ? module.validateIsoImage as (image: Uint8Array) => unknown
+    : undefined;
+}
+
 export async function createFixtureImage(
   createImage: (files: ImageFileInput[], options: ImageMetadataInput) => unknown,
   files: ImageFileInput[] = [
