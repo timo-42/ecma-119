@@ -1,5 +1,5 @@
 import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, sectorOffset } from "./binary.js";
-import { decodeDirectoryRecord, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
+import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, isLevelOneDirectoryIdentifier, isLevelOneFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
@@ -854,6 +854,8 @@ function validateDirectoryHierarchy(
   }
   let offset = start;
   let recordIndex = 0;
+  let previousOrdinaryRecord: DecodedDirectoryRecord | undefined;
+  let previousOrdinaryPath = "";
   while (offset < end) {
     const length = image[offset]!;
     if (length === 0) {
@@ -885,6 +887,15 @@ function validateDirectoryHierarchy(
     }
     if (index >= 2) {
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
+      if (previousOrdinaryRecord && compareDirectoryRecordOrder(previousOrdinaryRecord, record) > 0) {
+        issues.push({
+          code: "directory.record_order",
+          message: `directory records at ${path} are not ordered according to ECMA-119 file identifier ordering`,
+          path: recordPath || previousOrdinaryPath || path,
+        });
+      }
+      previousOrdinaryRecord = record;
+      previousOrdinaryPath = recordPath || ".";
     }
     if (index >= 2 && validatePrimaryLevelOne) {
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
@@ -1508,6 +1519,60 @@ function validateDirectoryEntryMultiExtent(entry: IsoDirectoryEntry, path: strin
     message: `directory record at ${path} uses unsupported multi-extent file sections`,
     path,
   }];
+}
+
+function compareDirectoryRecordOrder(left: DecodedDirectoryRecord, right: DecodedDirectoryRecord): number {
+  const leftIdentifier = splitFileIdentifier(left.identifier);
+  const rightIdentifier = splitFileIdentifier(right.identifier);
+  return compareRightPaddedBytes(leftIdentifier.name, rightIdentifier.name, 0x20)
+    || compareRightPaddedBytes(leftIdentifier.extension, rightIdentifier.extension, 0x20)
+    || -compareLeftPaddedBytes(leftIdentifier.version, rightIdentifier.version, 0x30)
+    || compareAssociatedFileBit(right.flags, left.flags);
+}
+
+function splitFileIdentifier(identifier: Uint8Array): { name: Uint8Array; extension: Uint8Array; version: Uint8Array } {
+  const separator2 = identifier.indexOf(0x3b);
+  const withoutVersion = separator2 === -1 ? identifier : identifier.subarray(0, separator2);
+  const version = separator2 === -1 ? new Uint8Array() : identifier.subarray(separator2 + 1);
+  const separator1 = withoutVersion.indexOf(0x2e);
+  if (separator1 === -1) {
+    return { name: withoutVersion, extension: new Uint8Array(), version };
+  }
+  return {
+    name: withoutVersion.subarray(0, separator1),
+    extension: withoutVersion.subarray(separator1 + 1),
+    version,
+  };
+}
+
+function compareRightPaddedBytes(left: Uint8Array, right: Uint8Array, padding: number): number {
+  const length = Math.max(left.byteLength, right.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    const leftByte = left[index] ?? padding;
+    const rightByte = right[index] ?? padding;
+    if (leftByte !== rightByte) {
+      return leftByte - rightByte;
+    }
+  }
+  return 0;
+}
+
+function compareLeftPaddedBytes(left: Uint8Array, right: Uint8Array, padding: number): number {
+  const length = Math.max(left.byteLength, right.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    const leftByte = left[index - (length - left.byteLength)] ?? padding;
+    const rightByte = right[index - (length - right.byteLength)] ?? padding;
+    if (leftByte !== rightByte) {
+      return leftByte - rightByte;
+    }
+  }
+  return 0;
+}
+
+function compareAssociatedFileBit(leftFlags: number, rightFlags: number): number {
+  const leftAssociated = (leftFlags & FILE_FLAG_ASSOCIATED) === FILE_FLAG_ASSOCIATED ? 1 : 0;
+  const rightAssociated = (rightFlags & FILE_FLAG_ASSOCIATED) === FILE_FLAG_ASSOCIATED ? 1 : 0;
+  return leftAssociated - rightAssociated;
 }
 
 function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {

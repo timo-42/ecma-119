@@ -246,6 +246,69 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("writes directory records in ECMA-119 file identifier order", () => {
+    const image = baselineImage([
+      { path: "A_.TXT", data: "underscore sorts after digits\n" },
+      { path: "A", data: "short name\n" },
+      { path: "A0.TXT", data: "digit extension\n" },
+    ]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(directoryRecordIdentifiers(image, rootDirectoryOffset, SECTOR_SIZE)).toEqual([
+      "\u0000",
+      "\u0001",
+      "A;1",
+      "A0.TXT;1",
+      "A_.TXT;1",
+    ]);
+  });
+
+  test("reports directory records that are out of ECMA-119 file identifier order", () => {
+    const image = baselineImage([
+      { path: "A.TXT", data: "a\n" },
+      { path: "B.TXT", data: "b\n" },
+    ]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const aOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "A.TXT;1");
+    const bOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "B.TXT;1");
+    expect(image[aOffset]).toBe(image[bOffset]);
+    swapBytes(image, aOffset, bOffset, image[aOffset]!);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_order",
+          path: "A.TXT",
+          message: expect.stringMatching(/ECMA-119 file identifier ordering/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports associated file records that are not sorted before non-associated records with the same identifier", () => {
+    const image = baselineImage([
+      { path: "A.TXT", data: "a\n" },
+      { path: "B.TXT", data: "b\n" },
+    ]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const aOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "A.TXT;1");
+    const bOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "B.TXT;1");
+    const identifierLength = image[aOffset + 32]!;
+    image.set(image.subarray(aOffset + 33, aOffset + 33 + identifierLength), bOffset + 33);
+    image[bOffset + 25] |= 0x04;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_order",
+          path: "A.TXT",
+          message: expect.stringMatching(/ECMA-119 file identifier ordering/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports Type L and Type M path table mirror mismatches", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "mirror mismatch\n" }]);
     const pathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
@@ -1831,6 +1894,23 @@ function findDirectoryRecordOffset(image: Uint8Array, directoryOffset: number, d
     offset += length;
   }
   throw new Error(`missing directory record ${identifier}`);
+}
+
+function directoryRecordIdentifiers(image: Uint8Array, directoryOffset: number, directorySize: number): string[] {
+  const decoder = new TextDecoder("ascii");
+  const identifiers: string[] = [];
+  let offset = directoryOffset;
+  const end = directoryOffset + directorySize;
+  while (offset < end) {
+    const length = image[offset];
+    if (length === 0) {
+      break;
+    }
+    const identifierLength = image[offset + 32]!;
+    identifiers.push(decoder.decode(image.subarray(offset + 33, offset + 33 + identifierLength)));
+    offset += length;
+  }
+  return identifiers;
 }
 
 function findDirectoryRecordOffsetByPath(image: Uint8Array, identifiers: string[], rootRecordOffset = PVD_OFFSET + 156): number {
