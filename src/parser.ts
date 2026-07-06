@@ -1577,7 +1577,7 @@ function isMultiExtentContinuation(previous: DecodedDirectoryRecord, current: De
   return (previous.flags & FILE_FLAG_DIRECTORY) === 0
     && (current.flags & FILE_FLAG_DIRECTORY) === 0
     && bytesEqual(previous.identifier, current.identifier)
-    && (previous.flags & FILE_FLAG_ASSOCIATED) === (current.flags & FILE_FLAG_ASSOCIATED)
+    && (previous.flags & ~FILE_FLAG_MULTI_EXTENT) === (current.flags & ~FILE_FLAG_MULTI_EXTENT)
     && previous.fileUnitSize === current.fileUnitSize
     && previous.interleaveGapSize === current.interleaveGapSize
     && previous.volumeSequenceNumber === current.volumeSequenceNumber;
