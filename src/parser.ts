@@ -54,6 +54,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
   issues.push(...validateRawDescriptorHeaders(image));
+  issues.push(...validateRawPrimaryDescriptorBothEndianFields(image));
   issues.push(...validateRawDescriptorDateFields(image));
   let descriptors: VolumeDescriptor[] = [];
   let descriptorSequenceFailed = false;
@@ -206,6 +207,45 @@ function rawDescriptorLabel(type: number, version: number): string {
     default:
       return `volume descriptor type ${type}`;
   }
+}
+
+function validateRawPrimaryDescriptorBothEndianFields(image: Uint8Array): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const offset = sectorOffset(SYSTEM_AREA_SECTORS);
+  if (offset + SECTOR_SIZE > image.byteLength || !isPrimaryVolumeDescriptorHeaderAt(image, offset)) {
+    return issues;
+  }
+
+  for (const field of rawPrimaryDescriptorBothEndianFields) {
+    const little = field.bytes === 2
+      ? readUint16LEAt(image, offset + field.start)
+      : readUint32LEAt(image, offset + field.start);
+    const big = field.bytes === 2
+      ? readUint16BEAt(image, offset + field.start + field.bytes)
+      : readUint32BEAt(image, offset + field.start + field.bytes);
+    if (little !== big) {
+      issues.push({
+        code: `pvd.${field.code}.endian_mismatch`,
+        message: `primary volume descriptor ${field.label} must store matching little- and big-endian values at sector ${SYSTEM_AREA_SECTORS}: ${little} !== ${big}`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+const rawPrimaryDescriptorBothEndianFields = [
+  { start: 80, bytes: 4, code: "volume_space_size", label: "volume space size" },
+  { start: 120, bytes: 2, code: "volume_set_size", label: "volume set size" },
+  { start: 124, bytes: 2, code: "volume_sequence_number", label: "volume sequence number" },
+  { start: 128, bytes: 2, code: "logical_block_size", label: "logical block size" },
+  { start: 132, bytes: 4, code: "path_table_size", label: "path table size" },
+] as const;
+
+function isPrimaryVolumeDescriptorHeaderAt(image: Uint8Array, offset: number): boolean {
+  return image[offset] === 1
+    && readAscii(image, offset + 1, 5) === STANDARD_IDENTIFIER
+    && image[offset + 6] === 1;
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
@@ -2652,4 +2692,12 @@ function readUint32BEAt(bytes: Uint8Array, offset: number): number {
     | (bytes[offset + 2]! << 8)
     | bytes[offset + 3]!
   ) >>> 0;
+}
+
+function readUint16LEAt(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]! | (bytes[offset + 1]! << 8);
+}
+
+function readUint16BEAt(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset]! << 8) | bytes[offset + 1]!;
 }
