@@ -276,6 +276,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryReservedFileFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryDirectoryFlags(pvd.rootDirectoryRecord, "."));
+  issues.push(...validateDirectoryProtectionExtendedAttributeFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, pvd.rootDirectoryRecord, "."));
@@ -1011,6 +1012,7 @@ function validateDirectoryHierarchy(
     }
     if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
       issues.push(...validateDirectoryRecordDirectoryFlags(record.flags, recordPath || path));
+      issues.push(...validateDirectoryProtectionExtendedAttributeFlags(record, recordPath || path));
     }
     if (index >= 2) {
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
@@ -1195,6 +1197,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryReservedFileFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryDirectoryFlags(descriptor.rootDirectoryRecord, `${label}:.`));
+  issues.push(...validateDirectoryProtectionExtendedAttributeFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, descriptor.rootDirectoryRecord, `${label}:.`));
@@ -1699,6 +1702,20 @@ function validateDirectoryRecordDirectoryFlags(flags: number, path: string): Val
   return [{
     code: "directory.file_flags_directory",
     message: `directory record at ${path} identifies a directory and must not set Associated File or Record bits`,
+    path,
+  }];
+}
+
+function validateDirectoryProtectionExtendedAttributeFlags(
+  entry: Pick<IsoDirectoryEntry, "flags" | "extendedAttributeRecordLength"> | Pick<DecodedDirectoryRecord, "flags" | "extendedAttributeRecordLength">,
+  path: string,
+): ValidationIssue[] {
+  if ((entry.flags & FILE_FLAG_DIRECTORY) === 0 || entry.extendedAttributeRecordLength !== 0 || (entry.flags & 0x10) === 0) {
+    return [];
+  }
+  return [{
+    code: "directory.file_flags_extended_attribute_missing",
+    message: `directory record at ${path} sets Protection flag without an extended attribute record`,
     path,
   }];
 }

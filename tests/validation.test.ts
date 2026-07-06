@@ -1519,6 +1519,50 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports protected directory records without extended attribute records", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "protected directory flag\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    image[directoryRecordOffset + 25] |= 0x10;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_extended_attribute_missing",
+          path: "DIR",
+          message: "directory record at DIR sets Protection flag without an extended attribute record",
+        }),
+      ]),
+    );
+    expect(parseIsoImage(image).root.children[0]).toMatchObject({
+      path: "DIR",
+      flags: 0x12,
+      extendedAttributeRecordLength: 0,
+    });
+  });
+
+  test("allows protected directory records when they match an extended attribute record", () => {
+    const image = createIsoImage({
+      files: [{ path: "DIR/FILE.TXT", data: "protected directory ear\n" }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: {
+          ownerIdentification: 1,
+          groupIdentification: 1,
+          systemIdentifier: "VALIDATION",
+        },
+      }],
+    });
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.root.children[0]).toMatchObject({
+      path: "DIR",
+      flags: 0x12,
+      extendedAttributeRecordLength: 1,
+    });
+  });
+
   test("reports descriptor root associated directory flags", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root associated directory flag\n" }]);
     image[PVD_OFFSET + 156 + 25] |= 0x04;
@@ -1529,6 +1573,21 @@ describe("validateIsoImage hardening", () => {
           code: "directory.file_flags_directory",
           path: ".",
           message: "directory record at . identifies a directory and must not set Associated File or Record bits",
+        }),
+      ]),
+    );
+  });
+
+  test("reports protected descriptor root records without extended attribute records", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root protection flag\n" }]);
+    image[PVD_OFFSET + 156 + 25] |= 0x10;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_extended_attribute_missing",
+          path: ".",
+          message: "directory record at . sets Protection flag without an extended attribute record",
         }),
       ]),
     );
