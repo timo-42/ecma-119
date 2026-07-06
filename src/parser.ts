@@ -1,4 +1,4 @@
-import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
+import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readDirectoryDateTime, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
@@ -319,6 +319,7 @@ function validateRawDescriptorDateFields(image: Uint8Array): ValidationIssue[] {
       issues.push(...validateRawDescriptorDateField(image, offset + 830, `${codePrefix}.modification_date`, `${descriptorLabel} volume modification date and time`));
       issues.push(...validateRawDescriptorDateField(image, offset + 847, `${codePrefix}.expiration_date`, `${descriptorLabel} volume expiration date and time`));
       issues.push(...validateRawDescriptorDateField(image, offset + 864, `${codePrefix}.effective_date`, `${descriptorLabel} volume effective date and time`));
+      issues.push(...validateRawDirectoryRecordDateField(image, offset + 156, `${codePrefix}.root_directory_record.date`, `${descriptorLabel} volume descriptor root directory record date/time`, "."));
     }
     if (type === 255) {
       return issues;
@@ -352,6 +353,23 @@ function validateRawDescriptorDateField(image: Uint8Array, offset: number, code:
     return [{
       code,
       message: `${label} is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    }];
+  }
+}
+
+function validateRawDirectoryRecordDateField(image: Uint8Array, recordOffset: number, code: string, label: string, path: string): ValidationIssue[] {
+  const length = image[recordOffset];
+  if (length === undefined || length < 25 || recordOffset + length > image.byteLength) {
+    return [];
+  }
+  try {
+    readDirectoryDateTime(image, recordOffset + 18);
+    return [];
+  } catch (error) {
+    return [{
+      code,
+      message: `${label} is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      path,
     }];
   }
 }
@@ -946,6 +964,7 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
     return [{ code: "directory.record_bounds", message: `directory extent for ${path} is out of bounds`, path }];
   }
   let offset = 0;
+  let recordIndex = 0;
   while (offset < directoryBytes.byteLength) {
     const length = directoryBytes[offset]!;
     if (length === 0) {
@@ -957,16 +976,28 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       offset += 1;
       continue;
     }
+    const currentRecordIndex = recordIndex++;
+    const recordPath = rawDirectoryRecordPath(directoryBytes, offset, currentRecordIndex, path);
+    const dateIssues = validateRawDirectoryRecordDateField(
+      directoryBytes,
+      offset,
+      "directory.record_date",
+      `directory record date/time at ${recordPath}`,
+      recordPath,
+    );
+    issues.push(...dateIssues);
     try {
       decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch (error) {
-      const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
-      const isPaddingError = message.includes("padding byte");
-      issues.push({
-        code: isPaddingError ? "directory.record_padding" : "directory.record_malformed",
-        message,
-        path,
-      });
+      if (dateIssues.length === 0) {
+        const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
+        const isPaddingError = message.includes("padding byte");
+        issues.push({
+          code: isPaddingError ? "directory.record_padding" : "directory.record_malformed",
+          message,
+          path,
+        });
+      }
       offset += Math.max(1, length);
       continue;
     }
@@ -976,6 +1007,19 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
     offset += length;
   }
   return issues;
+}
+
+function rawDirectoryRecordPath(directoryBytes: Uint8Array, offset: number, recordIndex: number, directoryPath: string): string {
+  if (recordIndex < 2) {
+    return directoryPath;
+  }
+  const length = directoryBytes[offset]!;
+  const identifierLength = directoryBytes[offset + 32];
+  if (identifierLength === undefined || identifierLength < 1 || offset + 33 + identifierLength > directoryBytes.byteLength || 33 + identifierLength > length) {
+    return directoryPath;
+  }
+  const identifier = decodeFileIdentifier(directoryBytes.subarray(offset + 33, offset + 33 + identifierLength));
+  return joinPath(directoryPath === "." ? "" : directoryPath, stripVersion(identifier)) || ".";
 }
 
 function validateDirectoryHierarchy(
