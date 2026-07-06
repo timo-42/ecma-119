@@ -460,7 +460,76 @@ function validatePathTableReference(
       }
     }
   }
+  issues.push(...validatePathTableOrder(pathTable, codePrefix, endian));
   return { issues, records: pathTable };
+}
+
+function validatePathTableOrder(
+  records: PathTableRecord[],
+  codePrefix: string,
+  endian: "little" | "big",
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const label = endian === "little" ? "Type L" : "Type M";
+  const levels: Array<number | undefined> = [];
+  for (const [index, record] of records.entries()) {
+    if (index === 0) {
+      levels.push(0);
+      continue;
+    }
+    const parentLevel = levels[record.parentDirectoryNumber - 1];
+    levels.push(parentLevel === undefined ? undefined : parentLevel + 1);
+  }
+  for (let index = 1; index < records.length; index += 1) {
+    const previousLevel = levels[index - 1];
+    const currentLevel = levels[index];
+    if (previousLevel === undefined || currentLevel === undefined) {
+      continue;
+    }
+    const previous = records[index - 1]!;
+    const current = records[index]!;
+    const orderIssue = pathTableOrderIssue(previous, previousLevel, current, currentLevel);
+    if (orderIssue) {
+      issues.push({
+        code: `${codePrefix}.${endian}.order.${orderIssue}`,
+        message: `${label} path table records must be ordered by ${pathTableOrderIssueLabel(orderIssue)}`,
+      });
+      return issues;
+    }
+  }
+  return issues;
+}
+
+function pathTableOrderIssue(
+  left: PathTableRecord,
+  leftLevel: number,
+  right: PathTableRecord,
+  rightLevel: number,
+): "level" | "parent" | "identifier" | undefined {
+  if (leftLevel > rightLevel) {
+    return "level";
+  }
+  if (leftLevel !== rightLevel) {
+    return undefined;
+  }
+  if (left.parentDirectoryNumber > right.parentDirectoryNumber) {
+    return "parent";
+  }
+  if (left.parentDirectoryNumber !== right.parentDirectoryNumber) {
+    return undefined;
+  }
+  return comparePathTableIdentifierBytes(left.identifier, right.identifier) > 0 ? "identifier" : undefined;
+}
+
+function pathTableOrderIssueLabel(issue: "level" | "parent" | "identifier"): string {
+  switch (issue) {
+    case "level":
+      return "hierarchy level";
+    case "parent":
+      return "parent directory number";
+    case "identifier":
+      return "directory identifier";
+  }
 }
 
 function pathTableParseIssueCode(codePrefix: string, endian: "little" | "big", message: string): string {
@@ -551,7 +620,24 @@ function validatePathTableAgainstHierarchy(
 
 function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): CanonicalPathTableRecord[] | undefined {
   const records: CanonicalPathTableRecord[] = [];
-  const visit = (directory: IsoDirectoryEntry, identifier: Uint8Array, parentDirectoryNumber: number, parentKey: string, visited: Set<number>): void => {
+  const visited = new Set<number>();
+  const queue: Array<{
+    directory: IsoDirectoryEntry;
+    identifier: Uint8Array;
+    parentDirectoryNumber: number;
+    parentKey: string;
+  }> = [{
+    directory: root,
+    identifier: Uint8Array.of(0),
+    parentDirectoryNumber: 1,
+    parentKey: "",
+  }];
+  const visit = ({ directory, identifier, parentDirectoryNumber, parentKey }: {
+    directory: IsoDirectoryEntry;
+    identifier: Uint8Array;
+    parentDirectoryNumber: number;
+    parentKey: string;
+  }): void => {
     if (visited.has(directory.extent)) {
       return;
     }
@@ -571,6 +657,7 @@ function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): C
     if (start < 0 || end > image.byteLength) {
       return;
     }
+    const childDirectories: Array<{ directory: IsoDirectoryEntry; identifier: Uint8Array }> = [];
     let offset = start;
     let recordIndex = 0;
     while (offset < end) {
@@ -594,12 +681,23 @@ function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): C
       if (recordIndex++ < 2 || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
         continue;
       }
-      visit(directoryEntryFromRecord(record, "", []), record.identifier, directoryNumber, key, new Set(visited));
+      childDirectories.push({ directory: directoryEntryFromRecord(record, "", []), identifier: record.identifier });
+    }
+    childDirectories.sort((left, right) => comparePathTableIdentifierBytes(left.identifier, right.identifier));
+    for (const child of childDirectories) {
+      queue.push({
+        directory: child.directory,
+        identifier: child.identifier,
+        parentDirectoryNumber: directoryNumber,
+        parentKey: key,
+      });
     }
   };
 
   try {
-    visit(root, Uint8Array.of(0), 1, "", new Set());
+    for (let index = 0; index < queue.length; index += 1) {
+      visit(queue[index]!);
+    }
     return records;
   } catch {
     return undefined;
@@ -641,6 +739,18 @@ function samePathTableRecord(left: PathTableRecord, right: PathTableRecord): boo
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
+function comparePathTableIdentifierBytes(left: Uint8Array, right: Uint8Array): number {
+  const length = Math.max(left.byteLength, right.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    const leftByte = left[index] ?? 0x20;
+    const rightByte = right[index] ?? 0x20;
+    if (leftByte !== rightByte) {
+      return leftByte - rightByte;
+    }
+  }
+  return 0;
 }
 
 function bytesKey(bytes: Uint8Array): string {
