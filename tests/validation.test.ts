@@ -201,6 +201,30 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports unsupported interleaved descriptor root directory fields without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root interleaved metadata\n" }]);
+    image[PVD_OFFSET + 156 + 26] = 1;
+    image[PVD_OFFSET + 156 + 27] = 2;
+
+    expect(() => parseIsoImage(image)).toThrow(/unsupported interleaved file section fields/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.interleaving_unsupported",
+          path: ".",
+          message: expect.stringMatching(/unsupported interleaved/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports supplementary path table parent issues", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
