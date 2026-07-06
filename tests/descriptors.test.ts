@@ -174,16 +174,13 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([{ path: "EMPTY.BIN", data: "", interleave: { fileUnitSize: 1, interleaveGapSize: 0 } }])).toThrow(/at least one byte/i);
   });
 
-  test("rejects interleaved files with extended attribute records", () => {
+  test("rejects interleaved extended attribute records larger than the file unit", () => {
     expect(() => createIsoImage([{
       path: "EAR.BIN",
       data: "interleaved ear",
       interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
-      extendedAttributeRecord: {
-        ownerIdentification: 1,
-        groupIdentification: 1,
-      },
-    }])).toThrow(/extended attribute records/i);
+      extendedAttributeRecord: new Uint8Array(SECTOR_SIZE + 1),
+    }])).toThrow(/file unit size/i);
   });
 
   test("writes supplementary volume descriptors with separate path tables and directory hierarchy", () => {

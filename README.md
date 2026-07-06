@@ -86,9 +86,9 @@ Implemented support is intentionally explicit:
 - raw and structured file and directory Extended Attribute Records
 - non-interleaved file sections
 - writer-generated compatible non-interleaved multi-extent file sections
-- writer-generated interleaved regular file sections without Extended Attribute Records
+- writer-generated interleaved regular file sections, including Extended Attribute Records that fit within the assigned file unit
 - read-side reconstruction of compatible interleaved regular file sections
 - read-side coalescing of compatible non-interleaved multi-extent file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaved directory records, interleaved Extended Attribute Records, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
+Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaved directory records, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.

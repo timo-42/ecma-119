@@ -416,6 +416,46 @@ describe("extended attribute records", () => {
     expect(parsed.files[0]?.data).toEqual(data);
   });
 
+  test("writes interleaved file extended attribute records in the first file unit", () => {
+    const data = new Uint8Array(SECTOR_SIZE + 7);
+    data.fill(0x31, 0, SECTOR_SIZE);
+    data.set(asciiBytes("tailend"), SECTOR_SIZE);
+    const extendedAttributeRecord = makeExtendedAttributeRecord("interleaved ear");
+    const image = createIsoImage([{
+      path: "INTEAR.BIN",
+      data,
+      interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+      extendedAttributeRecord,
+    }]);
+
+    const record = findRootFileRecord(image, "INTEAR.BIN;1");
+    const extent = readBoth32(record, 2);
+
+    expect(record[1]).toBe(1);
+    expect(record[26]).toBe(1);
+    expect(record[27]).toBe(1);
+    expect(image.subarray(extent * SECTOR_SIZE, extent * SECTOR_SIZE + extendedAttributeRecord.byteLength)).toEqual(extendedAttributeRecord);
+    expect(image.subarray((extent + 1) * SECTOR_SIZE, (extent + 2) * SECTOR_SIZE).every((byte) => byte === 0)).toBe(true);
+    expect(image.subarray((extent + 2) * SECTOR_SIZE, (extent + 3) * SECTOR_SIZE)).toEqual(data.subarray(0, SECTOR_SIZE));
+    expect(image.subarray((extent + 3) * SECTOR_SIZE, (extent + 4) * SECTOR_SIZE).every((byte) => byte === 0)).toBe(true);
+    expect(image.subarray((extent + 4) * SECTOR_SIZE, (extent + 4) * SECTOR_SIZE + 7)).toEqual(data.subarray(SECTOR_SIZE));
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files[0]).toMatchObject({
+      path: "INTEAR.BIN",
+      identifier: "INTEAR.BIN;1",
+      extent,
+      extendedAttributeRecordLength: 1,
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+      size: data.byteLength,
+    });
+    expect(parsed.files[0]?.extendedAttributeRecord).toEqual(extendedAttributeRecord);
+    expect(parsed.files[0]?.extendedAttributeRecordFields?.systemIdentifier).toBe("ECMA119_TEST");
+    expect(parsed.files[0]?.data).toEqual(data);
+  });
+
   test("reads extended attribute records from an ISO image not produced by the writer", () => {
     const data = asciiBytes("handmade data\n");
     const extendedAttributeRecord = makeExtendedAttributeRecord("handmade ear");
