@@ -18,9 +18,16 @@ describe("volume descriptor sequence parsing", () => {
       data: "descriptor shifted\n",
     }], {
       volumeIdentifier: "PRIMARY",
+      volumeSetIdentifier: "BASE_SET",
+      publisherIdentifier: "BASE_PUB",
+      dataPreparerIdentifier: "BASE_PREP",
+      applicationIdentifier: "BASE_APP",
       supplementaryVolumeDescriptors: [{
         volumeIdentifier: "SUPP",
         systemIdentifier: "SUP_SYS",
+        volumeSetIdentifier: "SUP_SET",
+        publisherIdentifier: "SUP_PUB",
+        dataPreparerIdentifier: "SUP_PREP",
         volumeFlags: 1,
         escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40),
         applicationIdentifier: "SUP_APP",
@@ -43,6 +50,10 @@ describe("volume descriptor sequence parsing", () => {
       volumeFlags: 1,
       systemIdentifier: "SUP_SYS",
       volumeIdentifier: "SUPP",
+      volumeSetIdentifier: "SUP_SET",
+      publisherIdentifier: "SUP_PUB",
+      dataPreparerIdentifier: "SUP_PREP",
+      applicationIdentifier: "SUP_APP",
     });
     expect(supplementary?.kind === "supplementary" ? supplementary.escapeSequences.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x25, 0x2f, 0x40));
     expect(primary?.kind === "primary" && supplementary?.kind === "supplementary"
@@ -105,6 +116,9 @@ describe("volume descriptor sequence parsing", () => {
       enhancedVolumeDescriptors: [{
         volumeIdentifier: "ENHANCED",
         systemIdentifier: "ENH_SYS",
+        volumeSetIdentifier: "ENH_SET",
+        publisherIdentifier: "ENH_PUB",
+        dataPreparerIdentifier: "ENH_PREP",
         volumeFlags: 1,
         escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
         applicationIdentifier: "ENH_APP",
@@ -129,6 +143,10 @@ describe("volume descriptor sequence parsing", () => {
       volumeFlags: 1,
       systemIdentifier: "ENH_SYS",
       volumeIdentifier: "ENHANCED",
+      volumeSetIdentifier: "ENH_SET",
+      publisherIdentifier: "ENH_PUB",
+      dataPreparerIdentifier: "ENH_PREP",
+      applicationIdentifier: "ENH_APP",
     });
     expect(enhanced).toMatchObject({
       copyrightFileIdentifier: "COPY.TXT;1",
