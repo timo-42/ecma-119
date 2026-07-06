@@ -584,6 +584,36 @@ describe("extended attribute records", () => {
       volumeSequenceNumber: 1,
     });
   });
+
+  test("low-level directory record decoder rejects malformed layout", () => {
+    const identifier = asciiBytes("PADD.TXT;1");
+    const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+    const record = encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      identifier,
+      date,
+    });
+
+    const invalidIdentifierLength = record.slice();
+    invalidIdentifierLength[32] = 0;
+    expect(() => decodeDirectoryRecord(invalidIdentifierLength, 0)).toThrow(/identifier length/i);
+
+    const shortRecord = record.slice();
+    shortRecord[0] = 33;
+    expect(() => decodeDirectoryRecord(shortRecord, 0)).toThrow(/invalid length/i);
+
+    const impossibleIdentifierLength = record.slice();
+    impossibleIdentifierLength[32] = 20;
+    expect(() => decodeDirectoryRecord(impossibleIdentifierLength, 0)).toThrow(/identifier length/i);
+
+    const nonzeroPadding = record.slice();
+    nonzeroPadding[33 + identifier.byteLength] = 0xff;
+    expect(() => decodeDirectoryRecord(nonzeroPadding, 0)).toThrow(/padding byte/i);
+
+    expect(() => decodeDirectoryRecord(record, 0, record.byteLength - 1)).toThrow(/invalid length/i);
+  });
 });
 
 function handcraftedIsoWithExtendedAttributeRecord(data: Uint8Array, extendedAttributeRecord: Uint8Array): Uint8Array {

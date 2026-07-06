@@ -335,6 +335,7 @@ describe("validateIsoImage hardening", () => {
     image[firstChildRecordOffset] = 33;
     image[firstChildRecordOffset + 32] = 20;
 
+    expect(() => parseIsoImage(image)).toThrow(/invalid length/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -74,12 +74,26 @@ export function encodeDirectoryRecord(input: DirectoryRecordInput): Uint8Array {
   return bytes;
 }
 
-export function decodeDirectoryRecord(bytes: Uint8Array, offset: number): DecodedDirectoryRecord {
+export function decodeDirectoryRecord(bytes: Uint8Array, offset: number, spanEnd = bytes.byteLength): DecodedDirectoryRecord {
+  if (!Number.isInteger(offset) || offset < 0 || offset >= bytes.byteLength || offset >= spanEnd) {
+    throw new Error(`directory record offset ${offset} is out of bounds`);
+  }
   const length = bytes[offset]!;
   if (length === 0) {
     throw new Error(`missing directory record at offset ${offset}`);
   }
+  if (length < 34 || offset + length > spanEnd || offset + length > bytes.byteLength) {
+    throw new Error(`directory record has invalid length at offset ${offset}`);
+  }
   const identifierLength = bytes[offset + 32]!;
+  const minimumLength = directoryRecordLength(identifierLength);
+  if (identifierLength === 0 || minimumLength > length) {
+    throw new Error(`directory record identifier length is inconsistent with record length at offset ${offset}`);
+  }
+  const paddingOffset = offset + 33 + identifierLength;
+  if (identifierLength % 2 === 0 && bytes[paddingOffset] !== 0) {
+    throw new Error(`directory record file identifier padding byte must be zero at offset ${offset}`);
+  }
   const systemUseOffset = offset + directoryRecordLength(identifierLength);
   return {
     length,

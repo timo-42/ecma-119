@@ -154,7 +154,7 @@ function parseVolumeDescriptorAt(image: Uint8Array, offset: number, sector: numb
 }
 
 function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector: number): PrimaryVolumeDescriptor {
-  const rootRecord = decodeDirectoryRecord(image, offset + 156);
+  const rootRecord = decodeDirectoryRecord(image, offset + 156, offset + 190);
   const pvd: PrimaryVolumeDescriptor = {
     type: 1,
     kind: "primary",
@@ -288,7 +288,7 @@ function directoryTreeEndSector(image: Uint8Array, directory: IsoDirectoryEntry,
     }
     let record: DecodedDirectoryRecord;
     try {
-      record = decodeDirectoryRecord(image, offset);
+      record = decodeDirectoryRecord(image, offset, directoryEnd);
     } catch {
       offset += length;
       continue;
@@ -525,7 +525,7 @@ function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): C
       }
       let record: DecodedDirectoryRecord;
       try {
-        record = decodeDirectoryRecord(image, offset);
+        record = decodeDirectoryRecord(image, offset, end);
       } catch {
         offset += length;
         continue;
@@ -608,21 +608,18 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       offset += 1;
       continue;
     }
-    if (length < 34 || offset + length > end) {
-      issues.push({ code: "directory.record_malformed", message: `directory record has invalid length at ${path}`, path });
+    try {
+      decodeDirectoryRecord(image, offset, end);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
+      const isPaddingError = message.includes("padding byte");
+      issues.push({
+        code: isPaddingError ? "directory.record_padding" : "directory.record_malformed",
+        message,
+        path,
+      });
       offset += Math.max(1, length);
       continue;
-    }
-    const identifierLength = image[offset + 32]!;
-    const minimumLength = 33 + identifierLength + ((33 + identifierLength) % 2 === 0 ? 0 : 1);
-    if (identifierLength === 0 || minimumLength > length) {
-      issues.push({ code: "directory.record_malformed", message: `directory record identifier length is inconsistent with record length at ${path}`, path });
-      offset += length;
-      continue;
-    }
-    const paddingOffset = offset + 33 + identifierLength;
-    if (identifierLength % 2 === 0 && image[paddingOffset] !== 0) {
-      issues.push({ code: "directory.record_padding", message: `directory record file identifier padding byte must be zero at ${path}`, path });
     }
     if ((image[offset + 25]! & 0x60) !== 0) {
       issues.push({ code: "directory.file_flags_reserved", message: `directory record has reserved file flag bits set at ${path}`, path });
@@ -672,7 +669,7 @@ function validateDirectoryHierarchy(
     }
     let record: DecodedDirectoryRecord;
     try {
-      record = decodeDirectoryRecord(image, offset);
+      record = decodeDirectoryRecord(image, offset, end);
     } catch {
       offset += length;
       continue;
@@ -808,7 +805,7 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
 }
 
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
-  const rootRecord = image[offset + 156] === 0 ? undefined : decodeDirectoryRecord(image, offset + 156);
+  const rootRecord = image[offset + 156] === 0 ? undefined : decodeDirectoryRecord(image, offset + 156, offset + 190);
   const common = {
     ...baseDescriptor(image, offset, sector, image[offset + 6] === 2 ? "enhanced" : "supplementary"),
     type: 2 as const,
@@ -900,7 +897,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     if ((offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
       throw new Error(`directory record crosses a logical sector boundary at ${path || "."}`);
     }
-    const record = decodeDirectoryRecord(bytes, offset);
+    const record = decodeDirectoryRecord(bytes, offset, bytes.byteLength);
     if ((record.flags & 0x60) !== 0) {
       throw new Error(`directory record has reserved file flag bits set at ${path || "."}`);
     }
@@ -992,7 +989,7 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     }
     let record: DecodedDirectoryRecord;
     try {
-      record = decodeDirectoryRecord(image, offset);
+      record = decodeDirectoryRecord(image, offset, end);
     } catch {
       offset += length;
       continue;
@@ -1225,6 +1222,14 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
   return issues.some((issue) => {
     if (issue.code === "image.parse" || issue.code === "descriptor.sequence") {
       return false;
+    }
+    if (
+      (issue.code === "directory.record_malformed" || issue.code === "directory.record_padding")
+      && (message.includes("directory record has invalid length")
+        || message.includes("directory record identifier length is inconsistent")
+        || message.includes("directory record file identifier padding byte must be zero"))
+    ) {
+      return true;
     }
     return message.includes(issue.message) || issue.message.includes(message);
   });
