@@ -24,6 +24,7 @@ type FileNode = {
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordLength: number;
   date: Date;
+  timeZoneOffsetMinutes: number;
   extent: number;
   flags: number;
   systemUse?: Uint8Array;
@@ -36,6 +37,7 @@ type DirectoryNode = {
   parent?: DirectoryNode;
   children: Map<string, DirectoryNode | FileNode>;
   date: Date;
+  timeZoneOffsetMinutes: number;
   extent: number;
   dataLength: number;
   extendedAttributeRecord?: Uint8Array;
@@ -69,7 +71,8 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
   const now = options.createdAt ?? new Date();
-  const root = buildTree(files, options.directories ?? [], now);
+  const timeZoneOffsetMinutes = options.timeZoneOffsetMinutes ?? 0;
+  const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes);
   const directories = collectDirectories(root);
   const pathRecords: PathTableRecord[] = directories.map((directory) => ({
     identifier: directory === root ? Uint8Array.of(0) : asciiBytes(directory.isoIdentifier),
@@ -209,13 +212,14 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   return image;
 }
 
-function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date): DirectoryNode {
+function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date, defaultTimeZoneOffsetMinutes: number): DirectoryNode {
   const root: DirectoryNode = {
     kind: "directory",
     name: "",
     isoIdentifier: "",
     children: new Map(),
     date: now,
+    timeZoneOffsetMinutes: defaultTimeZoneOffsetMinutes,
     extent: 0,
     dataLength: 0,
     extendedAttributeRecordLength: 0,
@@ -225,6 +229,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
 
   for (const file of files) {
     const normalized = normalizeFilePath(file.path);
+    const fileTimeZoneOffsetMinutes = file.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     let directory = root;
     for (const part of normalized.parts.slice(0, -1)) {
       const existing = directory.children.get(part);
@@ -242,6 +247,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         parent: directory,
         children: new Map(),
         date: file.date ?? now,
+        timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
         extent: 0,
         dataLength: 0,
         extendedAttributeRecordLength: 0,
@@ -261,12 +267,16 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       data: toBytes(file.data),
       extendedAttributeRecordLength: 0,
       date: file.date ?? now,
+      timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
       extent: 0,
       flags: 0,
     };
     if (file.extendedAttributeRecord !== undefined) {
       fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
-        ? encodeExtendedAttributeRecord(file.extendedAttributeRecord, { defaultDate: file.date ?? now })
+        ? encodeExtendedAttributeRecord(file.extendedAttributeRecord, {
+          defaultDate: file.date ?? now,
+          defaultTimeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
+        })
         : toBytes(file.extendedAttributeRecord);
       if (fileNode.extendedAttributeRecord.byteLength === 0) {
         throw new Error("extended attribute record must contain at least one byte");
@@ -287,11 +297,16 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   }
 
   for (const input of directories) {
-    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path).parts, input.date ?? now);
+    const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
+    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
     directory.date = input.date ?? directory.date;
+    directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
     if (input.extendedAttributeRecord !== undefined) {
       directory.extendedAttributeRecord = isExtendedAttributeRecordInput(input.extendedAttributeRecord)
-        ? encodeExtendedAttributeRecord(input.extendedAttributeRecord, { defaultDate: input.date ?? now })
+        ? encodeExtendedAttributeRecord(input.extendedAttributeRecord, {
+          defaultDate: input.date ?? now,
+          defaultTimeZoneOffsetMinutes: directoryTimeZoneOffsetMinutes,
+        })
         : toBytes(input.extendedAttributeRecord);
       if (directory.extendedAttributeRecord.byteLength === 0) {
         throw new Error("directory extended attribute record must contain at least one byte");
@@ -313,7 +328,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   return root;
 }
 
-function ensureDirectory(root: DirectoryNode, parts: string[], date: Date): DirectoryNode {
+function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZoneOffsetMinutes: number): DirectoryNode {
   let directory = root;
   for (const part of parts) {
     const existing = directory.children.get(part);
@@ -331,6 +346,7 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date): Dire
       parent: directory,
       children: new Map(),
       date,
+      timeZoneOffsetMinutes,
       extent: 0,
       dataLength: 0,
       extendedAttributeRecordLength: 0,
@@ -400,6 +416,7 @@ function encodeDirectoryExtent(directory: DirectoryNode, layout?: PreparedSecond
         flags: child.flags,
         identifier,
         date: child.date,
+        timeZoneOffsetMinutes: child.timeZoneOffsetMinutes,
       };
       record = child.systemUse ? encodeDirectoryRecord({ ...input, systemUse: child.systemUse }) : encodeDirectoryRecord(input);
     }
@@ -416,6 +433,7 @@ function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8
     flags: directory.flags,
     identifier,
     date: directory.date,
+    timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
   };
   return directory.systemUse ? encodeDirectoryRecord({ ...input, systemUse: directory.systemUse }) : encodeDirectoryRecord(input);
 }
@@ -428,6 +446,7 @@ function directoryRecordForDescriptorRoot(directory: DirectoryNode, layout?: Pre
     flags: directory.flags,
     identifier: Uint8Array.of(0),
     date: directory.date,
+    timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
   });
 }
 
@@ -496,10 +515,11 @@ function encodePrimaryVolumeDescriptor(input: {
   writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? "");
   writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? "");
   writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? "");
-  bytes.set(encodeVolumeDate(input.options.createdAt ?? input.now), 813);
-  bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.options.createdAt ?? input.now), 830);
-  bytes.set(encodeVolumeDate(input.options.expiresAt), 847);
-  bytes.set(encodeVolumeDate(input.options.effectiveAt ?? input.options.createdAt ?? input.now), 864);
+  const timeZoneOffsetMinutes = input.options.timeZoneOffsetMinutes ?? 0;
+  bytes.set(encodeVolumeDate(input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 813);
+  bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
+  bytes.set(encodeVolumeDate(input.options.expiresAt, timeZoneOffsetMinutes), 847);
+  bytes.set(encodeVolumeDate(input.options.effectiveAt ?? input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 864);
   bytes[881] = 1;
   writeApplicationUse(bytes, input.options.volumeDescriptorApplicationUse);
   return bytes;
@@ -545,10 +565,11 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? input.baseOptions.copyrightFileIdentifier ?? "");
   writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? input.baseOptions.abstractFileIdentifier ?? "");
   writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? input.baseOptions.bibliographicFileIdentifier ?? "");
-  bytes.set(encodeVolumeDate(input.baseOptions.createdAt ?? input.now), 813);
-  bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now), 830);
-  bytes.set(encodeVolumeDate(input.baseOptions.expiresAt), 847);
-  bytes.set(encodeVolumeDate(input.baseOptions.effectiveAt ?? input.baseOptions.createdAt ?? input.now), 864);
+  const timeZoneOffsetMinutes = input.baseOptions.timeZoneOffsetMinutes ?? 0;
+  bytes.set(encodeVolumeDate(input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 813);
+  bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
+  bytes.set(encodeVolumeDate(input.baseOptions.expiresAt, timeZoneOffsetMinutes), 847);
+  bytes.set(encodeVolumeDate(input.baseOptions.effectiveAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 864);
   bytes[881] = 1;
   writeApplicationUse(bytes, input.options.volumeDescriptorApplicationUse ?? input.baseOptions.volumeDescriptorApplicationUse);
   return bytes;

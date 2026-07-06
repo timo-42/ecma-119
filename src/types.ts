@@ -6,6 +6,7 @@ export type IsoInputFile = {
   path: string;
   data: Uint8Array | Buffer | string;
   date?: Date;
+  timeZoneOffsetMinutes?: number;
   extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
   systemUse?: Uint8Array | Buffer | string;
 };
@@ -13,6 +14,7 @@ export type IsoInputFile = {
 export type IsoInputDirectory = {
   path: string;
   date?: Date;
+  timeZoneOffsetMinutes?: number;
   extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
   systemUse?: Uint8Array | Buffer | string;
 };
@@ -25,6 +27,7 @@ export type ExtendedAttributeRecordInput = {
   modifiedAt?: Date;
   expiresAt?: Date | null;
   effectiveAt?: Date | null;
+  timeZoneOffsetMinutes?: number;
   recordFormat?: number;
   recordAttributes?: number;
   recordLength?: number;
@@ -70,6 +73,7 @@ export type CreateIsoOptions = {
   enhancedVolumeDescriptors?: EnhancedVolumeDescriptorOptions[];
   volumePartition?: VolumePartitionOptions;
   volumePartitions?: VolumePartitionOptions[];
+  timeZoneOffsetMinutes?: number;
   createdAt?: Date;
   modifiedAt?: Date;
   effectiveAt?: Date;

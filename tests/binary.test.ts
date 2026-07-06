@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   dateTimeToDate,
+  encodeDirectoryDate,
+  encodeVolumeDate,
   dateToDirectoryDateTime,
   dateToVolumeDescriptorDateTime,
   isACharacter,
@@ -113,6 +115,14 @@ describe('ECMA-119 binary helpers', () => {
       hundredths: 45,
       timeZoneOffsetMinutes: -60,
     });
+  });
+
+  test('encodes Date wrappers with explicit offsets', () => {
+    const date = new Date(Date.UTC(2026, 6, 5, 23, 2, 3, 450));
+
+    expect([...encodeDirectoryDate(date, 120)]).toEqual([126, 7, 6, 1, 2, 3, 8]);
+    expect(String.fromCharCode(...encodeVolumeDate(date, -60).slice(0, 16))).toBe('2026070522020345');
+    expect(encodeVolumeDate(date, -60)[16]).toBe(0xfc);
   });
 
   test('reads and writes volume descriptor date/time fields', () => {
