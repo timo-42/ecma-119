@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, parseVolumeDescriptors } from "../src/index";
+import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 const encoder = new TextEncoder();
@@ -29,6 +29,7 @@ describe("boot volume descriptor writing", () => {
     const terminatorIndex = descriptors.findIndex((descriptor) => descriptor.kind === "terminator");
     const bootIndex = descriptors.findIndex((descriptor) => descriptor.kind === "boot");
 
+    expect(validateIsoImage(image)).toEqual([]);
     expect(terminatorIndex).toBeGreaterThan(-1);
     expect(bootIndex).toBeGreaterThan(-1);
     expect(bootIndex).toBeLessThan(terminatorIndex);
@@ -79,9 +80,11 @@ describe("boot volume descriptor writing", () => {
     );
     const boot = parseVolumeDescriptors(maxImage).find((descriptor) => descriptor.kind === "boot");
 
+    expect(validateIsoImage(maxImage)).toEqual([]);
     expect(boot?.raw.subarray(71)).toEqual(maxBootUse);
     expect(ascii(boot!.raw, 7, 39)).toBe(" ".repeat(32));
     expect(ascii(boot!.raw, 39, 71)).toBe(" ".repeat(32));
+    expect(parseIsoImage(maxImage).files.map((file) => file.path)).toEqual(["MAXBOOT.TXT"]);
 
     expect(() => createIsoImage([{ path: "TOO_BIG.TXT", data: "x" }], {
       bootRecord: {

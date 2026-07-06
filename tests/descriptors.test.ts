@@ -336,10 +336,17 @@ describe("volume descriptor sequence parsing", () => {
     });
 
     const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "enhanced", "terminator"]);
     expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18, 19]);
+    expect(parsed.files[0]).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      size: "both descriptors\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("both descriptors\n");
   });
 
   test("validates supplementary descriptor option bounds", () => {
