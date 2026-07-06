@@ -136,8 +136,5 @@ function checkedFileFlags(value: number): number {
   if ((flags & 0x60) !== 0) {
     throw new Error("directory record file flags bits 5 and 6 are reserved");
   }
-  if ((flags & FILE_FLAG_DIRECTORY) !== 0 && (flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
-    throw new Error("directory record multi-extent directory sections are not supported by the encoder");
-  }
   return flags;
 }
