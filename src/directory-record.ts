@@ -8,6 +8,7 @@ import {
 } from "./binary.js";
 
 export const FILE_FLAG_DIRECTORY = 0x02;
+export const FILE_FLAG_MULTI_EXTENT = 0x80;
 
 export type DirectoryRecordInput = {
   extent: number;
