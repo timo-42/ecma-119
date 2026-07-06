@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { parseIsoImage, parseVolumeDescriptors, validateIsoImage, writeUint32Both } from "../src/index";
+import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage, writeUint32Both } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import {
   PVD_SECTOR,
@@ -12,6 +12,61 @@ import {
 } from "./helpers";
 
 describe("volume descriptor sequence parsing", () => {
+  test("writes supplementary volume descriptors with separate path tables and directory hierarchy", () => {
+    const image = createIsoImage([{
+      path: "README.TXT",
+      data: "descriptor shifted\n",
+    }], {
+      volumeIdentifier: "PRIMARY",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        systemIdentifier: "SUP_SYS",
+        volumeFlags: 1,
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40),
+        applicationIdentifier: "SUP_APP",
+      }],
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const primary = descriptors[0];
+    const supplementary = descriptors[1];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18]);
+    expect(supplementary).toMatchObject({
+      type: 2,
+      kind: "supplementary",
+      version: 1,
+      volumeFlags: 1,
+      systemIdentifier: "SUP_SYS",
+      volumeIdentifier: "SUPP",
+    });
+    expect(supplementary?.kind === "supplementary" ? supplementary.escapeSequences.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x25, 0x2f, 0x40));
+    expect(primary?.kind === "primary" && supplementary?.kind === "supplementary"
+      ? supplementary.typeLPathTableLocation
+      : 0).not.toBe(primary?.kind === "primary" ? primary.typeLPathTableLocation : 0);
+    expect(primary?.kind === "primary" && supplementary?.kind === "supplementary"
+      ? supplementary.rootDirectoryRecord.extent
+      : 0).not.toBe(primary?.kind === "primary" ? primary.rootDirectoryRecord.extent : 0);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("descriptor shifted\n");
+  });
+
+  test("validates supplementary descriptor option bounds", () => {
+    expect(() => createIsoImage([], {
+      supplementaryVolumeDescriptors: [{
+        volumeFlags: 2,
+      }],
+    })).toThrow(/flags bits/i);
+
+    expect(() => createIsoImage([], {
+      supplementaryVolumeDescriptors: [{
+        escapeSequences: new Uint8Array(33),
+      }],
+    })).toThrow(/escape sequences/i);
+  });
+
   test("scans descriptors until the terminator instead of requiring it at sector 17", async () => {
     const module = await loadEcma119Module();
     const createImage = findImageCreator(module!);

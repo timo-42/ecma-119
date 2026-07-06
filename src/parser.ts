@@ -293,17 +293,39 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
 }
 
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
+  const rootRecord = image[offset + 156] === 0 ? undefined : decodeDirectoryRecord(image, offset + 156);
   const common = {
     ...baseDescriptor(image, offset, sector, image[offset + 6] === 2 ? "enhanced" : "supplementary"),
     type: 2 as const,
     volumeFlags: image[offset + 7]!,
     systemIdentifier: readAsciiTrimmed(image, offset + 8, 32),
     volumeIdentifier: readAsciiTrimmed(image, offset + 40, 32),
+    volumeSpaceSize: readUint32Both(image, offset + 80),
+    volumeSetSize: readUint16Both(image, offset + 120),
+    volumeSequenceNumber: readUint16Both(image, offset + 124),
+    logicalBlockSize: readUint16Both(image, offset + 128),
+    pathTableSize: readUint32Both(image, offset + 132),
+    typeLPathTableLocation: readUint32LEAt(image, offset + 140),
+    typeMPathTableLocation: readUint32BEAt(image, offset + 148),
+    rootDirectoryRecord: rootRecord ? directoryEntryFromRecord(rootRecord, "", []) : emptyDirectoryEntry(),
     escapeSequences: image.slice(offset + 88, offset + 120),
   };
   return image[offset + 6] === 2
     ? { ...common, kind: "enhanced", version: 2 }
     : { ...common, kind: "supplementary", version: 1 };
+}
+
+function emptyDirectoryEntry(): IsoDirectoryEntry {
+  return {
+    path: "",
+    identifier: "",
+    extent: 0,
+    extendedAttributeRecordLength: 0,
+    size: 0,
+    date: new Date(0),
+    flags: FILE_FLAG_DIRECTORY,
+    children: [],
+  };
 }
 
 function parsePartitionDescriptor(image: Uint8Array, offset: number, sector: number): VolumePartitionDescriptor {
