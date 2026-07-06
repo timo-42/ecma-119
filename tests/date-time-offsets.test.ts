@@ -293,6 +293,39 @@ describe("ECMA-119 date/time zone offsets", () => {
       ]),
     );
   });
+
+  test("keeps non-date malformed record issues when a record date is also invalid", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "bad directory record date and padding\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootDirectory = getRootDirectoryBytes(image);
+    const dirRecordOffset = findDirectoryRecordOffset(rootDirectory, "DIR");
+    const dirRecord = rootDirectory.subarray(dirRecordOffset, dirRecordOffset + rootDirectory[dirRecordOffset]!);
+    const directoryExtent = readUint32Both(dirRecord, 2);
+    const directorySize = readUint32Both(dirRecord, 10);
+    const directoryBytes = image.subarray(directoryExtent * SECTOR_SIZE, directoryExtent * SECTOR_SIZE + directorySize);
+    const fileRecordOffset = findDirectoryRecordOffset(directoryBytes, "FILE.TXT;1");
+    const identifierLength = directoryBytes[fileRecordOffset + 32]!;
+    directoryBytes[fileRecordOffset + 19] = 13;
+    directoryBytes[fileRecordOffset + 33 + identifierLength] = 0xff;
+
+    const issues = validateIsoImage(image);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_date",
+          path: "DIR/FILE.TXT",
+          message: expect.stringMatching(/month/i),
+        }),
+        expect.objectContaining({
+          code: "directory.record_padding",
+          path: "DIR",
+          message: expect.stringMatching(/padding byte/i),
+        }),
+      ]),
+    );
+  });
 });
 
 function getRootDirectoryBytes(image: Uint8Array): Uint8Array {
