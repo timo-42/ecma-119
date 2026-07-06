@@ -1521,6 +1521,39 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports zero supplementary path table parent directory numbers as range issues", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supp parent zero\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const littlePathTableOffset = readUint32LE(image, supplementaryDescriptorOffset + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, supplementaryDescriptorOffset + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childLittleParentDirectoryNumberOffset = littlePathTableOffset + rootPathTableRecordLength + 6;
+    const childBigParentDirectoryNumberOffset = bigPathTableOffset + rootPathTableRecordLength + 6;
+    image[childLittleParentDirectoryNumberOffset] = 0;
+    image[childLittleParentDirectoryNumberOffset + 1] = 0;
+    image[childBigParentDirectoryNumberOffset] = 0;
+    image[childBigParentDirectoryNumberOffset + 1] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.little.parent_directory_number.range",
+          message: expect.stringMatching(/record 2 parent directory number must be at least 1/i),
+        }),
+        expect.objectContaining({
+          code: "supplementary_path_table.big.parent_directory_number.range",
+          message: expect.stringMatching(/record 2 parent directory number must be at least 1/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports supplementary path table hierarchy mismatches", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supp hierarchy\n" }], {
       volumeIdentifier: "VALIDATION",
@@ -1629,6 +1662,39 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "enhanced_path_table.little.parent",
           message: expect.stringMatching(/parent/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports zero enhanced path table parent directory numbers as range issues", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "enhanced parent zero\n" }], {
+      volumeIdentifier: "VALIDATION",
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    const littlePathTableOffset = readUint32LE(image, enhancedDescriptorOffset + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, enhancedDescriptorOffset + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childLittleParentDirectoryNumberOffset = littlePathTableOffset + rootPathTableRecordLength + 6;
+    const childBigParentDirectoryNumberOffset = bigPathTableOffset + rootPathTableRecordLength + 6;
+    image[childLittleParentDirectoryNumberOffset] = 0;
+    image[childLittleParentDirectoryNumberOffset + 1] = 0;
+    image[childBigParentDirectoryNumberOffset] = 0;
+    image[childBigParentDirectoryNumberOffset + 1] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "enhanced_path_table.little.parent_directory_number.range",
+          message: expect.stringMatching(/record 2 parent directory number must be at least 1/i),
+        }),
+        expect.objectContaining({
+          code: "enhanced_path_table.big.parent_directory_number.range",
+          message: expect.stringMatching(/record 2 parent directory number must be at least 1/i),
         }),
       ]),
     );
