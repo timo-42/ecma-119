@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The first supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, non-interleaved file extents, path tables, and Level 1 compatible file identifiers.
+This package is in initial development. The supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents, path tables, and Level 1 compatible primary file identifiers.
 
 ## Install
 
@@ -59,11 +59,11 @@ Implemented support is intentionally explicit:
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - directory records with standard `.` and `..` entries
-- hidden/existence and associated directory record flags for generated files and directories
+- hidden flags for generated files and directories, and associated file flags for generated files
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records
 - opaque directory record System Use bytes
 - raw and structured file and directory Extended Attribute Records
 - non-interleaved file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Enhanced descriptors, executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, and Rock Ridge/Joliet extensions are outside the first supported profile. Boot record and volume partition descriptors are supported as raw descriptor metadata.
+Executable boot semantics, partition filesystem semantics, multi-volume sets, interleaving, multi-extent file sections, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
