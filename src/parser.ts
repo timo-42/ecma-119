@@ -176,6 +176,8 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector:
     copyrightFileIdentifier: readAsciiTrimmed(image, offset + 702, 37),
     abstractFileIdentifier: readAsciiTrimmed(image, offset + 739, 37),
     bibliographicFileIdentifier: readAsciiTrimmed(image, offset + 776, 37),
+    fileStructureVersion: image[offset + 881]!,
+    applicationUse: image.slice(offset + 883, offset + 1395),
     createdAt: decodeVolumeDate(image, offset + 813),
     modifiedAt: decodeVolumeDate(image, offset + 830),
     expiresAt: decodeVolumeDate(image, offset + 847),
@@ -200,6 +202,9 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   }
   if (pvd.volumeSpaceSize * SECTOR_SIZE > image.byteLength) {
     issues.push({ code: "pvd.volume_space_size", message: "volume space size exceeds image length" });
+  }
+  if (pvd.fileStructureVersion !== 1) {
+    issues.push({ code: "pvd.file_structure_version", message: "primary volume descriptor file structure version must be 1" });
   }
   issues.push(...validateSingleVolumeDescriptor(pvd, "pvd", "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
@@ -396,6 +401,9 @@ function validateSupplementaryLikeVolumeDescriptor(image: Uint8Array, descriptor
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
+  if (descriptor.fileStructureVersion !== 1) {
+    issues.push({ code: `${label}.file_structure_version`, message: `${label} volume descriptor file structure version must be 1` });
+  }
   issues.push(...validateSingleVolumeDescriptor(descriptor, label, `${label} volume descriptor`));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryVolumeSequence(descriptor.rootDirectoryRecord, `${label}:.`));
@@ -454,6 +462,8 @@ function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sec
     copyrightFileIdentifier: readAsciiTrimmed(image, offset + 702, 37),
     abstractFileIdentifier: readAsciiTrimmed(image, offset + 739, 37),
     bibliographicFileIdentifier: readAsciiTrimmed(image, offset + 776, 37),
+    fileStructureVersion: image[offset + 881]!,
+    applicationUse: image.slice(offset + 883, offset + 1395),
     escapeSequences: image.slice(offset + 88, offset + 120),
   };
   return image[offset + 6] === 2

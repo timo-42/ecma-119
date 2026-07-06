@@ -81,6 +81,20 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports unsupported primary file structure versions", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "file structure version\n" }]);
+    image[PVD_OFFSET + 881] = 2;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.file_structure_version",
+          message: "primary volume descriptor file structure version must be 1",
+        }),
+      ]),
+    );
+  });
+
   test("reports a path table record that points to itself as parent", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
@@ -398,6 +412,27 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "supplementary_path_table.optional.big.bounds",
           message: expect.stringMatching(/Type M path table extent is out of bounds/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports unsupported supplementary file structure versions", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    image[supplementaryDescriptorOffset + 881] = 2;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary.file_structure_version",
+          message: "supplementary volume descriptor file structure version must be 1",
         }),
       ]),
     );

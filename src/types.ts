@@ -63,6 +63,7 @@ export type CreateIsoOptions = {
   copyrightFileIdentifier?: string;
   abstractFileIdentifier?: string;
   bibliographicFileIdentifier?: string;
+  volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
   bootRecord?: BootRecordOptions;
   supplementaryVolumeDescriptors?: SupplementaryVolumeDescriptorOptions[];
   enhancedVolumeDescriptors?: EnhancedVolumeDescriptorOptions[];
@@ -86,6 +87,7 @@ export type SupplementaryVolumeDescriptorOptions = {
   copyrightFileIdentifier?: string;
   abstractFileIdentifier?: string;
   bibliographicFileIdentifier?: string;
+  volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
 };
 
 export type EnhancedVolumeDescriptorOptions = SupplementaryVolumeDescriptorOptions;
@@ -180,6 +182,8 @@ export type PrimaryVolumeDescriptor = BaseVolumeDescriptor & {
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;
   bibliographicFileIdentifier: string;
+  fileStructureVersion: number;
+  applicationUse: Uint8Array;
   createdAt: Date | null;
   modifiedAt: Date | null;
   expiresAt: Date | null;
@@ -206,6 +210,8 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;
   bibliographicFileIdentifier: string;
+  fileStructureVersion: number;
+  applicationUse: Uint8Array;
   escapeSequences: Uint8Array;
 };
 
@@ -229,6 +235,8 @@ export type EnhancedVolumeDescriptor = BaseVolumeDescriptor & {
   copyrightFileIdentifier: string;
   abstractFileIdentifier: string;
   bibliographicFileIdentifier: string;
+  fileStructureVersion: number;
+  applicationUse: Uint8Array;
   escapeSequences: Uint8Array;
 };
 
