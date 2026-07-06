@@ -259,7 +259,9 @@ describe("extended attribute records", () => {
       }],
     });
     const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
     const supplementary = descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    const parsedSupplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(supplementary?.kind).toBe("supplementary");
@@ -277,6 +279,14 @@ describe("extended attribute records", () => {
 
     expect(dirRecord[1]).toBe(1);
     expect(decoded.systemIdentifier).toBe("DIR_EAR");
+    const parsedDirectory = parsedSupplementary?.kind === "supplementary"
+      ? parsedSupplementary.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR")
+      : undefined;
+    expect(parsedDirectory && "children" in parsedDirectory ? parsedDirectory.extendedAttributeRecordFields?.systemIdentifier : undefined).toBe("DIR_EAR");
+    expect(parsedDirectory && "children" in parsedDirectory ? parsedDirectory.children[0] : undefined).toMatchObject({
+      path: "DIR/FILE.TXT",
+      identifier: "FILE.TXT;1",
+    });
   });
 
   test("rejects directory extended attribute records that cannot fit in the length byte", () => {
