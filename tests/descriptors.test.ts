@@ -307,6 +307,42 @@ describe("volume descriptor sequence parsing", () => {
     });
   });
 
+  test("writes interleaved directories in supplementary and enhanced descriptor trees", () => {
+    const files = Array.from({ length: 70 }, (_, index) => ({
+      path: `DIR/S${String(index).padStart(3, "0")}.TXT`,
+      data: `secondary ${index}\n`,
+    }));
+    const image = createIsoImage(files, {
+      directories: [{
+        path: "DIR",
+        interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+      }],
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const secondaryDescriptors = parsed.descriptors.filter((descriptor) => descriptor.kind === "supplementary" || descriptor.kind === "enhanced");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(secondaryDescriptors).toHaveLength(2);
+    for (const descriptor of secondaryDescriptors) {
+      if (descriptor.kind !== "supplementary" && descriptor.kind !== "enhanced") {
+        continue;
+      }
+      const directory = descriptor.rootDirectoryRecord.children.find((node) => node.identifier === "DIR");
+      expect(directory).toMatchObject({
+        path: "DIR",
+        fileUnitSize: 1,
+        interleaveGapSize: 1,
+        children: expect.arrayContaining([
+          expect.objectContaining({ path: "DIR/S000.TXT", data: new TextEncoder().encode("secondary 0\n") }),
+          expect.objectContaining({ path: "DIR/S069.TXT", data: new TextEncoder().encode("secondary 69\n") }),
+        ]),
+      });
+    }
+  });
+
   test("writes, validates, and reads files that are both multi-extent and interleaved", () => {
     const payload = new Uint8Array(SECTOR_SIZE * 2 + 11);
     payload.fill(0x41, 0, SECTOR_SIZE);
