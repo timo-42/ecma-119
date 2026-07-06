@@ -20,6 +20,7 @@ const image = createIsoImage([
     path: "README.TXT",
     data: "Hello from ECMA-119\n",
     version: 1,
+    interleave: { fileUnitSize: 1, interleaveGapSize: 0 },
     hidden: false,
     associated: false,
     extendedAttributeRecord: {
@@ -69,6 +70,8 @@ File input `version` defaults to 1 and may be set from 1 through 32767 to write 
 
 Files marked with `associated: true` may share the same path, identifier, and version as a regular file in the same directory. The parser returns both records with the same `path` and `identifier`; the associated file is distinguished by the Associated File flag.
 
+Directory inputs may set `interleave` with the same `{ fileUnitSize, interleaveGapSize }` shape used by files. An empty directory path targets the root directory.
+
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 ## Scope
@@ -96,6 +99,7 @@ Implemented support is intentionally explicit:
 - non-interleaved file sections
 - writer-generated compatible non-interleaved multi-extent file sections
 - writer-generated interleaved regular file sections, including Extended Attribute Records that fit within the assigned file unit
+- writer-generated interleaved directory records, including the root directory
 - read-side reconstruction of compatible interleaved regular file sections
 - read-side reconstruction of compatible interleaved directory records
 - read-side coalescing of compatible non-interleaved multi-extent file sections

@@ -6,6 +6,7 @@ import {
   PVD_SECTOR,
   TERMINATOR_SECTOR,
   createFixtureImage,
+  findDirectoryRecord,
   findImageCreator,
   loadEcma119Module,
   readDirectoryRecord,
@@ -215,6 +216,97 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(secondUnit)).toBe("second unit");
   });
 
+  test("writes, validates, and reads interleaved directories", () => {
+    const files = Array.from({ length: 70 }, (_, index) => ({
+      path: `DIR/F${String(index).padStart(3, "0")}.TXT`,
+      data: `file ${index}\n`,
+    }));
+    const image = createIsoImage(files, {
+      directories: [{
+        path: "DIR",
+        interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const dirRecord = findDirectoryRecord(rootDirectory, "DIR");
+    const dirFirstUnit = image.subarray((dirRecord?.extent ?? 0) * SECTOR_SIZE, ((dirRecord?.extent ?? 0) + 1) * SECTOR_SIZE);
+    const dirSelf = readDirectoryRecord(dirFirstUnit, 0);
+    const dirParent = readDirectoryRecord(dirFirstUnit, dirSelf.length);
+    const gap = image.subarray(((dirRecord?.extent ?? 0) + 1) * SECTOR_SIZE, ((dirRecord?.extent ?? 0) + 2) * SECTOR_SIZE);
+    const directory = parsed.root.children.find((node) => node.identifier === "DIR");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(dirRecord).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(dirSelf).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(dirParent).toMatchObject({
+      fileUnitSize: 0,
+      interleaveGapSize: 0,
+    });
+    expect(gap.every((byte) => byte === 0)).toBe(true);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+      children: expect.arrayContaining([
+        expect.objectContaining({ path: "DIR/F000.TXT", data: new TextEncoder().encode("file 0\n") }),
+        expect.objectContaining({ path: "DIR/F069.TXT", data: new TextEncoder().encode("file 69\n") }),
+      ]),
+    });
+  });
+
+  test("writes interleaved root directory records", () => {
+    const files = Array.from({ length: 70 }, (_, index) => ({
+      path: `R${String(index).padStart(3, "0")}.TXT`,
+      data: `root ${index}\n`,
+    }));
+    const image = createIsoImage(files, {
+      directories: [{
+        path: "",
+        interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const pvdRoot = readDirectoryRecord(sector(image, PVD_SECTOR), 156);
+    const rootFirstUnit = image.subarray(pvdRoot.extent * SECTOR_SIZE, (pvdRoot.extent + 1) * SECTOR_SIZE);
+    const self = readDirectoryRecord(rootFirstUnit, 0);
+    const parent = readDirectoryRecord(rootFirstUnit, self.length);
+    const gap = image.subarray((pvdRoot.extent + 1) * SECTOR_SIZE, (pvdRoot.extent + 2) * SECTOR_SIZE);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.root).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(pvdRoot).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(self).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parent).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(gap.every((byte) => byte === 0)).toBe(true);
+    expect(parsed.files).toHaveLength(70);
+    expect(parsed.files[69]).toMatchObject({
+      path: "R069.TXT",
+      data: new TextEncoder().encode("root 69\n"),
+    });
+  });
+
   test("writes, validates, and reads files that are both multi-extent and interleaved", () => {
     const payload = new Uint8Array(SECTOR_SIZE * 2 + 11);
     payload.fill(0x41, 0, SECTOR_SIZE);
@@ -257,6 +349,16 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 1, interleaveGapSize: 256 } }])).toThrow(/interleaveGapSize/i);
     expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 1, interleaveGapSize: 1.5 } }])).toThrow(/interleaveGapSize/i);
     expect(() => createIsoImage([{ path: "EMPTY.BIN", data: "", interleave: { fileUnitSize: 1, interleaveGapSize: 0 } }])).toThrow(/at least one byte/i);
+  });
+
+  test("rejects invalid interleaved directory authoring options", () => {
+    const directory = { path: "DIR" };
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 0, interleaveGapSize: 0 } }] })).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 256, interleaveGapSize: 0 } }] })).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1.5, interleaveGapSize: 0 } }] })).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: -1 } }] })).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: 256 } }] })).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: 1.5 } }] })).toThrow(/interleaveGapSize/i);
   });
 
   test("rejects interleaved extended attribute records larger than the file unit", () => {
