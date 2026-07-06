@@ -269,13 +269,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
     { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
   ]));
   issues.push(...validateDescriptorRootFileReferences(image, pvd, "pvd"));
-  if (pvd.rootDirectoryRecord.identifier !== ".") {
-    issues.push({
-      code: "pvd.root_directory_record.identifier",
-      message: "primary volume descriptor root directory record must use identifier 0",
-      path: ".",
-    });
-  }
+  issues.push(...validateDescriptorRootDirectoryRecordIdentifier(pvd, "pvd", "primary"));
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
   }
@@ -1323,6 +1317,7 @@ function validateSupplementaryLikeVolumeDescriptor(
     { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
   ]));
   issues.push(...validateDescriptorRootFileReferences(image, descriptor, label));
+  issues.push(...validateDescriptorRootDirectoryRecordIdentifier(descriptor, label, label));
   issues.push(...validateSecondaryEscapeSequences(descriptor, label));
   issues.push(...validateVolumeSpaceSize(image, descriptor, descriptors, label));
   const expectedFileStructureVersion = descriptor.kind === "enhanced" ? 2 : 1;
@@ -1423,6 +1418,21 @@ function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boo
     return isDString(value);
   }
   return value === "" || isSupportedPrimaryFileIdentifier(new TextEncoder().encode(value));
+}
+
+function validateDescriptorRootDirectoryRecordIdentifier(
+  descriptor: PathTableValidationInput,
+  codePrefix: string,
+  label: string,
+): ValidationIssue[] {
+  if (descriptor.rootDirectoryRecord.identifier === ".") {
+    return [];
+  }
+  return [{
+    code: `${codePrefix}.root_directory_record.identifier`,
+    message: `${label} volume descriptor root directory record must use identifier 0`,
+    path: ".",
+  }];
 }
 
 function validateDescriptorRootFileReferences(
