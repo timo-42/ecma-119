@@ -62,6 +62,7 @@ export type CreateIsoOptions = {
   applicationIdentifier?: string;
   bootRecord?: BootRecordOptions;
   supplementaryVolumeDescriptors?: SupplementaryVolumeDescriptorOptions[];
+  enhancedVolumeDescriptors?: EnhancedVolumeDescriptorOptions[];
   volumePartition?: VolumePartitionOptions;
   volumePartitions?: VolumePartitionOptions[];
   createdAt?: Date;
@@ -80,6 +81,8 @@ export type SupplementaryVolumeDescriptorOptions = {
   dataPreparerIdentifier?: string;
   applicationIdentifier?: string;
 };
+
+export type EnhancedVolumeDescriptorOptions = SupplementaryVolumeDescriptorOptions;
 
 export type BootRecordOptions = {
   bootSystemIdentifier?: string;
