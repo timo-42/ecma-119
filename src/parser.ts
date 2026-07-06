@@ -39,6 +39,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   }
   const root = primaryVolumeDescriptor.rootDirectoryRecord;
   return {
+    systemArea: image.slice(0, sectorOffset(SYSTEM_AREA_SECTORS)),
     descriptors: populatedDescriptors,
     primaryVolumeDescriptor,
     root,

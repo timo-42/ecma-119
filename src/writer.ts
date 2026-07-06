@@ -181,6 +181,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
 
   const image = new Uint8Array(nextSector * SECTOR_SIZE);
+  writeSystemArea(image, options.systemArea);
   image.set(padToSector(encodePathTable(pathRecords, "little")), sectorOffset(typeLPathTableSector));
   image.set(padToSector(encodePathTable(pathRecords, "big")), sectorOffset(typeMPathTableSector));
   if (optionalTypeLPathTableSector !== 0) {
@@ -914,6 +915,18 @@ function checkedInterleaveOptions(value: IsoInputFile["interleave"]): { fileUnit
     throw new RangeError("interleave interleaveGapSize must be an integer from 0 to 255");
   }
   return value;
+}
+
+function writeSystemArea(image: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {
+  if (value === undefined) {
+    return;
+  }
+  const systemArea = toBytes(value);
+  const maxLength = SYSTEM_AREA_SECTORS * SECTOR_SIZE;
+  if (systemArea.byteLength > maxLength) {
+    throw new Error(`system area exceeds ${maxLength} bytes`);
+  }
+  image.set(systemArea, 0);
 }
 
 function writeApplicationUse(bytes: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {

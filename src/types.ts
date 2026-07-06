@@ -74,6 +74,7 @@ export type ExtendedAttributeRecord = {
 export type CreateIsoOptions = {
   directories?: IsoInputDirectory[];
   identifierLevel?: 1 | 2;
+  systemArea?: Uint8Array | Buffer | string;
   volumeIdentifier?: string;
   systemIdentifier?: string;
   volumeSetIdentifier?: string;
@@ -325,6 +326,7 @@ export type VolumeDescriptor =
   | UnknownVolumeDescriptor;
 
 export type IsoImage = {
+  systemArea: Uint8Array;
   descriptors: VolumeDescriptor[];
   primaryVolumeDescriptor: PrimaryVolumeDescriptor;
   files: IsoFileEntry[];
