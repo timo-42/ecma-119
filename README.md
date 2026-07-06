@@ -42,6 +42,8 @@ const parsed = parseIsoImage(image);
 console.log(parsed.files.map((file) => file.path));
 ```
 
+`timeZoneOffsetMinutes` is signed minutes east of UTC, must be divisible by 15, supports -720 through 780, and defaults to 0. File, directory, and structured Extended Attribute Record inputs can override the global value for their own ECMA-119 date/time fields.
+
 ## Scope
 
 Implemented support is intentionally explicit:
