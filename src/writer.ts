@@ -10,7 +10,7 @@ import {
   writeUint32LE,
 } from "./binary.js";
 import { encodeDirectoryRecord, FILE_FLAG_DIRECTORY } from "./directory-record.js";
-import { encodeExtendedAttributeRecord } from "./extended-attribute-record.js";
+import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
 import { type BootRecordOptions, CreateIsoOptions, type ExtendedAttributeRecordInput, IsoInputFile, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type VolumePartitionOptions } from "./types.js";
@@ -25,6 +25,7 @@ type FileNode = {
   extendedAttributeRecordLength: number;
   date: Date;
   extent: number;
+  flags: number;
   systemUse?: Uint8Array;
 };
 
@@ -185,6 +186,7 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
       extendedAttributeRecordLength: 0,
       date: file.date ?? now,
       extent: 0,
+      flags: 0,
     };
     if (file.extendedAttributeRecord !== undefined) {
       fileNode.extendedAttributeRecord = isExtendedAttributeRecordInput(file.extendedAttributeRecord)
@@ -196,6 +198,10 @@ function buildTree(files: IsoInputFile[], now: Date): DirectoryNode {
       fileNode.extendedAttributeRecordLength = sectorsForBytes(fileNode.extendedAttributeRecord.byteLength);
       if (fileNode.extendedAttributeRecordLength > 0xff) {
         throw new Error("extended attribute record exceeds 255 logical blocks");
+      }
+      const fields = decodeOptionalExtendedAttributeRecord(fileNode.extendedAttributeRecord);
+      if (fields) {
+        fileNode.flags = extendedAttributeRecordFileFlags(fields);
       }
     }
     if (file.systemUse !== undefined) {
@@ -262,7 +268,7 @@ function encodeDirectoryExtent(directory: DirectoryNode): Uint8Array {
         extent: child.extent,
         extendedAttributeRecordLength: child.extendedAttributeRecordLength,
         dataLength: child.data.byteLength,
-        flags: 0,
+        flags: child.flags,
         identifier,
         date: child.date,
       };
@@ -445,6 +451,14 @@ function toBytes(data: Uint8Array | Buffer | string): Uint8Array {
 
 function isExtendedAttributeRecordInput(data: Uint8Array | Buffer | string | ExtendedAttributeRecordInput): data is ExtendedAttributeRecordInput {
   return typeof data === "object" && !(data instanceof Uint8Array);
+}
+
+function decodeOptionalExtendedAttributeRecord(bytes: Uint8Array): ReturnType<typeof decodeExtendedAttributeRecord> | undefined {
+  try {
+    return decodeExtendedAttributeRecord(bytes);
+  } catch {
+    return undefined;
+  }
 }
 
 function asciiBytes(value: string): Uint8Array {

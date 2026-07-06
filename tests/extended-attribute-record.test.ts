@@ -86,8 +86,10 @@ describe("extended attribute records", () => {
 
     const parsed = parseIsoImage(image, { includeData: true });
     const file = parsed.files[0];
+    const record = findRootFileRecord(image, "STRUCT.TXT;1");
 
     expect(validateIsoImage(image)).toEqual([]);
+    expect(record[25]! & 0x18).toBe(0x10);
     expect(file?.data).toEqual(data);
     expect(file?.extendedAttributeRecordLength).toBe(1);
     expect(file?.extendedAttributeRecord?.byteLength).toBe(SECTOR_SIZE);
@@ -147,11 +149,51 @@ describe("extended attribute records", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "image.parse",
+          code: "extended_attribute_record.parse",
           message: expect.stringMatching(/reserved bytes/i),
         }),
       ]),
     );
+  });
+
+  test("preserves opaque raw extended attribute bytes even when structured decoding fails", () => {
+    const data = asciiBytes("opaque raw ear\n");
+    const extendedAttributeRecord = new Uint8Array(SECTOR_SIZE);
+    extendedAttributeRecord.set(asciiBytes("not a structured ECMA-119 EAR"));
+    const image = createIsoImage([{
+      path: "OPAQUE.TXT",
+      data,
+      extendedAttributeRecord,
+    }]);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(parsed.files[0]?.data).toEqual(data);
+    expect(parsed.files[0]?.extendedAttributeRecord).toEqual(extendedAttributeRecord);
+    expect(parsed.files[0]?.extendedAttributeRecordFields).toBeUndefined();
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "OPAQUE.TXT",
+        }),
+      ]),
+    );
+  });
+
+  test("sets the Record file flag for structured record formats", () => {
+    const image = createIsoImage([{
+      path: "RECORD.TXT",
+      data: "x",
+      extendedAttributeRecord: {
+        recordFormat: 1,
+        recordLength: 80,
+      },
+    }]);
+    const record = findRootFileRecord(image, "RECORD.TXT;1");
+
+    expect(record[25]! & 0x08).toBe(0x08);
+    expect(validateIsoImage(image)).toEqual([]);
   });
 
   test("writes raw extended attribute logical blocks before file data and parses them back", () => {
