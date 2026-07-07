@@ -3724,11 +3724,14 @@ describe("validateIsoImage hardening", () => {
       ...options,
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
     const rootDirectoryOffset = readBothEndianUint32(image, descriptorOffset + 156 + 2) * SECTOR_SIZE;
     writeUint32Both(image, descriptorOffset + 156 + 10, size);
     writeUint32Both(image, rootDirectoryOffset + 10, size);
     writeUint32Both(image, rootDirectoryOffset + image[rootDirectoryOffset]! + 10, size);
 
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`directory data length at ${path.replace(".", "\\.")} must be a positive multiple`, "i"));
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
