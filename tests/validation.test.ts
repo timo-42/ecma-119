@@ -1564,6 +1564,34 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports malformed primary descriptor root extended attribute record dates", () => {
+    const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    }));
+    const rootExtent = rootDirectoryExtent(image);
+    image[rootExtent * SECTOR_SIZE + 10 + 4] = 0x31;
+    image[rootExtent * SECTOR_SIZE + 10 + 5] = 0x33;
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.creation_date",
+          path: ".",
+          message: expect.stringMatching(/creation date and time.*month/i),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: ".",
+        }),
+      ]),
+    );
+  });
+
   test.each([
     {
       kind: "supplementary",
