@@ -714,8 +714,49 @@ describe("extended attribute records", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          code: "extended_attribute_record.bounds",
+          path: "BROKEN.TXT",
+          message: "extended attribute record for BROKEN.TXT has invalid extent bounds",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           code: "image.parse",
-          message: expect.stringMatching(/bounds/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports invalid directory extended attribute bounds before parsing", () => {
+    const image = createIsoImage([{
+      path: "DIR/FILE.TXT",
+      data: "x",
+    }], {
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: makeExtendedAttributeRecord("directory bounds"),
+      }],
+    });
+    const rootDirectory = getRootDirectoryBytes(image);
+    const recordOffset = findRootFileRecordOffset(image, "DIR");
+    rootDirectory[recordOffset + 1] = 255;
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.bounds",
+          path: "DIR",
+          message: "extended attribute record for DIR has invalid extent bounds",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );

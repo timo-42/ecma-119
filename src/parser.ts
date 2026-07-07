@@ -2301,6 +2301,11 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
 
     const identifier = decodeFileIdentifier(record.identifier);
     const recordPath = joinPath(path === "." ? "" : path, stripVersion(identifier)) || ".";
+    const boundsIssue = validateExtendedAttributeRecordBounds(image, record.extent, record.extendedAttributeRecordLength, recordPath);
+    if (boundsIssue) {
+      issues.push(boundsIssue);
+      continue;
+    }
     const extendedAttributeRecord = readExtendedAttributeRecord(image, record);
     const bothEndianIssues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, recordPath);
     const dateIssues = validateExtendedAttributeRecordDateFields(extendedAttributeRecord, recordPath);
@@ -2352,6 +2357,10 @@ function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry:
   if (entry.extendedAttributeRecordLength === 0 || entry.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return [];
   }
+  const boundsIssue = validateExtendedAttributeRecordBounds(image, entry.extent, entry.extendedAttributeRecordLength, path);
+  if (boundsIssue) {
+    return [boundsIssue];
+  }
   const extendedAttributeRecord = image.slice(entry.extent * SECTOR_SIZE, (entry.extent + entry.extendedAttributeRecordLength) * SECTOR_SIZE);
   const issues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, path);
   issues.push(...validateExtendedAttributeRecordDateFields(extendedAttributeRecord, path));
@@ -2384,6 +2393,26 @@ const extendedAttributeRecordBothEndianFields = [
   { start: 80, code: "record_length", label: "record length" },
   { start: 246, code: "application_use_length", label: "application use length" },
 ] as const;
+
+function validateExtendedAttributeRecordBounds(image: Uint8Array, extent: number, length: number, path: string): ValidationIssue | undefined {
+  const start = extent * SECTOR_SIZE;
+  const end = start + length * SECTOR_SIZE;
+  if (
+    !Number.isInteger(extent)
+    || !Number.isInteger(length)
+    || extent < 0
+    || length < 0
+    || start < 0
+    || end > image.byteLength
+  ) {
+    return {
+      code: "extended_attribute_record.bounds",
+      message: `extended attribute record for ${path} has invalid extent bounds`,
+      path,
+    };
+  }
+  return undefined;
+}
 
 function validateExtendedAttributeRecordBothEndianFields(bytes: Uint8Array, path: string): ValidationIssue[] {
   if (bytes.byteLength < 250) {
@@ -2979,6 +3008,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code.startsWith("directory.") && issue.code.endsWith(".endian_mismatch") && message.includes("both-endian uint")) {
+      return true;
+    }
+    if (issue.code === "extended_attribute_record.bounds" && message.includes("invalid extent bounds")) {
       return true;
     }
     return message.includes(issue.message) || issue.message.includes(message);
