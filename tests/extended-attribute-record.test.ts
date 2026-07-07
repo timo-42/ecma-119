@@ -351,6 +351,109 @@ describe("extended attribute records", () => {
     );
   });
 
+  test.each([
+    {
+      label: "creation",
+      offset: 10,
+      code: "extended_attribute_record.creation_date",
+      mutate: (bytes: Uint8Array, offset: number) => {
+        bytes[offset + 4] = 0x31;
+        bytes[offset + 5] = 0x33;
+      },
+      message: /creation date and time.*month/i,
+    },
+    {
+      label: "modification",
+      offset: 27,
+      code: "extended_attribute_record.modification_date",
+      mutate: (bytes: Uint8Array, offset: number) => {
+        bytes[offset + 6] = 0x58;
+      },
+      message: /modification date and time.*16 decimal digits/i,
+    },
+    {
+      label: "expiration",
+      offset: 44,
+      code: "extended_attribute_record.expiration_date",
+      mutate: (bytes: Uint8Array, offset: number) => {
+        bytes[offset + 16] = 4;
+      },
+      message: /expiration date and time.*zero GMT offset/i,
+    },
+    {
+      label: "effective",
+      offset: 61,
+      code: "extended_attribute_record.effective_date",
+      mutate: (bytes: Uint8Array, offset: number) => {
+        bytes[offset + 4] = 0x30;
+        bytes[offset + 5] = 0x30;
+      },
+      message: /effective date and time.*month/i,
+    },
+  ])("reports targeted malformed $label dates in raw extended attribute records", ({ offset, code, mutate, message }) => {
+    const image = createIsoImage([{
+      path: "BADDATE.TXT",
+      data: "x",
+      extendedAttributeRecord: makeExtendedAttributeRecord("bad date"),
+    }]);
+    const record = findRootFileRecord(image, "BADDATE.TXT;1");
+    const extent = readBoth32(record, 2);
+
+    mutate(sector(image, extent), offset);
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          path: "BADDATE.TXT",
+          message: expect.stringMatching(message),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "BADDATE.TXT",
+        }),
+      ]),
+    );
+  });
+
+  test("reports targeted unspecified required dates in raw extended attribute records", () => {
+    const image = createIsoImage([{
+      path: "UNSPEC.TXT",
+      data: "x",
+      extendedAttributeRecord: makeExtendedAttributeRecord("unspecified date"),
+    }]);
+    const record = findRootFileRecord(image, "UNSPEC.TXT;1");
+    const extent = readBoth32(record, 2);
+    const ear = sector(image, extent);
+
+    ear.fill(0x30, 10, 26);
+    ear[26] = 0;
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.creation_date",
+          path: "UNSPEC.TXT",
+          message: expect.stringMatching(/creation date and time.*must be specified/i),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "UNSPEC.TXT",
+        }),
+      ]),
+    );
+  });
+
   test("preserves opaque raw extended attribute bytes even when structured decoding fails", () => {
     const data = asciiBytes("opaque raw ear\n");
     const extendedAttributeRecord = new Uint8Array(SECTOR_SIZE);
