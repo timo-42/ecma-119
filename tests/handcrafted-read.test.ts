@@ -245,6 +245,29 @@ describe("handcrafted ISO reader fixture", () => {
     expect(metadataOnlyChild?.data).toBeUndefined();
   });
 
+  test("resolves aliased external directories independently", () => {
+    const data = asciiBytes("externaldata");
+    const volumeOne = handcraftedExternalPayloadVolumeIso(data);
+    const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    const rootDirectoryOffset = 20 * SECTOR_SIZE;
+    const externalDirectoryRecord = findDirectoryRecordOffset(volumeTwo, rootDirectoryOffset, SECTOR_SIZE, "EXTDIR");
+    const aliasDirectory = directoryRecord({
+      extent: 98,
+      size: SECTOR_SIZE,
+      flags: 0x02,
+      identifier: asciiBytes("ZTDIR"),
+      date: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)),
+      volumeSequenceNumber: 1,
+    });
+    volumeTwo.set(aliasDirectory, externalDirectoryRecord + volumeTwo[externalDirectoryRecord]!);
+
+    const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true });
+
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(volumeSet.files.find((entry) => entry.path === "EXTDIR/CHILD.TXT")?.data).toEqual(data);
+    expect(volumeSet.files.find((entry) => entry.path === "ZTDIR/CHILD.TXT")?.data).toEqual(data);
+  });
+
   test("rejects external regular file data outside the referenced volume member", () => {
     const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
     const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));

@@ -2916,14 +2916,16 @@ function resolveExternalDirectoryEntries(
   membersBySequenceNumber: Map<number, { bytes: Uint8Array; parsed: IsoImage }>,
   includeData: boolean,
   originVolumeSequenceNumber: number,
-  visitedExternalDirectories: Set<string>,
+  externalDirectoryStack: Set<string>,
 ): IsoDirectoryEntry {
   let resolved = directory;
+  let childExternalDirectoryStack = externalDirectoryStack;
   if (directory.external) {
     const key = `${directory.volumeSequenceNumber}:${directory.extent}`;
     const member = membersBySequenceNumber.get(directory.volumeSequenceNumber);
-    if (member && !visitedExternalDirectories.has(key)) {
-      visitedExternalDirectories.add(key);
+    if (member && !externalDirectoryStack.has(key)) {
+      childExternalDirectoryStack = new Set(externalDirectoryStack);
+      childExternalDirectoryStack.add(key);
       resolved = readDirectoryTree(
         member.bytes,
         directory,
@@ -2948,7 +2950,7 @@ function resolveExternalDirectoryEntries(
         membersBySequenceNumber,
         includeData,
         originVolumeSequenceNumber,
-        visitedExternalDirectories,
+        childExternalDirectoryStack,
       );
     }
     if (includeData && child.external && child.data === undefined) {
