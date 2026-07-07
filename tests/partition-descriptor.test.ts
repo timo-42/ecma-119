@@ -198,6 +198,9 @@ describe("volume partition descriptor writing", () => {
       volumePartitionIdentifier: "PARTITION",
       data: "partition\n",
     });
+    expect(parseIsoImage(image, { includeData: false }).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(validateIsoImage(image)).toEqual([]);
+
     const partition = parseVolumeDescriptors(image).find(
       (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
     );
@@ -207,11 +210,55 @@ describe("volume partition descriptor writing", () => {
     writeUint32Both(partition!.raw, 80, 0x20);
     image.set(partition!.raw, partition!.offset);
 
+    expect(parseVolumeDescriptors(image).some((descriptor) => descriptor.kind === "partition")).toBe(true);
+    expect(() => parseIsoImage(image, { includeData: false })).toThrow(/volume partition extent 4294967280\+32 is out of bounds/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "partition.bounds",
           message: expect.stringMatching(/out of bounds/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("parseIsoImage rejects partition extents outside the primary volume space", () => {
+    const image = createWithVolumePartition([{ path: "README.TXT", data: "x" }], {
+      volumePartitionIdentifier: "PARTITION",
+      data: "partition\n",
+    });
+    expect(parseIsoImage(image, { includeData: false }).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(validateIsoImage(image)).toEqual([]);
+
+    const partition = parseVolumeDescriptors(image).find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+    expect(partition).toBeDefined();
+    writeUint32Both(image, 16 * SECTOR_SIZE + 80, partition!.volumePartitionLocation + partition!.volumePartitionSize - 1);
+
+    expect(parseVolumeDescriptors(image).some((descriptor) => descriptor.kind === "partition")).toBe(true);
+    expect(() => parseIsoImage(image, { includeData: false })).toThrow(
+      new RegExp(`volume partition extent ${partition!.volumePartitionLocation}\\+${partition!.volumePartitionSize} is out of bounds`, "i"),
+    );
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "partition.bounds",
+          message: expect.stringMatching(/out of bounds/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
