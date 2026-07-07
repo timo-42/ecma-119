@@ -1407,6 +1407,26 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports missing primary descriptor root directory records before descriptor parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "missing primary root\n" }]);
+    image[PVD_OFFSET + 156] = 0;
+
+    expect(() => parseIsoImage(image)).toThrow(/missing directory record/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_malformed",
+          path: ".",
+          message: expect.stringMatching(/missing directory record/i),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/missing directory record/i),
+        }),
+      ]),
+    );
+  });
+
   test.each([
     {
       kind: "supplementary",
@@ -1434,6 +1454,37 @@ describe("validateIsoImage hardening", () => {
           code: "directory.extent.endian_mismatch",
           path,
           message: expect.stringContaining(`directory record location of extent at ${path} must store matching little- and big-endian values`),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      path: "supplementary:.",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      path: "enhanced:.",
+    },
+  ])("reports missing $kind descriptor root directory records with descriptor-specific paths", ({ options, path }) => {
+    const image = createIsoImage([{ path: "README.TXT", data: "missing secondary root\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const descriptorOffset = 17 * SECTOR_SIZE;
+    image[descriptorOffset + 156] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_malformed",
+          path,
+          message: expect.stringMatching(/missing directory record/i),
         }),
       ]),
     );
