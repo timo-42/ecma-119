@@ -34,6 +34,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "lint:package": "npm run build && publint",
     "test": "vitest run",
     "test:package-entry": "npm run build && vitest run tests/package-entry.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -48,6 +49,7 @@
   ],
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "publint": "^0.3.21",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   },
