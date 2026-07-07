@@ -8,15 +8,19 @@ const PVD_OFFSET = 16 * SECTOR_SIZE;
 const TERMINATOR_OFFSET = 17 * SECTOR_SIZE;
 
 describe("validateIsoImage hardening", () => {
-  test("reports nonzero terminator reserved bytes without failing parse", () => {
+  test("rejects nonzero terminator reserved bytes during parsing", () => {
     const image = baselineImage();
     image[TERMINATOR_OFFSET + 7] = 0xff;
 
-    expect(validateIsoImage(image)).toEqual([
+    expect(parseVolumeDescriptors(image).some((descriptor) => descriptor.kind === "terminator")).toBe(true);
+    expect(() => parseIsoImage(image)).toThrow(/volume descriptor set terminator reserved bytes must be zero at sector 17/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
       expect.objectContaining({
         code: "descriptor.terminator_reserved",
       }),
     ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports malformed descriptor standard identifiers with targeted issues", () => {
