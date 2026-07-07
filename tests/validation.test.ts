@@ -3328,56 +3328,48 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports unsupported interleaved descriptor root directory fields without duplicate parse issues", () => {
+  test("reads interleaved descriptor root directory records", () => {
     const files = Array.from({ length: 80 }, (_, index) => ({
       path: `F${index.toString().padStart(3, "0")}.TXT`,
       data: `file ${index}\n`,
     }));
     const image = withInterleavedPrimaryRootDirectory(baselineImage(files), 1, 1);
+    const parsed = parseIsoImage(image, { includeData: true });
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported interleaved file section fields/i);
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.interleaving_unsupported",
-          path: ".",
-          message: "directory record at . uses unsupported interleaved file section fields",
-        }),
-      ]),
-    );
-    expect(validateIsoImage(image)).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "image.parse",
-        }),
-      ]),
-    );
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.root).toMatchObject({
+      path: "",
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parsed.files).toHaveLength(80);
+    expect(parsed.files[0]).toMatchObject({ path: "F000.TXT", identifier: "F000.TXT;1" });
+    expect(parsed.files[79]).toMatchObject({ path: "F079.TXT", identifier: "F079.TXT;1" });
+    expect(new TextDecoder("ascii").decode(parsed.files[79]?.data)).toBe("file 79\n");
   });
 
-  test("reports unsupported interleaved child directory records without duplicate parse issues", () => {
+  test("reads interleaved child directory records", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "child interleaving\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     image[directoryRecordOffset + 26] = 1;
     image[directoryRecordOffset + 27] = 1;
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((entry) => "children" in entry && entry.path === "DIR");
 
-    expect(() => parseIsoImage(image)).toThrow(/unsupported interleaved file section fields/i);
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.interleaving_unsupported",
-          path: "DIR",
-          message: "directory record at DIR uses unsupported interleaved file section fields",
-        }),
-      ]),
-    );
-    expect(validateIsoImage(image)).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "image.parse",
-        }),
-      ]),
-    );
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parsed.files[0]).toMatchObject({
+      path: "DIR/FILE.TXT",
+      identifier: "FILE.TXT;1",
+      size: "child interleaving\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("child interleaving\n");
   });
 
   test("reports invalid interleaved descriptor root directory fields without duplicate parse issues", () => {
