@@ -2914,14 +2914,17 @@ describe("validateIsoImage hardening", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.publisher_identifier.file_reference",
+          path: ".",
           message: expect.stringMatching(/publisher identifier references MISSING\.TXT;1.*root directory/i),
         }),
         expect.objectContaining({
           code: "pvd.abstract_file_identifier.file_reference",
+          path: ".",
           message: expect.stringMatching(/abstract file identifier references ABSENT\.TXT;1.*root directory/i),
         }),
         expect.objectContaining({
           code: "pvd.bibliographic_file_identifier.file_reference",
+          path: ".",
           message: expect.stringMatching(/bibliographic file identifier references BIBLIO\.TXT;1.*root directory/i),
         }),
       ]),
@@ -3094,6 +3097,7 @@ describe("validateIsoImage hardening", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.${code}`,
+          path: `${codePrefix}:.`,
           message: expect.stringMatching(new RegExp(`${reference}.*root directory`, "i")),
         }),
       ]),
