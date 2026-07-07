@@ -656,6 +656,52 @@ describe("volume descriptor sequence parsing", () => {
     })).toThrow(/requires supported UCS-2 escape sequences/i);
   });
 
+  test("enforces supplementary UCS-2BE directory identifier byte limits before writing", () => {
+    const maxSupplementaryDirectory = "ABCDEFGHIJKLMNO";
+    const image = createIsoImage([{
+      path: `${maxSupplementaryDirectory}/FILE.TXT`,
+      data: "supplementary boundary\n",
+    }], {
+      identifierLevel: 2,
+      supplementaryVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        identifierEncoding: "ucs2-be",
+      }],
+    });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual([`${maxSupplementaryDirectory}/FILE.TXT`]);
+    expect(() => createIsoImage([{
+      path: "ABCDEFGHIJKLMNOP/FILE.TXT",
+      data: "supplementary overflow\n",
+    }], {
+      identifierLevel: 2,
+      supplementaryVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        identifierEncoding: "ucs2-be",
+      }],
+    })).toThrow(/supplementary directory identifier ABCDEFGHIJKLMNOP encodes to 32 bytes; maximum is 31/i);
+  });
+
+  test("allows enhanced UCS-2BE directory identifiers within the enhanced profile limit", () => {
+    const directory = "D".repeat(31);
+    const image = createIsoImage([{
+      path: `${directory}/FILE.TXT`,
+      data: "enhanced ucs2 boundary\n",
+    }], {
+      identifierLevel: 2,
+      enhancedVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        identifierEncoding: "ucs2-be",
+      }],
+    });
+
+    const parsed = parseIsoImage(image);
+    const enhanced = parsed.descriptors.find((descriptor) => descriptor.kind === "enhanced");
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(enhanced?.kind === "enhanced" ? enhanced.rootDirectoryRecord.children[0]?.identifier : undefined).toBe(directory);
+  });
+
   test("writes primary volume descriptor file identifier fields", () => {
     const applicationUse = Uint8Array.of(1, 2, 3, 4);
     const image = createIsoImage([

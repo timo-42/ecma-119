@@ -66,6 +66,8 @@ type BuildTreeState = {
 
 const MAX_FILE_SECTION_SIZE = 0xffffffff;
 const MAX_PATH_TABLE_DIRECTORIES = 0xffff;
+const SUPPLEMENTARY_DIRECTORY_IDENTIFIER_LENGTH_LIMIT = 31;
+const ENHANCED_IDENTIFIER_LENGTH_LIMIT = 207;
 
 type PreparedVolumePartition = {
   options: VolumePartitionOptions;
@@ -742,10 +744,7 @@ function directoryDataLengthFor(directory: DirectoryNode, layout?: PreparedSecon
 }
 
 function identifierBytesForNode(node: DirectoryNode | FileNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
-  if (layout?.identifierEncoding === "ucs2-be") {
-    return encodeUcs2Identifier(node.isoIdentifier);
-  }
-  return asciiBytes(node.isoIdentifier);
+  return identifierBytesForIsoIdentifier(node.isoIdentifier, layout?.identifierEncoding ?? "primary");
 }
 
 function appendRecord(bytes: Uint8Array, offset: number, record: Uint8Array): number {
@@ -942,6 +941,7 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
   return descriptors.map((descriptor) => {
     const optionalPathTables = normalizeOptionalPathTables(descriptor.options.optionalPathTables ?? options.optionalPathTables);
     const identifierEncoding = normalizeSecondaryIdentifierEncoding(descriptor.kind, descriptor.options);
+    validateSecondaryIdentifierLengths(descriptor.kind, directories, identifierEncoding);
     const pathRecords: PathTableRecord[] = directories.map((directory) => ({
       identifier: directory.parent ? identifierBytesForPathTable(directory, identifierEncoding) : Uint8Array.of(0),
       extent: 0,
@@ -984,7 +984,31 @@ function normalizeSecondaryIdentifierEncoding(kind: PreparedSecondaryDescriptor[
 }
 
 function identifierBytesForPathTable(directory: DirectoryNode, encoding: SecondaryIdentifierEncoding): Uint8Array {
-  return encoding === "ucs2-be" ? encodeUcs2Identifier(directory.isoIdentifier) : asciiBytes(directory.isoIdentifier);
+  return identifierBytesForIsoIdentifier(directory.isoIdentifier, encoding);
+}
+
+function identifierBytesForIsoIdentifier(identifier: string, encoding: SecondaryIdentifierEncoding): Uint8Array {
+  return encoding === "ucs2-be" ? encodeUcs2Identifier(identifier) : asciiBytes(identifier);
+}
+
+function validateSecondaryIdentifierLengths(kind: PreparedSecondaryDescriptor["kind"], directories: DirectoryNode[], encoding: SecondaryIdentifierEncoding): void {
+  for (const directory of directories) {
+    if (directory.parent) {
+      const identifier = identifierBytesForPathTable(directory, encoding);
+      const limit = kind === "enhanced" ? ENHANCED_IDENTIFIER_LENGTH_LIMIT : SUPPLEMENTARY_DIRECTORY_IDENTIFIER_LENGTH_LIMIT;
+      if (identifier.byteLength > limit) {
+        throw new Error(`${kind} directory identifier ${directory.isoIdentifier} encodes to ${identifier.byteLength} bytes; maximum is ${limit}`);
+      }
+    }
+    if (kind === "enhanced") {
+      for (const child of directory.children.values()) {
+        const identifier = identifierBytesForIsoIdentifier(child.isoIdentifier, encoding);
+        if (identifier.byteLength > ENHANCED_IDENTIFIER_LENGTH_LIMIT) {
+          throw new Error(`enhanced ${child.kind} identifier ${child.isoIdentifier} encodes to ${identifier.byteLength} bytes; maximum is ${ENHANCED_IDENTIFIER_LENGTH_LIMIT}`);
+        }
+      }
+    }
+  }
 }
 
 const descriptorFileReferenceFields = [
