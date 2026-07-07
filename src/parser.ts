@@ -27,6 +27,7 @@ type DirectoryIdentifierProfile = "supplementary" | "enhanced";
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
   const descriptors = parseVolumeDescriptors(image);
+  assertSupportedDescriptorSequenceProfile(descriptors);
   const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
   if (!pvd) {
     throw new Error("missing primary volume descriptor");
@@ -145,6 +146,17 @@ function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): Val
   }
   issues.push(...validateDescriptorSequenceOrder(descriptors));
   return issues;
+}
+
+function assertSupportedDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): void {
+  const primaryCount = descriptors.filter((descriptor) => descriptor.kind === "primary").length;
+  if (primaryCount > 1) {
+    throw new Error(`volume descriptor sequence contains ${primaryCount} primary volume descriptors; the supported profile requires exactly one`);
+  }
+  const unknown = descriptors.find((descriptor) => descriptor.kind === "unknown");
+  if (unknown) {
+    throw new Error(`volume descriptor type ${unknown.type} at sector ${unknown.sector} is outside the supported profile`);
+  }
 }
 
 function validateDescriptorSequenceOrder(descriptors: VolumeDescriptor[]): ValidationIssue[] {
@@ -3553,6 +3565,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
   return issues.some((issue) => {
     if (issue.code === "image.parse" || issue.code === "descriptor.sequence") {
       return false;
+    }
+    if (
+      (issue.code === "descriptor.primary_duplicate" || issue.code === "descriptor.unknown")
+      && issue.message === message
+    ) {
+      return true;
     }
     if (
       (issue.code === "directory.record_malformed" || issue.code === "directory.record_padding")

@@ -147,11 +147,20 @@ describe("validateIsoImage hardening", () => {
     image[unknownDescriptorOffset + 6] = 7;
 
     expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "unknown", "terminator"]);
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/volume descriptor type 254 at sector 17 is outside the supported profile/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "descriptor.unknown",
           message: "volume descriptor type 254 at sector 17 is outside the supported profile",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
@@ -167,11 +176,20 @@ describe("validateIsoImage hardening", () => {
     image.set(image.subarray(PVD_OFFSET, PVD_OFFSET + SECTOR_SIZE), TERMINATOR_OFFSET);
 
     expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "primary", "terminator"]);
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/volume descriptor sequence contains 2 primary volume descriptors/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "descriptor.primary_duplicate",
           message: "volume descriptor sequence contains 2 primary volume descriptors; the supported profile requires exactly one",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
