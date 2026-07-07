@@ -49,6 +49,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
   assertZeroDescriptorRanges(pvd, primaryVolumeDescriptorZeroRanges());
   assertDescriptorCharacterFields(pvd, primaryVolumeDescriptorCharacterFields());
+  assertDescriptorRootFileReferences(image, pvd, "pvd");
   assertDescriptorRootDirectoryRecordIdentifier(pvd, "primary");
   validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
   for (const descriptor of descriptors) {
@@ -65,6 +66,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
       assertSupportedSecondaryVolumeFlags(descriptor);
       assertSupportedSecondaryEscapeSequences(descriptor);
       assertDescriptorCharacterFields(descriptor, commonVolumeDescriptorCharacterFields());
+      assertDescriptorRootFileReferences(image, descriptor, descriptor.kind);
       assertDescriptorRootDirectoryRecordIdentifier(descriptor, descriptor.kind);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
       assertDescriptorVolumeSpaceSize(image, descriptor, descriptors, descriptor.kind);
@@ -2130,7 +2132,10 @@ function validateDescriptorRootFileReferences(
     if (!field.identifier) {
       continue;
     }
-    if (field.prefixed && !isLevelOneFileIdentifier(new TextEncoder().encode(field.identifier))) {
+    if (
+      (field.prefixed || (descriptor.kind === "primary" && !field.prefixed))
+      && !isLevelOneFileIdentifier(new TextEncoder().encode(field.identifier))
+    ) {
       issues.push({
         code: `${codePrefix}.${field.code}.identifier`,
         message: `${descriptor.kind} volume descriptor ${field.label} references ${field.identifier}, which must be an ECMA-119 Level 1 file identifier`,
@@ -2144,7 +2149,13 @@ function validateDescriptorRootFileReferences(
     return issues;
   }
   for (const field of fields) {
-    if (!field.identifier || (field.prefixed && !isLevelOneFileIdentifier(new TextEncoder().encode(field.identifier)))) {
+    if (
+      !field.identifier
+      || (
+        (field.prefixed || (descriptor.kind === "primary" && !field.prefixed))
+        && !isLevelOneFileIdentifier(new TextEncoder().encode(field.identifier))
+      )
+    ) {
       continue;
     }
     if (!rootFileIdentifiers.has(field.identifier)) {
@@ -2156,6 +2167,17 @@ function validateDescriptorRootFileReferences(
     }
   }
   return issues;
+}
+
+function assertDescriptorRootFileReferences(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  codePrefix: string,
+): void {
+  const issues = validateDescriptorRootFileReferences(image, descriptor, codePrefix);
+  if (issues.length > 0) {
+    throw new Error(issues[0]!.message);
+  }
 }
 
 type DescriptorFileReferenceField = {

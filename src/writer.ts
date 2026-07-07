@@ -11,7 +11,7 @@ import {
 } from "./binary.js";
 import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN, FILE_FLAG_MULTI_EXTENT } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
+import { isLevelOneFileIdentifier, type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
 import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
@@ -774,9 +774,9 @@ function encodePrimaryVolumeDescriptor(input: {
   writeAField(bytes, 318, 128, input.options.publisherIdentifier ?? "");
   writeAField(bytes, 446, 128, input.options.dataPreparerIdentifier ?? "");
   writeAField(bytes, 574, 128, input.options.applicationIdentifier ?? "ECMA-119");
-  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? "", input.identifierLevel);
-  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? "", input.identifierLevel);
-  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? "", input.identifierLevel);
+  writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? "", 1);
+  writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? "", 1);
+  writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? "", 1);
   const timeZoneOffsetMinutes = input.options.timeZoneOffsetMinutes ?? 0;
   bytes.set(encodeVolumeDate(input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 813);
   bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.options.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
@@ -949,6 +949,12 @@ const descriptorFileReferenceFields = [
   { key: "bibliographicFileIdentifier", label: "bibliographic file identifier" },
 ] as const;
 
+const prefixedDescriptorFileReferenceFields = [
+  { key: "publisherIdentifier", label: "publisher identifier" },
+  { key: "dataPreparerIdentifier", label: "data preparer identifier" },
+  { key: "applicationIdentifier", label: "application identifier" },
+] as const;
+
 function validateDescriptorFileReferences(options: CreateIsoOptions, root: DirectoryNode, identifierLevel: IdentifierLevel): void {
   validateDescriptorFileReferenceOptions("primary", options, root, identifierLevel);
   for (const descriptor of options.supplementaryVolumeDescriptors ?? []) {
@@ -966,6 +972,23 @@ function validateDescriptorFileReferenceOptions(
   identifierLevel: IdentifierLevel,
   baseOptions?: CreateIsoOptions,
 ): void {
+  for (const field of prefixedDescriptorFileReferenceFields) {
+    const value = options[field.key] ?? baseOptions?.[field.key] ?? "";
+    if (!value.startsWith("_")) {
+      continue;
+    }
+    const reference = value.slice(1);
+    if (hasPathSeparatorInFileReference(reference)) {
+      throw new Error(`${kind} volume descriptor ${field.label} must reference a file in the root directory`);
+    }
+    const identifier = normalizeFileIdentifierReference(reference, identifierLevel);
+    if (!isLevelOneFileIdentifier(new TextEncoder().encode(identifier))) {
+      throw new Error(`${kind} volume descriptor ${field.label} references ${identifier}, which must be an ECMA-119 Level 1 file identifier`);
+    }
+    if (!hasRootFile(root, identifier)) {
+      throw new Error(`${kind} volume descriptor ${field.label} references ${identifier}, which is not a file described in the root directory`);
+    }
+  }
   for (const field of descriptorFileReferenceFields) {
     const value = options[field.key] ?? baseOptions?.[field.key] ?? "";
     if (value === "") {
@@ -975,6 +998,9 @@ function validateDescriptorFileReferenceOptions(
       throw new Error(`${kind} volume descriptor ${field.label} must reference a file in the root directory`);
     }
     const identifier = normalizeFileIdentifierReference(value, identifierLevel);
+    if (kind === "primary" && !isLevelOneFileIdentifier(new TextEncoder().encode(identifier))) {
+      throw new Error(`${kind} volume descriptor ${field.label} references ${identifier}, which must be an ECMA-119 Level 1 file identifier`);
+    }
     if (!hasRootFile(root, identifier)) {
       throw new Error(`${kind} volume descriptor ${field.label} references ${identifier}, which is not a file described in the root directory`);
     }
