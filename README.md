@@ -1,8 +1,10 @@
 # ecma-119
 
-TypeScript utilities for reading and writing ECMA-119 / ISO 9660 CD-ROM volume images.
+TypeScript utilities for reading and writing ECMA-119 4th edition / ISO 9660 CD-ROM volume images.
 
 This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, single-section non-interleaved directories, and unresolved read-side metadata for external records within a volume set.
+
+The implementation targets ECMA-119 4th edition, June 2019. Tests include generated write-then-read ISO images and handcrafted in-memory reader images that are not produced by the writer. Checked-in ISO byte fixtures produced by independent external tools are not part of the repository yet.
 
 ## Install
 
