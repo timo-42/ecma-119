@@ -70,6 +70,8 @@ Primary descriptor file-reference fields remain constrained to ECMA-119 Level 1 
 
 Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes, but executable boot semantics are left to consuming systems.
 
+Use `volumePartition` for a single raw Volume Partition Descriptor or `volumePartitions` for additional partition descriptors. Partition payloads are written as opaque sector-aligned byte ranges and parsed back as descriptor `data` when payload loading is enabled.
+
 `terminatorCount` defaults to 1 and may be set from 1 through 255 to emit one or more Volume Descriptor Set Terminators.
 
 Generated and parsed descriptor sequences follow the ECMA-119 Volume Descriptor Set order: one Primary Volume Descriptor, zero or more Supplementary Volume Descriptors, zero or more Enhanced Volume Descriptors, zero or more Volume Partition Descriptors, zero or more Boot Records, and one or more Volume Descriptor Set Terminators.
