@@ -5100,7 +5100,9 @@ describe("validateIsoImage hardening", () => {
     const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
     writeUint32Both(image, secondaryDescriptorOffset + 80, image.length / SECTOR_SIZE + 1);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`^${codePrefix} volume space size exceeds image length$`, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.volume_space_size`,
@@ -5108,6 +5110,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
@@ -5130,7 +5133,9 @@ describe("validateIsoImage hardening", () => {
     const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
     writeUint32Both(image, secondaryDescriptorOffset + 80, 17);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`^${codePrefix} volume space size 17 is smaller than referenced sector end`, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.volume_space_size.lower_bound`,
@@ -5138,6 +5143,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
