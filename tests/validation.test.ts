@@ -8,6 +8,23 @@ const PVD_OFFSET = 16 * SECTOR_SIZE;
 const TERMINATOR_OFFSET = 17 * SECTOR_SIZE;
 
 describe("validateIsoImage hardening", () => {
+  test("rejects non-sector-aligned images during parsing", () => {
+    const baseline = baselineImage();
+    const image = baseline.slice(0, baseline.byteLength - 1);
+
+    expect(() => parseIsoImage(image)).toThrow(/image length must be a multiple of 2048 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.sector_alignment",
+          message: "image length must be a multiple of 2048 bytes",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
   test("rejects nonzero terminator reserved bytes during parsing", () => {
     const image = baselineImage();
     image[TERMINATOR_OFFSET + 7] = 0xff;
