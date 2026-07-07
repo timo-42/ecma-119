@@ -5,19 +5,28 @@ export const EL_TORITO_BOOT_SYSTEM_IDENTIFIER = "EL TORITO SPECIFICATION";
 
 const BOOT_CATALOG_ENTRY_SIZE = 0x20;
 const BOOT_CATALOG_ENTRIES_PER_SECTOR = SECTOR_SIZE / BOOT_CATALOG_ENTRY_SIZE;
+const EL_TORITO_LOAD_SECTOR_SIZE = 512;
 
-export function parseElToritoBootCatalog(image: Uint8Array, location: number): IsoBootCatalog {
+export function parseElToritoBootCatalog(image: Uint8Array, location: number, options: { includeData?: boolean } = {}): IsoBootCatalog {
   const issues = validateElToritoBootCatalog(image, location);
   if (issues.length > 0) {
     throw new Error(issues[0]!.message);
   }
   const raw = bootCatalogSector(image, location);
-  const entries = parseBootCatalogEntries(raw);
+  const entries = parseBootCatalogEntries(raw, image, options.includeData ?? false);
+  const validationEntry = entries[0];
+  const initialEntry = entries[1];
+  if (!validationEntry || validationEntry.kind !== "validation") {
+    throw new Error("El Torito boot catalog is missing the validation entry");
+  }
+  if (!initialEntry || initialEntry.kind !== "initial") {
+    throw new Error("El Torito boot catalog is missing the initial/default entry");
+  }
   return {
     location,
     raw,
-    validationEntry: parseValidationEntry(raw.subarray(0, BOOT_CATALOG_ENTRY_SIZE)),
-    initialEntry: parseBootEntry(raw.subarray(BOOT_CATALOG_ENTRY_SIZE, BOOT_CATALOG_ENTRY_SIZE * 2), "initial"),
+    validationEntry,
+    initialEntry,
     entries,
   };
 }
@@ -59,6 +68,11 @@ export function validateElToritoBootCatalog(image: Uint8Array, location: number)
   if (!allZero(initial.subarray(12))) {
     issues.push({ code: "boot.catalog.initial.unused", message: "El Torito initial/default entry trailing unused bytes must be zero" });
   }
+  for (const [index, entry] of parseBootCatalogEntries(raw, image, false).entries()) {
+    if (entry.kind === "initial" || entry.kind === "section") {
+      issues.push(...validateBootImageExtent(image, entry, bootEntryLabel(entry, index)));
+    }
+  }
   return issues;
 }
 
@@ -67,21 +81,21 @@ function bootCatalogSector(image: Uint8Array, location: number): Uint8Array {
   return image.slice(offset, offset + SECTOR_SIZE);
 }
 
-function parseBootCatalogEntries(raw: Uint8Array): IsoBootCatalogEntry[] {
+function parseBootCatalogEntries(raw: Uint8Array, image: Uint8Array, includeImages: boolean): IsoBootCatalogEntry[] {
   const entries: IsoBootCatalogEntry[] = [parseValidationEntry(raw.subarray(0, BOOT_CATALOG_ENTRY_SIZE))];
-  entries.push(parseBootEntry(raw.subarray(BOOT_CATALOG_ENTRY_SIZE, BOOT_CATALOG_ENTRY_SIZE * 2), "initial"));
+  entries.push(parseBootEntry(raw.subarray(BOOT_CATALOG_ENTRY_SIZE, BOOT_CATALOG_ENTRY_SIZE * 2), "initial", image, includeImages));
 
   for (let index = 2; index < BOOT_CATALOG_ENTRIES_PER_SECTOR; index += 1) {
     const entry = raw.subarray(index * BOOT_CATALOG_ENTRY_SIZE, (index + 1) * BOOT_CATALOG_ENTRY_SIZE);
     if (allZero(entry)) {
       break;
     }
-    entries.push(parseBootCatalogEntry(entry));
+    entries.push(parseBootCatalogEntry(entry, image, includeImages));
   }
   return entries;
 }
 
-function parseBootCatalogEntry(entry: Uint8Array): IsoBootCatalogEntry {
+function parseBootCatalogEntry(entry: Uint8Array, image: Uint8Array, includeImages: boolean): IsoBootCatalogEntry {
   if (entry[0] === 0x90 || entry[0] === 0x91) {
     return parseSectionHeaderEntry(entry);
   }
@@ -89,7 +103,7 @@ function parseBootCatalogEntry(entry: Uint8Array): IsoBootCatalogEntry {
     return parseExtensionEntry(entry);
   }
   if (entry[0] === 0x00 || entry[0] === 0x88) {
-    return parseBootEntry(entry, "section");
+    return parseBootEntry(entry, "section", image, includeImages);
   }
   return parseUnknownEntry(entry);
 }
@@ -107,8 +121,8 @@ function parseValidationEntry(entry: Uint8Array): IsoBootCatalogValidationEntry 
   };
 }
 
-function parseBootEntry(entry: Uint8Array, kind: IsoBootCatalogBootEntry["kind"]): IsoBootCatalogBootEntry {
-  return {
+function parseBootEntry(entry: Uint8Array, kind: IsoBootCatalogBootEntry["kind"], image?: Uint8Array, includeImage = false): IsoBootCatalogBootEntry {
+  const bootEntry: IsoBootCatalogBootEntry = {
     kind,
     bootIndicator: entry[0]!,
     bootable: entry[0] === 0x88,
@@ -119,6 +133,10 @@ function parseBootEntry(entry: Uint8Array, kind: IsoBootCatalogBootEntry["kind"]
     loadRba: readUint32LE(entry, 8),
     raw: entry.slice(),
   };
+  if (includeImage && image && bootEntry.sectorCount > 0) {
+    bootEntry.data = readBootImage(image, bootEntry);
+  }
+  return bootEntry;
 }
 
 function parseSectionHeaderEntry(entry: Uint8Array): IsoBootCatalogSectionHeaderEntry {
@@ -157,6 +175,29 @@ function bootCatalogValidationChecksum(entry: Uint8Array): number {
     sum = (sum + readUint16LE(entry, offset)) & 0xffff;
   }
   return sum;
+}
+
+function validateBootImageExtent(image: Uint8Array, entry: IsoBootCatalogBootEntry, label: string): ValidationIssue[] {
+  if (entry.sectorCount === 0) {
+    return [];
+  }
+  if (entry.loadRba < 0 || sectorOffset(entry.loadRba) + entry.sectorCount * EL_TORITO_LOAD_SECTOR_SIZE > image.byteLength) {
+    return [{
+      code: `boot.catalog.${label}.image_bounds`,
+      message: `El Torito ${label} boot image extent ${entry.loadRba}+${entry.sectorCount} is out of bounds`,
+    }];
+  }
+  return [];
+}
+
+function bootEntryLabel(entry: IsoBootCatalogBootEntry, index: number): string {
+  return entry.kind === "initial" ? "initial" : `entry_${index}`;
+}
+
+function readBootImage(image: Uint8Array, entry: IsoBootCatalogBootEntry): Uint8Array {
+  const start = sectorOffset(entry.loadRba);
+  const end = start + entry.sectorCount * EL_TORITO_LOAD_SECTOR_SIZE;
+  return image.slice(start, end);
 }
 
 function allZero(bytes: Uint8Array): boolean {

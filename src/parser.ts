@@ -95,7 +95,7 @@ export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?
   }
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSetSize);
   const includeData = options.includeData ?? true;
-  const descriptorsWithBootCatalogs = descriptors.map((descriptor) => populateBootCatalog(image, descriptor));
+  const descriptorsWithBootCatalogs = descriptors.map((descriptor) => populateBootCatalog(image, descriptor, includeData));
   const populatedDescriptors = descriptorsWithBootCatalogs.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
   for (const descriptor of populatedDescriptors) {
     if (descriptor.kind === "primary") {
@@ -2475,13 +2475,13 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   };
 }
 
-function populateBootCatalog(image: Uint8Array, descriptor: VolumeDescriptor): VolumeDescriptor {
+function populateBootCatalog(image: Uint8Array, descriptor: VolumeDescriptor, includeData: boolean): VolumeDescriptor {
   if (descriptor.kind !== "boot" || !isElToritoBootDescriptor(descriptor)) {
     return descriptor;
   }
   return {
     ...descriptor,
-    bootCatalog: parseElToritoBootCatalog(image, bootCatalogLocation(descriptor)),
+    bootCatalog: parseElToritoBootCatalog(image, bootCatalogLocation(descriptor), { includeData }),
   };
 }
 

@@ -106,7 +106,9 @@ const bootCatalog: IsoBootCatalog | undefined = parsed.descriptors.find(
   (descriptor) => descriptor.kind === "boot",
 )?.bootCatalog;
 const bootCatalogEntry: IsoBootCatalogEntry | undefined = bootCatalog?.entries[0];
+const bootCatalogData: Uint8Array | undefined = bootCatalog?.initialEntry.data;
 
+void bootCatalogData;
 void bootCatalogEntry;
 void descriptors;
 void directoryEntry;
