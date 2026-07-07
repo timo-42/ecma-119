@@ -1,3 +1,5 @@
+import type { PathTableRecord } from "./path-table.js";
+
 export const SECTOR_SIZE = 2048;
 export const SYSTEM_AREA_SECTORS = 16;
 export const STANDARD_IDENTIFIER = "CD001";
@@ -212,6 +214,13 @@ export type BootVolumeDescriptor = BaseVolumeDescriptor & {
   bootSystemUse: Uint8Array;
 };
 
+export type IsoPathTables = {
+  typeL: PathTableRecord[];
+  typeM: PathTableRecord[];
+  optionalTypeL?: PathTableRecord[];
+  optionalTypeM?: PathTableRecord[];
+};
+
 export type PrimaryVolumeDescriptor = BaseVolumeDescriptor & {
   type: 1;
   kind: "primary";
@@ -226,6 +235,7 @@ export type PrimaryVolumeDescriptor = BaseVolumeDescriptor & {
   optionalTypeLPathTableLocation: number;
   typeMPathTableLocation: number;
   optionalTypeMPathTableLocation: number;
+  pathTables?: IsoPathTables;
   rootDirectoryRecord: IsoDirectoryEntry;
   volumeSetIdentifier: string;
   publisherIdentifier: string;
@@ -258,6 +268,7 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   optionalTypeLPathTableLocation: number;
   typeMPathTableLocation: number;
   optionalTypeMPathTableLocation: number;
+  pathTables?: IsoPathTables;
   rootDirectoryRecord: IsoDirectoryEntry;
   volumeSetIdentifier: string;
   publisherIdentifier: string;
@@ -291,6 +302,7 @@ export type EnhancedVolumeDescriptor = BaseVolumeDescriptor & {
   optionalTypeLPathTableLocation: number;
   typeMPathTableLocation: number;
   optionalTypeMPathTableLocation: number;
+  pathTables?: IsoPathTables;
   rootDirectoryRecord: IsoDirectoryEntry;
   volumeSetIdentifier: string;
   publisherIdentifier: string;

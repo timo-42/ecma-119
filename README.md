@@ -74,6 +74,8 @@ Directory inputs may set `interleave` with the same `{ fileUnitSize, interleaveG
 
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
+Parsed primary, supplementary, and enhanced volume descriptors expose decoded path table records under `pathTables`, including mandatory Type L/Type M tables and any optional copies present in the descriptor.
+
 ## Scope
 
 Implemented support is intentionally explicit:
