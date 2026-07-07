@@ -2082,11 +2082,11 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   );
   return {
     ...descriptor,
-    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, new Set()),
+    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, new Set()),
   };
 }
 
-function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path: string, includeData: boolean, localVolumeSequenceNumber: number, visited: Set<number>): IsoDirectoryEntry {
+function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, parent: IsoDirectoryEntry, path: string, includeData: boolean, localVolumeSequenceNumber: number, visited: Set<number>): IsoDirectoryEntry {
   assertSupportedDirectoryEntry(directory, path || ".", localVolumeSequenceNumber);
   assertDirectoryInBounds(image, directory, path || ".");
   if (visited.has(directory.extent)) {
@@ -2104,6 +2104,12 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
   while (offset < bytes.byteLength) {
     const length = bytes[offset]!;
     if (length === 0) {
+      if (recordIndex === 0) {
+        throw new Error(`directory self record is missing at ${path || "."}`);
+      }
+      if (recordIndex === 1) {
+        throw new Error(`directory parent record is missing at ${path || "."}`);
+      }
       offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
       continue;
     }
@@ -2119,6 +2125,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     const index = recordIndex++;
     if (index < 2) {
       assertSupportedDirectoryRecord(record, path || ".", localVolumeSequenceNumber, { allowInterleaving: true });
+      assertDotDirectoryRecordForParsing(record, index, directory, parent, path || ".");
       continue;
     }
 
@@ -2143,7 +2150,7 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
           child.extendedAttributeRecordFields = fields;
         }
       }
-      children.push(readDirectoryTree(image, child, childPath, includeData, localVolumeSequenceNumber, new Set(visited)));
+      children.push(readDirectoryTree(image, child, directory, childPath, includeData, localVolumeSequenceNumber, new Set(visited)));
     } else {
       const identifier = decodeFileIdentifier(record.identifier);
       const cleanName = stripVersion(identifier);
@@ -2174,6 +2181,13 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     }
   }
 
+  if (recordIndex === 0) {
+    throw new Error(`directory self record is missing at ${path || "."}`);
+  }
+  if (recordIndex === 1) {
+    throw new Error(`directory parent record is missing at ${path || "."}`);
+  }
+
   const entry = { ...directory, children };
   if (entry.extendedAttributeRecordLength > 0 && !entry.extendedAttributeRecord) {
     entry.extendedAttributeRecord = image.slice(directory.extent * SECTOR_SIZE, (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE);
@@ -2183,6 +2197,33 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, path
     }
   }
   return entry;
+}
+
+function assertDotDirectoryRecordForParsing(
+  record: DecodedDirectoryRecord,
+  index: number,
+  directory: IsoDirectoryEntry,
+  parent: IsoDirectoryEntry,
+  path: string,
+): void {
+  const expectedIdentifier = index === 0 ? 0 : 1;
+  const expectedEntry = index === 0 ? directory : parent;
+  const recordName = index === 0 ? "self" : "parent";
+  const expectedName = index === 0 ? "current directory" : "parent directory";
+
+  if (record.identifier.length !== 1 || record.identifier[0] !== expectedIdentifier) {
+    throw new Error(`directory ${recordName} record at ${path} must use identifier ${expectedIdentifier}`);
+  }
+  if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+    throw new Error(`directory ${recordName} record at ${path} must have the Directory flag set`);
+  }
+  if (
+    record.extent !== expectedEntry.extent
+    || record.extendedAttributeRecordLength !== expectedEntry.extendedAttributeRecordLength
+    || record.dataLength !== expectedEntry.size
+  ) {
+    throw new Error(`directory ${recordName} record at ${path} does not match the ${expectedName} extent fields`);
+  }
 }
 
 function readFileSectionChain(
