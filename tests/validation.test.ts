@@ -3769,6 +3769,28 @@ describe("validateIsoImage hardening", () => {
     ]);
   });
 
+  test("reports primary prefixed descriptor reference shape when root file resolution is unavailable", () => {
+    const image = createIsoImage([{ path: "LONGPUBLISHER.TXT", data: "publisher\n" }], {
+      identifierLevel: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["LONGPUBLISHER.TXT"]);
+    expect(validateIsoImage(image)).toEqual([]);
+
+    writeDescriptorTextField(image, PVD_OFFSET + 318, 128, "_LONGPUBLISHER.TXT;1");
+    writeUint32Both(image, PVD_OFFSET + 156 + 2, 0xffff);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.publisher_identifier.file_reference.identifier",
+          path: ".",
+          message: "primary volume descriptor publisher identifier references LONGPUBLISHER.TXT;1, which must be an ECMA-119 Level 1 file identifier",
+        }),
+      ]),
+    );
+  });
+
   test.each([
     {
       kind: "supplementary",
