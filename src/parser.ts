@@ -23,6 +23,13 @@ import {
 } from "./types.js";
 
 type DirectoryIdentifierProfile = "supplementary" | "enhanced";
+type DescriptorCharacterField = {
+  start: number;
+  length: number;
+  kind: "a" | "d" | "file";
+  code: string;
+  label: string;
+};
 
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
@@ -34,6 +41,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   }
   assertSupportedDescriptorProfile(pvd, "primary volume descriptor");
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
+  assertDescriptorCharacterFields(pvd, primaryVolumeDescriptorCharacterFields());
   assertDescriptorRootDirectoryRecordIdentifier(pvd, "primary");
   validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
   for (const descriptor of descriptors) {
@@ -47,6 +55,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
       assertSupportedSecondaryEscapeSequences(descriptor);
+      assertDescriptorCharacterFields(descriptor, commonVolumeDescriptorCharacterFields());
       assertDescriptorRootDirectoryRecordIdentifier(descriptor, descriptor.kind);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
     }
@@ -635,17 +644,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
     { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
     { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
   ]));
-  issues.push(...validateDescriptorCharacterFields(pvd, "pvd", [
-    { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
-    { start: 40, length: 32, kind: "d", code: "volume_identifier.characters", label: "volume identifier" },
-    { start: 190, length: 128, kind: "d", code: "volume_set_identifier.characters", label: "volume set identifier" },
-    { start: 318, length: 128, kind: "a", code: "publisher_identifier.characters", label: "publisher identifier" },
-    { start: 446, length: 128, kind: "a", code: "data_preparer_identifier.characters", label: "data preparer identifier" },
-    { start: 574, length: 128, kind: "a", code: "application_identifier.characters", label: "application identifier" },
-    { start: 702, length: 37, kind: "file", code: "copyright_file_identifier.characters", label: "copyright file identifier" },
-    { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
-    { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
-  ]));
+  issues.push(...validateDescriptorCharacterFields(pvd, "pvd", primaryVolumeDescriptorCharacterFields()));
   issues.push(...validateDescriptorRootFileReferences(image, pvd, "pvd"));
   issues.push(...validateDescriptorRootDirectoryRecordIdentifier(pvd, "pvd", "primary"));
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
@@ -1792,17 +1791,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     issues.push({ code: `${label}.logical_block_size`, message: `${label} logical block size must be 2048 for the supported profile` });
   }
-  issues.push(...validateDescriptorCharacterFields(descriptor, label, [
-    { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
-    { start: 40, length: 32, kind: "d", code: "volume_identifier.characters", label: "volume identifier" },
-    { start: 190, length: 128, kind: "d", code: "volume_set_identifier.characters", label: "volume set identifier" },
-    { start: 318, length: 128, kind: "a", code: "publisher_identifier.characters", label: "publisher identifier" },
-    { start: 446, length: 128, kind: "a", code: "data_preparer_identifier.characters", label: "data preparer identifier" },
-    { start: 574, length: 128, kind: "a", code: "application_identifier.characters", label: "application identifier" },
-    { start: 702, length: 37, kind: "file", code: "copyright_file_identifier.characters", label: "copyright file identifier" },
-    { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
-    { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
-  ]));
+  issues.push(...validateDescriptorCharacterFields(descriptor, label, commonVolumeDescriptorCharacterFields()));
   issues.push(...validateDescriptorRootFileReferences(image, descriptor, label));
   issues.push(...validateDescriptorRootDirectoryRecordIdentifier(descriptor, label, label));
   issues.push(...validateSecondaryEscapeSequences(descriptor, label));
@@ -1884,7 +1873,7 @@ function validateZeroDescriptorRanges(
 function validateDescriptorCharacterFields(
   descriptor: VolumeDescriptor,
   codePrefix: string,
-  fields: { start: number; length: number; kind: "a" | "d" | "file"; code: string; label: string }[],
+  fields: DescriptorCharacterField[],
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   for (const field of fields) {
@@ -1897,6 +1886,36 @@ function validateDescriptorCharacterFields(
     }
   }
   return issues;
+}
+
+function assertDescriptorCharacterFields(
+  descriptor: VolumeDescriptor,
+  fields: DescriptorCharacterField[],
+): void {
+  for (const field of fields) {
+    const text = readAscii(descriptor.raw, field.start, field.length);
+    if (!isDescriptorCharacterField(text, field.kind)) {
+      throw new Error(`${descriptor.kind} volume descriptor ${field.label} contains invalid ECMA-119 ${field.kind}-characters`);
+    }
+  }
+}
+
+function primaryVolumeDescriptorCharacterFields(): DescriptorCharacterField[] {
+  return commonVolumeDescriptorCharacterFields();
+}
+
+function commonVolumeDescriptorCharacterFields(): DescriptorCharacterField[] {
+  return [
+    { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
+    { start: 40, length: 32, kind: "d", code: "volume_identifier.characters", label: "volume identifier" },
+    { start: 190, length: 128, kind: "d", code: "volume_set_identifier.characters", label: "volume set identifier" },
+    { start: 318, length: 128, kind: "a", code: "publisher_identifier.characters", label: "publisher identifier" },
+    { start: 446, length: 128, kind: "a", code: "data_preparer_identifier.characters", label: "data preparer identifier" },
+    { start: 574, length: 128, kind: "a", code: "application_identifier.characters", label: "application identifier" },
+    { start: 702, length: 37, kind: "file", code: "copyright_file_identifier.characters", label: "copyright file identifier" },
+    { start: 739, length: 37, kind: "file", code: "abstract_file_identifier.characters", label: "abstract file identifier" },
+    { start: 776, length: 37, kind: "file", code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier" },
+  ];
 }
 
 function isDescriptorCharacterField(text: string, kind: "a" | "d" | "file"): boolean {
