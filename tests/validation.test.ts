@@ -3392,6 +3392,89 @@ describe("validateIsoImage hardening", () => {
       kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       descriptorOffset: 17 * SECTOR_SIZE,
+      code: "supplementary.volume_set_size.mismatch",
+      message: "supplementary volume descriptor volume set size must match primary volume descriptor",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "enhanced.volume_set_size.mismatch",
+      message: "enhanced volume descriptor volume set size must match primary volume descriptor",
+    },
+  ])("rejects $kind volume set size mismatches during parsing", ({ options, descriptorOffset, code, message }) => {
+    const image = createIsoImage([], {
+      volumeIdentifier: "VALIDATION",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).root.children).toEqual([]);
+
+    writeUint16Both(image, descriptorOffset + 120, 3);
+
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(message, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code,
+        message,
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "supplementary.volume_sequence_number.mismatch",
+      message: "supplementary volume descriptor volume sequence number must match primary volume descriptor",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "enhanced.volume_sequence_number.mismatch",
+      message: "enhanced volume descriptor volume sequence number must match primary volume descriptor",
+    },
+  ])("rejects $kind volume sequence number mismatches during parsing", ({ options, descriptorOffset, code, message }) => {
+    const image = createIsoImage([], {
+      volumeIdentifier: "VALIDATION",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).root.children).toEqual([]);
+
+    writeUint16Both(image, descriptorOffset + 124, 1);
+    writeUint16Both(image, descriptorOffset + 156 + 28, 1);
+    const secondaryRootExtent = readBothEndianUint32(image, descriptorOffset + 156 + 2);
+    const secondaryRootOffset = secondaryRootExtent * SECTOR_SIZE;
+    const selfRecordLength = image[secondaryRootOffset]!;
+    const parentRecordOffset = secondaryRootOffset + selfRecordLength;
+    writeUint16Both(image, secondaryRootOffset + 28, 1);
+    writeUint16Both(image, parentRecordOffset + 28, 1);
+
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(message, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code,
+        message,
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
       code: "supplementary.volume_flags",
       message: "supplementary volume descriptor flags bits 1 through 7 must be zero",
     },
@@ -3968,14 +4051,14 @@ describe("validateIsoImage hardening", () => {
   test("accepts supplementary volume set sizes larger than one when records stay on the local volume", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
+      volumeSetSize: 2,
       supplementaryVolumeDescriptors: [{
         volumeIdentifier: "SUPP",
       }],
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
-    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
-    writeUint16Both(image, supplementaryDescriptorOffset + 120, 2);
 
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
     expect(validateIsoImage(image)).toEqual([]);
   });
 
