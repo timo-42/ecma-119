@@ -121,3 +121,15 @@ Implemented support is intentionally explicit:
 - byte-level parser for generated and compatible ECMA-119 images
 
 Executable boot semantics, partition filesystem semantics, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, raw volume partition descriptors/payloads, and external-volume records are supported as descriptor/data structures.
+
+## Not Yet Supported
+
+Known gaps in the current package:
+
+- boot catalog parsing, boot image loading, and executable boot behavior beyond preserving Boot Record descriptor bytes
+- filesystem parsing inside Volume Partition Descriptor payloads; partition data is exposed as opaque bytes
+- Rock Ridge metadata semantics, including POSIX names, permissions, links, and relocation records
+- full Joliet extension semantics; supplementary/enhanced descriptors and UCS-2-style identifiers can be parsed, but Joliet-specific behavior is not implemented as a separate profile
+- writer-authored multi-image volume sets with cross-volume external records; the parser can resolve compatible external records when all member images are supplied to `parseIsoVolumeSet`
+- writer-authored multi-section or interleaved directory records; generated directories are single-section, non-interleaved ECMA-119 directory files
+- complete compatibility with arbitrary extension-heavy ISO 9660 images outside the documented ECMA-119 profile
