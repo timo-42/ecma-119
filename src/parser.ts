@@ -37,6 +37,8 @@ type DescriptorZeroRange = {
   label: string;
 };
 
+const MAX_PATH_TABLE_RECORDS = 0xffff;
+
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
   const descriptors = parseVolumeDescriptors(image);
@@ -707,6 +709,9 @@ function validateDecodedPathTableForParsing(
   if (pathTable.length === 0) {
     throw new Error(`${label} must contain the root directory record`);
   }
+  if (pathTable.length > MAX_PATH_TABLE_RECORDS) {
+    throw new Error(`${label} must not contain more than ${MAX_PATH_TABLE_RECORDS} records`);
+  }
   const root = pathTable[0]!;
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
     throw new Error(`${label} first record must be the root directory with parent number 1`);
@@ -1069,6 +1074,13 @@ function validatePathTableReference(
   if (pathTable.length === 0) {
     issues.push({ code: `${codePrefix}.${endian}.empty`, message: `${label} path table must contain the root directory record` });
     return { issues, records: pathTable };
+  }
+  if (pathTable.length > MAX_PATH_TABLE_RECORDS) {
+    issues.push({
+      code: `${codePrefix}.${endian}.record_count`,
+      message: `${label} path table must not contain more than ${MAX_PATH_TABLE_RECORDS} records`,
+    });
+    return { issues };
   }
   const root = pathTable[0]!;
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {

@@ -1017,6 +1017,26 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports path tables with more than 65535 records", () => {
+    const image = withOverLimitPrimaryPathTables(baselineImage([{ path: "README.TXT", data: "path table count\n" }]));
+
+    expect(() => parseIsoImage(image)).toThrow(/primary volume descriptor Type L path table must not contain more than 65535 records/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.record_count",
+          message: "Type L path table must not contain more than 65535 records",
+        }),
+        expect.objectContaining({
+          code: "path_table.big.record_count",
+          message: "Type M path table must not contain more than 65535 records",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
   test.each([
     {
       label: "Type L",
@@ -5583,6 +5603,38 @@ function appendPrimaryPathTableRecord(image: Uint8Array, identifier: string, par
   writePathTableRecord(image, littleOffset, "little", identifierBytes, parentDirectoryNumber, extent, extendedAttributeRecordLength);
   writePathTableRecord(image, bigOffset, "big", identifierBytes, parentDirectoryNumber, extent, extendedAttributeRecordLength);
   writeUint32Both(image, PVD_OFFSET + 132, currentSize + recordLength);
+}
+
+function withOverLimitPrimaryPathTables(image: Uint8Array): Uint8Array {
+  const recordCount = 0x10000;
+  const rootRecordLength = 10;
+  const childRecordLength = 14;
+  const pathTableSize = rootRecordLength + (recordCount - 1) * childRecordLength;
+  const pathTableSectors = Math.ceil(pathTableSize / SECTOR_SIZE);
+  const typeLPathTableLocation = Math.ceil(image.byteLength / SECTOR_SIZE);
+  const typeMPathTableLocation = typeLPathTableLocation + pathTableSectors;
+  const result = new Uint8Array((typeMPathTableLocation + pathTableSectors) * SECTOR_SIZE);
+  result.set(image);
+
+  writeUint32Both(result, PVD_OFFSET + 80, result.byteLength / SECTOR_SIZE);
+  writeUint32Both(result, PVD_OFFSET + 132, pathTableSize);
+  writeUint32LE(result, PVD_OFFSET + 140, typeLPathTableLocation);
+  writeUint32BE(result, PVD_OFFSET + 148, typeMPathTableLocation);
+  writeOverLimitPathTable(result, typeLPathTableLocation * SECTOR_SIZE, "little", recordCount);
+  writeOverLimitPathTable(result, typeMPathTableLocation * SECTOR_SIZE, "big", recordCount);
+  return result;
+}
+
+function writeOverLimitPathTable(image: Uint8Array, offset: number, endian: "little" | "big", recordCount: number): void {
+  const rootExtent = readBothEndianUint32(image, PVD_OFFSET + 156 + 2);
+  writePathTableRecord(image, offset, endian, Uint8Array.of(0), 1, rootExtent, 0);
+  let writeOffset = offset + 10;
+  const encoder = new TextEncoder();
+  for (let index = 0; index < recordCount - 1; index += 1) {
+    const identifier = encoder.encode(`D${index.toString().padStart(5, "0")}`);
+    writePathTableRecord(image, writeOffset, endian, identifier, 1, rootExtent, 0);
+    writeOffset += 14;
+  }
 }
 
 function writePathTableRecord(
