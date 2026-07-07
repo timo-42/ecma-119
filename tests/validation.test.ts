@@ -3410,7 +3410,9 @@ describe("validateIsoImage hardening", () => {
     const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
     image[fileRecordOffset + 25] |= flag;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/file record at README\.TXT sets Record or Protection flags without an extended attribute record/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_flags_extended_attribute_missing",
@@ -3419,18 +3421,13 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
-    expect(validateIsoImage(image)).not.toEqual(
+    expect(issues).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "image.parse",
         }),
       ]),
     );
-    expect(parseIsoImage(image).files[0]).toMatchObject({
-      path: "README.TXT",
-      flags: flag,
-      extendedAttributeRecordLength: 0,
-    });
   });
 
   test("allows file Record and Protection flags when they match an extended attribute record", () => {
@@ -3461,7 +3458,9 @@ describe("validateIsoImage hardening", () => {
     const fileRecordOffset = findDirectoryRecordOffsetByPath(image, ["DIR", "README.TXT;1"]);
     image[fileRecordOffset + 25] |= 0x08;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/file record at DIR\/README\.TXT sets Record or Protection flags without an extended attribute record/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_flags_extended_attribute_missing",
@@ -3470,6 +3469,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports associated directory record flags", () => {
@@ -3518,7 +3518,9 @@ describe("validateIsoImage hardening", () => {
     const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     image[directoryRecordOffset + 25] |= 0x10;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory record at DIR sets Protection flag without an extended attribute record/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_flags_extended_attribute_missing",
@@ -3527,11 +3529,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
-    expect(parseIsoImage(image).root.children[0]).toMatchObject({
-      path: "DIR",
-      flags: 0x12,
-      extendedAttributeRecordLength: 0,
-    });
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("allows protected directory records when they match an extended attribute record", () => {
@@ -3596,7 +3594,9 @@ describe("validateIsoImage hardening", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root protection flag\n" }]);
     image[PVD_OFFSET + 156 + 25] |= 0x10;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory record at \. sets Protection flag without an extended attribute record/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_flags_extended_attribute_missing",
@@ -3605,6 +3605,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("accepts primary volume set sizes larger than one when records stay on the local volume", () => {
