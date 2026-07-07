@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 4th edition / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, single-section non-interleaved directories, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
+This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, writer-generated single-section non-interleaved directories, read-side compatible non-interleaved multi-extent directory records, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
 
 The implementation targets ECMA-119 4th edition, June 2019. Tests exercise generated write-then-read ISO images, handcrafted in-memory reader images that are not produced by the writer, and checked-in ISO byte fixtures produced by an independent external tool.
 
@@ -112,7 +112,7 @@ Implemented support is intentionally explicit:
 - parse-time rejection of descriptor file-reference fields that do not resolve or do not use the required Level 1 shape
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - file version number authoring from 1 through 32767
-- directory records with standard `.` and `..` entries, written and parsed as single non-interleaved directory sections
+- directory records with standard `.` and `..` entries, written as single non-interleaved directory sections and parsed from compatible non-interleaved multi-extent directory sections
 - hidden flags for generated files and directories, associated file flags for generated files, and regular/associated file pairs with the same identifier
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records
 - opaque directory record System Use bytes
@@ -136,4 +136,5 @@ Known gaps in the current package:
 - full Joliet extension semantics; supplementary/enhanced descriptors and UCS-2-style identifiers can be parsed, but Joliet-specific behavior is not implemented as a separate profile
 - writer-authored multi-image volume sets with cross-volume external records; the parser can resolve compatible external records when all member images are supplied to `parseIsoVolumeSet`
 - writer-authored multi-section or interleaved directory records; generated directories are single-section, non-interleaved ECMA-119 directory files
+- read-side interleaved directory records
 - complete compatibility with arbitrary extension-heavy ISO 9660 images outside the documented ECMA-119 profile

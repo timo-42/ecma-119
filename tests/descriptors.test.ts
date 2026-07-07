@@ -329,7 +329,7 @@ describe("volume descriptor sequence parsing", () => {
     }
   });
 
-  test("rejects multi-extent directory records", () => {
+  test("reads compatible multi-extent directory records", () => {
     const files = Array.from({ length: 70 }, (_, index) => ({
       path: `DIR/M${String(index).padStart(3, "0")}.TXT`,
       data: `multi dir ${index}\n`,
@@ -355,26 +355,25 @@ describe("volume descriptor sequence parsing", () => {
       volumeSequenceNumber: dirRecord.volumeSequenceNumber,
     }), dirRecordOffset + dirRecord.length);
 
-    const issues = validateIsoImage(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const directory = parsed.root.children.find((entry) => "children" in entry && entry.identifier === "DIR");
 
-    expect(() => parseIsoImage(image, { includeData: true })).toThrow(/unsupported multi-extent/i);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.multi_extent_unsupported",
-          path: "DIR",
-          message: expect.stringMatching(/unsupported multi-extent/i),
-        }),
-      ]),
-    );
-    expect(issues).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.interleaving_invalid",
-          path: "DIR",
-        }),
-      ]),
-    );
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(directory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      extent: dirRecord.extent,
+      size: dirRecord.dataLength,
+      sections: [
+        expect.objectContaining({ extent: dirRecord.extent, size: SECTOR_SIZE, flags: 0x82 }),
+        expect.objectContaining({ extent: dirRecord.extent + 1, size: dirRecord.dataLength - SECTOR_SIZE, flags: 0x02 }),
+      ],
+    });
+    expect(directory && "children" in directory ? directory.children : []).toHaveLength(70);
+    expect(parsed.files).toHaveLength(70);
+    expect(parsed.files[0]).toMatchObject({ path: "DIR/M000.TXT", identifier: "M000.TXT;1" });
+    expect(parsed.files[69]).toMatchObject({ path: "DIR/M069.TXT", identifier: "M069.TXT;1" });
+    expect(parsed.files[69]?.data).toEqual(new TextEncoder().encode("multi dir 69\n"));
   });
 
   test("rejects invalid multi-extent authoring options", () => {

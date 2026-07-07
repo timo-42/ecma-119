@@ -3616,6 +3616,31 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports multi-extent directory records missing their final section", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "directory multi extent missing final\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    image[directoryRecordOffset + 25] |= 0x80;
+
+    expect(() => parseIsoImage(image)).toThrow(/multi-extent directory record at DIR is missing its final directory section/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.multi_extent_final_missing",
+          path: "DIR",
+          message: expect.stringMatching(/missing its final directory section/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("does not treat associated file flags as reserved or multi-extent", () => {
     const image = baselineImage([{ path: "README.TXT", data: "associated file flag\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
