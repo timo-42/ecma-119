@@ -1883,19 +1883,23 @@ function validatePrimaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord
 }
 
 function validateDirectoryRecordIdentifierProfile(record: DecodedDirectoryRecord, path: string, profile: DirectoryIdentifierProfile): ValidationIssue[] {
-  if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+  const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
+  if (!isDirectory && profile !== "enhanced") {
     return [];
   }
-  const limit = secondaryDirectoryIdentifierLengthLimit(profile);
+  const limit = isDirectory ? secondaryDirectoryIdentifierLengthLimit(profile) : ENHANCED_FILE_IDENTIFIER_LENGTH_LIMIT;
   if (record.identifier.length <= limit) {
     return [];
   }
+  const identifierKind = isDirectory ? "directory identifier" : "file identifier";
   return [{
-    code: "directory.directory_identifier.length",
-    message: `${profile} directory record directory identifier length at ${path} must not exceed ${limit} bytes`,
+    code: isDirectory ? "directory.directory_identifier.length" : "directory.file_identifier.length",
+    message: `${profile} directory record ${identifierKind} length at ${path} must not exceed ${limit} bytes`,
     path,
   }];
 }
+
+const ENHANCED_FILE_IDENTIFIER_LENGTH_LIMIT = 207;
 
 function secondaryDirectoryIdentifierLengthLimit(profile: DirectoryIdentifierProfile): number {
   return profile === "enhanced" ? 207 : 31;
@@ -2688,12 +2692,14 @@ function assertPrimaryFilePathLengthForParsing(record: DecodedDirectoryRecord, p
 }
 
 function assertDirectoryRecordIdentifierProfileForParsing(record: DecodedDirectoryRecord, path: string, profile: DirectoryIdentifierProfile): void {
-  if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+  const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
+  if (!isDirectory && profile !== "enhanced") {
     return;
   }
-  const limit = secondaryDirectoryIdentifierLengthLimit(profile);
+  const limit = isDirectory ? secondaryDirectoryIdentifierLengthLimit(profile) : ENHANCED_FILE_IDENTIFIER_LENGTH_LIMIT;
   if (record.identifier.length > limit) {
-    throw new Error(`${profile} directory record directory identifier length at ${path} must not exceed ${limit} bytes`);
+    const identifierKind = isDirectory ? "directory identifier" : "file identifier";
+    throw new Error(`${profile} directory record ${identifierKind} length at ${path} must not exceed ${limit} bytes`);
   }
 }
 
@@ -4195,6 +4201,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "directory.directory_identifier.length" && message.includes("directory record directory identifier length")) {
+      return true;
+    }
+    if (issue.code === "directory.file_identifier.length" && message.includes("directory record file identifier length")) {
       return true;
     }
     if (issue.code === "directory.hierarchy_depth" && message.includes("directory hierarchy depth")) {

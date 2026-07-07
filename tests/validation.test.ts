@@ -2367,6 +2367,43 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects enhanced file record identifiers longer than 207 bytes during parsing", () => {
+    const mutatedFileIdentifier = "F".repeat(208);
+    const image = createIsoImage([{ path: "FILE.TXT", data: "enhanced file identifier length\n" }], {
+      volumeIdentifier: "VALIDATION",
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["FILE.TXT"]);
+
+    const enhanced = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "enhanced");
+    if (enhanced?.kind !== "enhanced") {
+      throw new Error("missing enhanced descriptor");
+    }
+    const rootDirectoryOffset = enhanced.rootDirectoryRecord.extent * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, enhanced.rootDirectoryRecord.size, "FILE.TXT;1");
+    rewriteDirectoryRecordIdentifier(image, fileRecordOffset, mutatedFileIdentifier);
+
+    expect(() => parseIsoImage(image)).toThrow(/enhanced directory record file identifier length .* must not exceed 207 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_identifier.length",
+          path: `enhanced:./${mutatedFileIdentifier}`,
+          message: `enhanced directory record file identifier length at enhanced:./${mutatedFileIdentifier} must not exceed 207 bytes`,
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports primary descriptor root directory record identifier mismatches", () => {
     const image = baselineImage();
     image[PVD_OFFSET + 156 + 33] = 1;
