@@ -49,7 +49,6 @@ type DirectoryNode = {
   isoIdentifier: string;
   parent?: DirectoryNode;
   children: Map<string, DirectoryNode | FileNode>;
-  multiExtent?: IsoInputDirectory["multiExtent"];
   sections: FileSectionNode[];
   date: Date;
   timeZoneOffsetMinutes: number;
@@ -99,7 +98,6 @@ type PreparedSecondaryDescriptor = {
   optionalTypeMPathTableSector: number;
   directoryExtents: Map<DirectoryNode, number>;
   directoryDataLengths: Map<DirectoryNode, number>;
-  directorySections: Map<DirectoryNode, FileSectionNode[]>;
 };
 
 type VolumeSetOptions = {
@@ -185,13 +183,13 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       if (directory.external) {
         continue;
       }
-      for (const [index, section] of descriptor.directorySections.get(directory)!.entries()) {
-        section.extent = nextSector;
-        if (index === 0) {
-          descriptor.directoryExtents.set(directory, section.extent);
-        }
-        nextSector += fileSectionExtentSectors(section);
-      }
+      descriptor.directoryExtents.set(directory, nextSector);
+      nextSector += fileSectionExtentSectors({
+        dataLength: descriptor.directoryDataLengths.get(directory)!,
+        extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
+        fileUnitSize: directory.fileUnitSize,
+        interleaveGapSize: directory.interleaveGapSize,
+      });
     }
   }
 
@@ -262,7 +260,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       if (directory.extendedAttributeRecord) {
         image.set(directory.extendedAttributeRecord, sectorOffset(extent));
       }
-      writeDirectorySectionPayloads(image, descriptor.directorySections.get(directory)!, encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber, descriptor));
+      writeDirectoryExtentPayload(image, { ...directory, extent, dataLength: descriptor.directoryDataLengths.get(directory)! }, encodeDirectoryExtent(directory, volumeSet.volumeSequenceNumber, descriptor));
     }
   }
 
@@ -444,12 +442,8 @@ function buildTree(
   for (const input of directories) {
     const interleave = checkedInterleaveOptions(input.interleave);
     const normalized = normalizeDirectoryPath(input.path, identifierLevel);
-    if (normalized.parts.length === 0 && input.multiExtent !== undefined && input.multiExtent !== false) {
-      throw new Error("root directory records must not be recorded as multi-extent");
-    }
     const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     const directory = ensureDirectory(root, normalized.parts, input.date ?? now, directoryTimeZoneOffsetMinutes, state);
-    directory.multiExtent = input.multiExtent;
     directory.date = input.date ?? directory.date;
     directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
     directory.fileUnitSize = interleave.fileUnitSize;
@@ -639,32 +633,6 @@ function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExten
   return sections;
 }
 
-function directorySectionsFor(
-  dataLength: number,
-  multiExtent: IsoInputDirectory["multiExtent"],
-  interleave: { fileUnitSize: number; interleaveGapSize: number },
-): FileSectionNode[] {
-  if (multiExtent === undefined || multiExtent === false) {
-    return [fileSection(0, dataLength, interleave)];
-  }
-
-  const sectionSize = checkedFileSectionSize(typeof multiExtent === "object"
-    ? multiExtent.sectionSize ?? MAX_FILE_SECTION_SIZE
-    : MAX_FILE_SECTION_SIZE);
-  if (dataLength <= sectionSize) {
-    if (typeof multiExtent === "object" && multiExtent.sectionSize !== undefined) {
-      throw new Error("multi-extent sectionSize must be smaller than the directory data length");
-    }
-    return [fileSection(0, dataLength, interleave)];
-  }
-
-  const sections: FileSectionNode[] = [];
-  for (let offset = 0; offset < dataLength; offset += sectionSize) {
-    sections.push(fileSection(offset, Math.min(sectionSize, dataLength - offset), interleave));
-  }
-  return sections;
-}
-
 function externalSectionsFor(input: IsoInputExternalFile | IsoInputExternalDirectory, kind: "file" | "directory"): { sections: FileSectionNode[]; dataLength: number } {
   const extendedAttributeRecordLength = checkedExternalExtendedAttributeRecordLength(input.extendedAttributeRecordLength ?? 0);
   const fileUnitSize = checkedExternalInterleaveField(input.fileUnitSize ?? 0, "fileUnitSize");
@@ -832,23 +800,21 @@ function prepareDirectoryLayout(directories: DirectoryNode[], layout?: PreparedS
       if (layout) {
         layout.directoryExtents.set(directory, directory.extent);
         layout.directoryDataLengths.set(directory, directory.dataLength);
-        layout.directorySections.set(directory, directory.sections);
       }
       continue;
     }
     const dataLength = directoryDataLength(directory, layout);
     const paddedLength = paddedDirectoryDataLength(dataLength);
-    const sections = directorySectionsFor(paddedLength, directory.multiExtent, {
+    const section = fileSection(0, paddedLength, {
       fileUnitSize: directory.fileUnitSize,
       interleaveGapSize: directory.interleaveGapSize,
     });
-    sections[0]!.extendedAttributeRecordLength = directory.extendedAttributeRecordLength;
+    section.extendedAttributeRecordLength = directory.extendedAttributeRecordLength;
     if (layout) {
       layout.directoryDataLengths.set(directory, paddedLength);
-      layout.directorySections.set(directory, sections);
     } else {
       directory.dataLength = paddedLength;
-      directory.sections = sections;
+      directory.sections = [section];
     }
   }
 }
@@ -863,7 +829,7 @@ function directoryDataLength(directory: DirectoryNode, layout?: PreparedSecondar
   offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
   for (const child of sortedDirectoryChildren(directory, layout)) {
     const recordLength = directoryRecordLengthForNode(child, identifierBytesForNode(child, layout));
-    const recordCount = child.kind === "file" ? child.sections.length : directorySectionsForLayout(child, layout).length;
+    const recordCount = child.kind === "file" ? child.sections.length : 1;
     for (let index = 0; index < recordCount; index += 1) {
       offset = nextRecordOffset(offset, recordLength);
     }
@@ -880,11 +846,8 @@ function encodeDirectoryExtent(directory: DirectoryNode, volumeSequenceNumber: n
     const identifier = identifierBytesForNode(child, layout);
     let record: Uint8Array;
     if (child.kind === "directory") {
-      const sections = directorySectionsForLayout(child, layout);
-      for (const [sectionIndex, section] of sections.entries()) {
-        record = directoryRecordForDirectorySection(child, sections, section, sectionIndex, identifier, child.volumeSequenceNumber ?? volumeSequenceNumber);
-        offset = appendRecord(bytes, offset, record);
-      }
+      record = directoryRecordForDirectory(child, identifier, child.volumeSequenceNumber ?? volumeSequenceNumber, layout);
+      offset = appendRecord(bytes, offset, record);
     } else {
       for (const [sectionIndex, section] of child.sections.entries()) {
         record = directoryRecordForFileSection(child, section, sectionIndex, identifier, child.volumeSequenceNumber ?? volumeSequenceNumber);
@@ -910,23 +873,6 @@ function directoryRecordForFileSection(file: FileNode, section: FileSectionNode,
     volumeSequenceNumber,
   };
   return file.systemUse ? encodeDirectoryRecord({ ...input, systemUse: file.systemUse }) : encodeDirectoryRecord(input);
-}
-
-function directoryRecordForDirectorySection(directory: DirectoryNode, sections: FileSectionNode[], section: FileSectionNode, sectionIndex: number, identifier: Uint8Array, volumeSequenceNumber: number): Uint8Array {
-  const isFinalSection = sectionIndex === sections.length - 1;
-  const input = {
-    extent: section.extent,
-    extendedAttributeRecordLength: section.extendedAttributeRecordLength,
-    dataLength: section.dataLength,
-    flags: isFinalSection ? directory.flags : directory.flags | FILE_FLAG_MULTI_EXTENT,
-    fileUnitSize: section.fileUnitSize,
-    interleaveGapSize: section.interleaveGapSize,
-    identifier,
-    date: directory.date,
-    timeZoneOffsetMinutes: directory.timeZoneOffsetMinutes,
-    volumeSequenceNumber,
-  };
-  return directory.systemUse ? encodeDirectoryRecord({ ...input, systemUse: directory.systemUse }) : encodeDirectoryRecord(input);
 }
 
 function directoryRecordForDirectory(directory: DirectoryNode, identifier: Uint8Array, volumeSequenceNumber: number, layout?: PreparedSecondaryDescriptor): Uint8Array {
@@ -974,10 +920,6 @@ function directoryExtentFor(directory: DirectoryNode, layout?: PreparedSecondary
 
 function directoryDataLengthFor(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): number {
   return layout ? layout.directoryDataLengths.get(directory)! : directory.dataLength;
-}
-
-function directorySectionsForLayout(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): FileSectionNode[] {
-  return layout ? layout.directorySections.get(directory)! : directory.sections;
 }
 
 function identifierBytesForNode(node: DirectoryNode | FileNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
@@ -1209,7 +1151,6 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
       optionalTypeMPathTableSector: 0,
       directoryExtents: new Map(),
       directoryDataLengths: new Map(),
-      directorySections: new Map(),
     };
   });
 }

@@ -495,81 +495,6 @@ describe("volume descriptor sequence parsing", () => {
     expect(parsed.files[69]?.data).toEqual(new TextEncoder().encode("multi dir 69\n"));
   });
 
-  test("writes, validates, and reads multi-extent directory records", () => {
-    const files = Array.from({ length: 70 }, (_, index) => ({
-      path: `DIR/W${String(index).padStart(3, "0")}.TXT`,
-      data: `written multi dir ${index}\n`,
-    }));
-    const image = createIsoImage(files, {
-      directories: [{ path: "DIR", multiExtent: { sectionSize: SECTOR_SIZE } }],
-      createdAt: new Date("2024-01-01T00:00:00Z"),
-    });
-    const parsed = parseIsoImage(image, { includeData: true });
-    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
-    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
-    const dirRecordOffset = findDirectoryRecordOffset(rootDirectory, "DIR");
-    const firstRecord = readDirectoryRecord(rootDirectory, dirRecordOffset);
-    const secondRecord = readDirectoryRecord(rootDirectory, dirRecordOffset + firstRecord.length);
-    const directory = parsed.root.children.find((entry) => "children" in entry && entry.identifier === "DIR");
-
-    expect(validateIsoImage(image)).toEqual([]);
-    expect(firstRecord).toMatchObject({
-      dataLength: SECTOR_SIZE,
-      flags: 0x82,
-    });
-    expect(secondRecord).toMatchObject({
-      extent: firstRecord.extent + 1,
-      flags: 0x02,
-    });
-    expect(directory).toMatchObject({
-      path: "DIR",
-      identifier: "DIR",
-      extent: firstRecord.extent,
-      size: SECTOR_SIZE * 2,
-      sections: [
-        expect.objectContaining({ extent: firstRecord.extent, size: SECTOR_SIZE, flags: 0x82 }),
-        expect.objectContaining({ extent: firstRecord.extent + 1, size: SECTOR_SIZE, flags: 0x02 }),
-      ],
-    });
-    expect(directory && "children" in directory ? directory.children : []).toHaveLength(70);
-    expect(parsed.files[69]?.data).toEqual(new TextEncoder().encode("written multi dir 69\n"));
-  });
-
-  test("writes secondary descriptor multi-extent directory records", () => {
-    const files = Array.from({ length: 70 }, (_, index) => ({
-      path: `DIR/S${String(index).padStart(3, "0")}.TXT`,
-      data: `secondary multi dir ${index}\n`,
-    }));
-    const image = createIsoImage(files, {
-      directories: [{ path: "DIR", multiExtent: { sectionSize: SECTOR_SIZE } }],
-      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
-      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
-      createdAt: new Date("2024-01-01T00:00:00Z"),
-    });
-    const parsed = parseIsoImage(image, { includeData: true });
-    const secondaryDirectories = parsed.descriptors
-      .filter((descriptor) => descriptor.kind === "supplementary" || descriptor.kind === "enhanced")
-      .map((descriptor) => descriptor.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR"));
-
-    expect(validateIsoImage(image)).toEqual([]);
-    expect(secondaryDirectories).toHaveLength(2);
-    expect(secondaryDirectories).toEqual([
-      expect.objectContaining({
-        sections: [
-          expect.objectContaining({ size: SECTOR_SIZE, flags: 0x82 }),
-          expect.objectContaining({ size: SECTOR_SIZE, flags: 0x02 }),
-        ],
-      }),
-      expect.objectContaining({
-        sections: [
-          expect.objectContaining({ size: SECTOR_SIZE, flags: 0x82 }),
-          expect.objectContaining({ size: SECTOR_SIZE, flags: 0x02 }),
-        ],
-      }),
-    ]);
-    expect(parsed.files[69]?.data).toEqual(new TextEncoder().encode("secondary multi dir 69\n"));
-  });
-
   test("rejects invalid multi-extent authoring options", () => {
     expect(() => createIsoImage([{
       path: "BAD.TXT",
@@ -581,15 +506,6 @@ describe("volume descriptor sequence parsing", () => {
       data: "abcdef",
       multiExtent: { sectionSize: 6 },
     }])).toThrow(/smaller than the file data length/i);
-    expect(() => createIsoImage([], {
-      directories: [{ path: "DIR", multiExtent: { sectionSize: 0 } }],
-    })).toThrow(/sectionSize/i);
-    expect(() => createIsoImage([], {
-      directories: [{ path: "", multiExtent: { sectionSize: SECTOR_SIZE } }],
-    })).toThrow(/root directory records must not be recorded as multi-extent/i);
-    expect(() => createIsoImage([], {
-      directories: [{ path: "DIR", multiExtent: { sectionSize: SECTOR_SIZE } }],
-    })).toThrow(/smaller than the directory data length/i);
   });
 
   test("writes, validates, and reads interleaved regular files", () => {
