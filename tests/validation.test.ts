@@ -2245,13 +2245,13 @@ describe("validateIsoImage hardening", () => {
     const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
     const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
     const fileRecordOffset = findDirectoryRecordOffset(image, dirDirectoryOffset, SECTOR_SIZE, "FILE.TXT;1");
-    const ucs2DirectoryIdentifier = ucs2be("Å");
-    const ucs2FileIdentifier = ucs2be("É.T;1");
+    const ucs2DirectoryIdentifier = ucs2be("資料");
+    const ucs2FileIdentifier = ucs2be("é.T;1");
 
     rewriteDirectoryRecordIdentifierBytes(image, dirRecordOffset, ucs2DirectoryIdentifier);
     rewriteDirectoryRecordIdentifierBytes(image, fileRecordOffset, ucs2FileIdentifier);
 
-    const pathTableSize = 20;
+    const pathTableSize = 10 + 8 + ucs2DirectoryIdentifier.byteLength;
     const littlePathTableOffset = readUint32LE(image, supplementaryDescriptorOffset + 140) * SECTOR_SIZE;
     const bigPathTableOffset = readUint32BE(image, supplementaryDescriptorOffset + 148) * SECTOR_SIZE;
     writeUint32Both(image, supplementaryDescriptorOffset + 132, pathTableSize);
@@ -2270,8 +2270,8 @@ describe("validateIsoImage hardening", () => {
     expect(parsed.files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
     expect(supplementary.rootDirectoryRecord.children).toHaveLength(1);
     expect(supplementary.rootDirectoryRecord.children[0]).toMatchObject({
-      path: "Å",
-      identifier: "Å",
+      path: "資料",
+      identifier: "資料",
     });
     const decodedDirectory = supplementary.rootDirectoryRecord.children[0];
     if (!("children" in decodedDirectory)) {
@@ -2282,8 +2282,8 @@ describe("validateIsoImage hardening", () => {
       throw new Error("expected decoded supplementary file");
     }
     expect(decodedFile).toMatchObject({
-      path: "Å/É.T",
-      identifier: "É.T;1",
+      path: "資料/é.T",
+      identifier: "é.T;1",
       size: "supplementary ucs2\n".length,
     });
     expect(new TextDecoder("ascii").decode(decodedFile.data)).toBe("supplementary ucs2\n");
