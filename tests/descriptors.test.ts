@@ -269,6 +269,44 @@ describe("volume descriptor sequence parsing", () => {
     expect(second.extent).toBeLessThan(third.extent);
   });
 
+  test("writes, validates, and reads secondary descriptor multi-extent files", () => {
+    const payload = new TextEncoder().encode("abcdefghijklmn");
+    const image = createIsoImage([{
+      path: "MULTI.TXT",
+      data: payload,
+      multiExtent: { sectionSize: 5 },
+    }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    for (const kind of ["supplementary", "enhanced"] as const) {
+      const descriptor = parsed.descriptors.find((candidate) => candidate.kind === kind);
+      if (descriptor?.kind !== kind) {
+        throw new Error(`missing ${kind} descriptor`);
+      }
+      const file = descriptor.rootDirectoryRecord.children.find((node) => node.path === "MULTI.TXT");
+      if (!file || "children" in file) {
+        throw new Error(`missing ${kind} multi-extent file`);
+      }
+      expect(file).toMatchObject({
+        path: "MULTI.TXT",
+        identifier: "MULTI.TXT;1",
+        size: payload.byteLength,
+        flags: 0x80,
+        sections: [
+          expect.objectContaining({ size: 5, flags: 0x80, fileUnitSize: 0, interleaveGapSize: 0 }),
+          expect.objectContaining({ size: 5, flags: 0x80, fileUnitSize: 0, interleaveGapSize: 0 }),
+          expect.objectContaining({ size: 4, flags: 0x00, fileUnitSize: 0, interleaveGapSize: 0 }),
+        ],
+      });
+      expect(file.data).toEqual(payload);
+    }
+  });
+
   test("validates and reads compatible multi-extent directory records", () => {
     const files = Array.from({ length: 70 }, (_, index) => ({
       path: `DIR/M${String(index).padStart(3, "0")}.TXT`,

@@ -2679,6 +2679,47 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports secondary multi-extent file sequence mismatches without duplicate parse issues", () => {
+    const image = createIsoImage([{
+      path: "MULTI.TXT",
+      data: "abcdefghijklmn",
+      multiExtent: { sectionSize: 5 },
+    }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      volumeIdentifier: "VALIDATION",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image, { includeData: true }).files.map((file) => file.path)).toEqual(["MULTI.TXT"]);
+    expect(validateIsoImage(image)).toEqual([]);
+
+    const supplementary = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("missing supplementary descriptor");
+    }
+    const rootDirectoryOffset = supplementary.rootDirectoryRecord.extent * SECTOR_SIZE;
+    const firstSectionOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, supplementary.rootDirectoryRecord.size, "MULTI.TXT;1");
+    const secondSectionOffset = firstSectionOffset + image[firstSectionOffset]!;
+    image[secondSectionOffset + 33] = "Z".charCodeAt(0);
+
+    expect(() => parseIsoImage(image)).toThrow(/not followed by a matching file section/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.multi_extent_sequence",
+          path: "supplementary:./MULTI.TXT",
+          message: expect.stringMatching(/not followed by a matching file section/i),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test.each([
     { flag: 0x01, label: "Hidden" },
     { flag: 0x08, label: "Record" },
