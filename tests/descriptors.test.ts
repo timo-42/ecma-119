@@ -427,29 +427,85 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(secondUnit)).toBe("second unit");
   });
 
-  test("rejects interleaved directory authoring", () => {
-    expect(() => createIsoImage([{ path: "DIR/FILE.TXT", data: "directory\n" }], {
+  test("writes, validates, and reads interleaved directory records", () => {
+    const files = Array.from({ length: 70 }, (_, index) => ({
+      path: `DIR/F${index.toString().padStart(3, "0")}.TXT`,
+      data: `file ${index}\n`,
+    }));
+    const image = createIsoImage(files, {
       directories: [{
         path: "DIR",
         interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
-      } as never],
-    })).toThrow(/directory records must not be recorded in interleaved mode/i);
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const dirRecord = findDirectoryRecord(rootDirectory, "DIR");
+    const gap = image.subarray((dirRecord!.extent + 1) * SECTOR_SIZE, (dirRecord!.extent + 2) * SECTOR_SIZE);
+    const secondUnit = image.subarray((dirRecord!.extent + 2) * SECTOR_SIZE, (dirRecord!.extent + 3) * SECTOR_SIZE);
+    const parsedDirectory = parsed.root.children.find((node) => "children" in node && node.path === "DIR");
 
-    expect(() => createIsoImage([{ path: "ROOT.TXT", data: "root\n" }], {
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(dirRecord).toMatchObject({ fileUnitSize: 1, interleaveGapSize: 1 });
+    expect(gap.every((byte) => byte === 0)).toBe(true);
+    expect(secondUnit.some((byte) => byte !== 0)).toBe(true);
+    expect(parsedDirectory).toMatchObject({
+      path: "DIR",
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parsedDirectory && "children" in parsedDirectory ? parsedDirectory.children.map((node) => node.path).sort() : []).toEqual(
+      files.map((file) => file.path).sort(),
+    );
+    expect(new TextDecoder("ascii").decode(parsed.files.find((file) => file.path === "DIR/F069.TXT")?.data)).toBe("file 69\n");
+  });
+
+  test("writes, validates, and reads interleaved root directory records", () => {
+    const image = createIsoImage([{ path: "ROOT.TXT", data: "root\n" }], {
       directories: [{
         path: "",
         interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
-      } as never],
-    })).toThrow(/directory records must not be recorded in interleaved mode/i);
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
 
-    expect(() => createIsoImage([{ path: "DIR/SECOND.TXT", data: "secondary\n" }], {
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor.rootDirectoryRecord).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(parsed.root).toMatchObject({
+      fileUnitSize: 1,
+      interleaveGapSize: 1,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("root\n");
+  });
+
+  test("writes secondary descriptor interleaved directory records", () => {
+    const image = createIsoImage([{ path: "DIR/SECOND.TXT", data: "secondary\n" }], {
       directories: [{
         path: "DIR",
         interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
-      } as never],
+      }],
       supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
       enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
-    })).toThrow(/directory records must not be recorded in interleaved mode/i);
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const secondaryDirectories = parsed.descriptors
+      .filter((descriptor) => descriptor.kind === "supplementary" || descriptor.kind === "enhanced")
+      .map((descriptor) => descriptor.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR"));
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(secondaryDirectories).toHaveLength(2);
+    expect(secondaryDirectories).toEqual([
+      expect.objectContaining({ fileUnitSize: 1, interleaveGapSize: 1 }),
+      expect.objectContaining({ fileUnitSize: 1, interleaveGapSize: 1 }),
+    ]);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("secondary\n");
   });
 
   test("writes, validates, and reads files that are both multi-extent and interleaved", () => {
@@ -506,14 +562,14 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([{ path: "EMPTY.BIN", data: "", interleave: { fileUnitSize: 1, interleaveGapSize: 0 } }])).toThrow(/at least one byte/i);
   });
 
-  test("rejects all interleaved directory authoring options", () => {
+  test("rejects invalid interleaved directory authoring options", () => {
     const directory = { path: "DIR" };
-    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 0, interleaveGapSize: 0 } } as never] })).toThrow(/directory records must not be recorded in interleaved mode/i);
-    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 256, interleaveGapSize: 0 } } as never] })).toThrow(/directory records must not be recorded in interleaved mode/i);
-    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1.5, interleaveGapSize: 0 } } as never] })).toThrow(/directory records must not be recorded in interleaved mode/i);
-    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: -1 } } as never] })).toThrow(/directory records must not be recorded in interleaved mode/i);
-    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: 256 } } as never] })).toThrow(/directory records must not be recorded in interleaved mode/i);
-    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: 1.5 } } as never] })).toThrow(/directory records must not be recorded in interleaved mode/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 0, interleaveGapSize: 0 } }] })).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 256, interleaveGapSize: 0 } }] })).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1.5, interleaveGapSize: 0 } }] })).toThrow(/fileUnitSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: -1 } }] })).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: 256 } }] })).toThrow(/interleaveGapSize/i);
+    expect(() => createIsoImage([], { directories: [{ ...directory, interleave: { fileUnitSize: 1, interleaveGapSize: 1.5 } }] })).toThrow(/interleaveGapSize/i);
   });
 
   test("rejects interleaved extended attribute records larger than the file unit", () => {
@@ -523,6 +579,13 @@ describe("volume descriptor sequence parsing", () => {
       interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
       extendedAttributeRecord: new Uint8Array(SECTOR_SIZE + 1),
     }])).toThrow(/file unit size/i);
+    expect(() => createIsoImage([], {
+      directories: [{
+        path: "DIR",
+        interleave: { fileUnitSize: 1, interleaveGapSize: 1 },
+        extendedAttributeRecord: new Uint8Array(SECTOR_SIZE + 1),
+      }],
+    })).toThrow(/file unit size/i);
   });
 
   test("writes supplementary volume descriptors with separate path tables and directory hierarchy", () => {
