@@ -978,6 +978,69 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("both descriptors\n");
   });
 
+  test("writes, validates, and reads per-secondary descriptor date overrides", () => {
+    const baseCreatedAt = new Date("2024-01-01T00:00:00Z");
+    const supplementaryCreatedAt = new Date("2025-02-03T04:05:06.070Z");
+    const supplementaryModifiedAt = new Date("2025-02-04T05:06:07.080Z");
+    const supplementaryEffectiveAt = new Date("2025-02-05T06:07:08.090Z");
+    const enhancedCreatedAt = new Date("2026-03-04T05:06:07.080Z");
+    const enhancedModifiedAt = new Date("2026-03-05T06:07:08.090Z");
+    const enhancedEffectiveAt = new Date("2026-03-06T07:08:09.010Z");
+    const enhancedExpiresAt = new Date("2027-04-05T06:07:08.090Z");
+    const image = createIsoImage([{
+      path: "DATES.TXT",
+      data: "secondary descriptor dates\n",
+    }], {
+      createdAt: baseCreatedAt,
+      modifiedAt: new Date("2024-01-02T00:00:00Z"),
+      effectiveAt: new Date("2024-01-03T00:00:00Z"),
+      expiresAt: new Date("2024-12-31T00:00:00Z"),
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        createdAt: supplementaryCreatedAt,
+        modifiedAt: supplementaryModifiedAt,
+        effectiveAt: supplementaryEffectiveAt,
+        expiresAt: null,
+        timeZoneOffsetMinutes: 60,
+      }],
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+        createdAt: enhancedCreatedAt,
+        modifiedAt: enhancedModifiedAt,
+        effectiveAt: enhancedEffectiveAt,
+        expiresAt: enhancedExpiresAt,
+        timeZoneOffsetMinutes: -120,
+      }],
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const descriptors = parsed.descriptors;
+    const primary = parsed.primaryVolumeDescriptor;
+    const supplementary = descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    const enhanced = descriptors.find((descriptor) => descriptor.kind === "enhanced");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(primary.createdAt).toEqual(baseCreatedAt);
+    expect(supplementary).toMatchObject({
+      kind: "supplementary",
+      createdAt: supplementaryCreatedAt,
+      modifiedAt: supplementaryModifiedAt,
+      expiresAt: null,
+      effectiveAt: supplementaryEffectiveAt,
+    });
+    expect(enhanced).toMatchObject({
+      kind: "enhanced",
+      createdAt: enhancedCreatedAt,
+      modifiedAt: enhancedModifiedAt,
+      expiresAt: enhancedExpiresAt,
+      effectiveAt: enhancedEffectiveAt,
+    });
+    expect(parsed.files[0]).toMatchObject({
+      path: "DATES.TXT",
+      data: new TextEncoder().encode("secondary descriptor dates\n"),
+    });
+  });
+
   test("writes, validates, and reads all descriptor classes in ECMA-119 sequence order", () => {
     const image = createIsoImage([{
       path: "README.TXT",

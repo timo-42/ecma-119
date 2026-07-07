@@ -830,11 +830,12 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   writeFileIdentifierField(bytes, 702, input.options.copyrightFileIdentifier ?? input.baseOptions.copyrightFileIdentifier ?? "", input.identifierLevel);
   writeFileIdentifierField(bytes, 739, input.options.abstractFileIdentifier ?? input.baseOptions.abstractFileIdentifier ?? "", input.identifierLevel);
   writeFileIdentifierField(bytes, 776, input.options.bibliographicFileIdentifier ?? input.baseOptions.bibliographicFileIdentifier ?? "", input.identifierLevel);
-  const timeZoneOffsetMinutes = input.baseOptions.timeZoneOffsetMinutes ?? 0;
-  bytes.set(encodeVolumeDate(input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 813);
-  bytes.set(encodeVolumeDate(input.baseOptions.modifiedAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 830);
-  bytes.set(encodeVolumeDate(input.baseOptions.expiresAt, timeZoneOffsetMinutes), 847);
-  bytes.set(encodeVolumeDate(input.baseOptions.effectiveAt ?? input.baseOptions.createdAt ?? input.now, timeZoneOffsetMinutes), 864);
+  const timeZoneOffsetMinutes = input.options.timeZoneOffsetMinutes ?? input.baseOptions.timeZoneOffsetMinutes ?? 0;
+  const createdAt = input.options.createdAt ?? input.baseOptions.createdAt ?? input.now;
+  bytes.set(encodeVolumeDate(createdAt, timeZoneOffsetMinutes), 813);
+  bytes.set(encodeVolumeDate(input.options.modifiedAt ?? input.baseOptions.modifiedAt ?? createdAt, timeZoneOffsetMinutes), 830);
+  bytes.set(encodeVolumeDate(input.options.expiresAt !== undefined ? input.options.expiresAt : input.baseOptions.expiresAt, timeZoneOffsetMinutes), 847);
+  bytes.set(encodeVolumeDate(input.options.effectiveAt ?? input.baseOptions.effectiveAt ?? createdAt, timeZoneOffsetMinutes), 864);
   bytes[881] = input.layout.kind === "enhanced" ? 2 : 1;
   writeApplicationUse(bytes, input.options.volumeDescriptorApplicationUse ?? input.baseOptions.volumeDescriptorApplicationUse);
   return bytes;
