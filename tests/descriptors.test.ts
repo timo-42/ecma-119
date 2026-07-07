@@ -895,7 +895,7 @@ describe("volume descriptor sequence parsing", () => {
       applicationIdentifier: "ECMA-119 TEST",
       copyrightFileIdentifier: "COPY.TXT;1",
     });
-    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "partition", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "partition", "boot", "terminator"]);
 
     const mutations = [
       { sector: 16, offset: 8, code: "pvd.system_identifier.characters", message: /system identifier/i },
@@ -907,10 +907,10 @@ describe("volume descriptor sequence parsing", () => {
       { sector: 16, offset: 702, code: "pvd.copyright_file_identifier.characters", message: /copyright file identifier/i },
       { sector: 16, offset: 739, code: "pvd.abstract_file_identifier.characters", message: /abstract file identifier/i },
       { sector: 16, offset: 776, code: "pvd.bibliographic_file_identifier.characters", message: /bibliographic file identifier/i },
-      { sector: 17, offset: 7, code: "boot.system_identifier.characters", message: /boot system identifier/i },
-      { sector: 17, offset: 39, code: "boot.identifier.characters", message: /boot identifier/i },
-      { sector: 18, offset: 8, code: "partition.system_identifier.characters", message: /system identifier/i },
-      { sector: 18, offset: 40, code: "partition.volume_partition_identifier.characters", message: /volume partition identifier/i },
+      { sector: 18, offset: 7, code: "boot.system_identifier.characters", message: /boot system identifier/i },
+      { sector: 18, offset: 39, code: "boot.identifier.characters", message: /boot identifier/i },
+      { sector: 17, offset: 8, code: "partition.system_identifier.characters", message: /system identifier/i },
+      { sector: 17, offset: 40, code: "partition.volume_partition_identifier.characters", message: /volume partition identifier/i },
     ];
 
     for (const mutation of mutations) {
@@ -976,6 +976,45 @@ describe("volume descriptor sequence parsing", () => {
       size: "both descriptors\n".length,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("both descriptors\n");
+  });
+
+  test("writes, validates, and reads all descriptor classes in ECMA-119 sequence order", () => {
+    const image = createIsoImage([{
+      path: "README.TXT",
+      data: "all descriptor classes\n",
+    }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENHANCED" }],
+      volumePartition: {
+        volumePartitionIdentifier: "PARTITION",
+        data: "partition payload\n",
+      },
+      bootRecord: {
+        bootSystemIdentifier: "BOOT SYSTEM",
+        bootIdentifier: "BOOT ID",
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const descriptors = parseVolumeDescriptors(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual([
+      "primary",
+      "supplementary",
+      "enhanced",
+      "partition",
+      "boot",
+      "terminator",
+    ]);
+    expect(descriptors.map((descriptor) => descriptor.sector)).toEqual([16, 17, 18, 19, 20, 21]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(descriptors.map((descriptor) => descriptor.kind));
+    expect(parsed.files[0]).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      data: new TextEncoder().encode("all descriptor classes\n"),
+    });
   });
 
   test("writes, validates, and reads multiple descriptor set terminators", () => {

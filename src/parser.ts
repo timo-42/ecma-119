@@ -124,7 +124,47 @@ function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): Val
       });
     }
   }
+  issues.push(...validateDescriptorSequenceOrder(descriptors));
   return issues;
+}
+
+function validateDescriptorSequenceOrder(descriptors: VolumeDescriptor[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  let latestOrder = -1;
+  for (const descriptor of descriptors) {
+    const order = descriptorSequenceOrder(descriptor);
+    if (order === undefined) {
+      continue;
+    }
+    if (order < latestOrder) {
+      issues.push({
+        code: "descriptor.sequence.order",
+        message: `volume descriptor ${descriptor.kind} at sector ${descriptor.sector} appears outside ECMA-119 descriptor sequence order`,
+      });
+      continue;
+    }
+    latestOrder = order;
+  }
+  return issues;
+}
+
+function descriptorSequenceOrder(descriptor: VolumeDescriptor): number | undefined {
+  switch (descriptor.kind) {
+    case "primary":
+      return 0;
+    case "supplementary":
+      return 1;
+    case "enhanced":
+      return 2;
+    case "partition":
+      return 3;
+    case "boot":
+      return 4;
+    case "terminator":
+      return 5;
+    case "unknown":
+      return undefined;
+  }
 }
 
 function validateRawDescriptorHeaders(image: Uint8Array): ValidationIssue[] {
