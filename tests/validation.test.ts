@@ -1125,6 +1125,54 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("writes zero-filled unused directory bytes and reads the image back", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "unused bytes\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const unusedStart = directoryRecordContentEnd(image, rootDirectoryOffset, rootDirectorySizeAt(image, PVD_OFFSET));
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(image.subarray(unusedStart, rootDirectoryOffset + SECTOR_SIZE).every((byte) => byte === 0)).toBe(true);
+  });
+
+  test("reports nonzero unused bytes after the last root directory record", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root unused bytes\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const unusedStart = directoryRecordContentEnd(image, rootDirectoryOffset, rootDirectorySizeAt(image, PVD_OFFSET));
+    image[unusedStart + 1] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.unused_bytes",
+          path: ".",
+          message: "unused directory bytes after the last record at . must be zero",
+        }),
+      ]),
+    );
+  });
+
+  test("reports nonzero unused bytes after the last nested directory record", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested unused bytes\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirSize = readBothEndianUint32(image, dirRecordOffset + 10);
+    const dirOffset = dirExtent * SECTOR_SIZE;
+    const unusedStart = directoryRecordContentEnd(image, dirOffset, dirSize);
+    image[unusedStart + 1] = 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.unused_bytes",
+          path: "DIR",
+          message: "unused directory bytes after the last record at DIR must be zero",
+        }),
+      ]),
+    );
+  });
+
   test("reports a malformed directory record instead of relying on undefined reads", () => {
     const image = baselineImage([{ path: "FILE.TXT", data: "file\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
@@ -3244,6 +3292,19 @@ function rootDirectoryExtentAt(image: Uint8Array, descriptorOffset: number): num
 
 function rootDirectorySizeAt(image: Uint8Array, descriptorOffset: number): number {
   return readBothEndianUint32(image, descriptorOffset + 156 + 10);
+}
+
+function directoryRecordContentEnd(image: Uint8Array, directoryOffset: number, directorySize: number): number {
+  let offset = directoryOffset;
+  const end = directoryOffset + directorySize;
+  while (offset < end) {
+    const length = image[offset]!;
+    if (length === 0) {
+      return offset;
+    }
+    offset += length;
+  }
+  return end;
 }
 
 function descriptorVolumeSpaceSize(image: Uint8Array, descriptorOffset: number): number {

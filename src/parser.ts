@@ -1200,7 +1200,18 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
   while (offset < directoryBytes.byteLength) {
     const length = directoryBytes[offset]!;
     if (length === 0) {
-      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      const nextSectorOffset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      for (let paddingOffset = offset; paddingOffset < nextSectorOffset && paddingOffset < directoryBytes.byteLength; paddingOffset += 1) {
+        if (directoryBytes[paddingOffset] !== 0) {
+          issues.push({
+            code: "directory.unused_bytes",
+            message: `unused directory bytes after the last record at ${path} must be zero`,
+            path,
+          });
+          break;
+        }
+      }
+      offset = nextSectorOffset;
       continue;
     }
     if ((offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
