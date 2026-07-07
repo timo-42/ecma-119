@@ -268,6 +268,48 @@ describe("handcrafted ISO reader fixture", () => {
     expect(volumeSet.files.find((entry) => entry.path === "ZTDIR/CHILD.TXT")?.data).toEqual(data);
   });
 
+  test("terminates cross-volume external directory cycles", () => {
+    const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
+    const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    const externalDirectoryRecord = findDirectoryRecordOffset(volumeTwo, 20 * SECTOR_SIZE, SECTOR_SIZE, "EXTDIR");
+    writeBoth32(volumeTwo, externalDirectoryRecord + 2, 96);
+    writeUint32LE(volumeTwo, 18 * SECTOR_SIZE + 12, 96);
+    writeUint32BE(volumeTwo, 19 * SECTOR_SIZE + 12, 96);
+    writeCycleDirectoryA(volumeOne, 96, 20, 2);
+    writeCycleDirectoryB(volumeTwo, 21, 96, 1);
+
+    const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: false });
+    const externalDirectory = volumeSet.images[1]?.root.children.find((entry) => "children" in entry && entry.path === "EXTDIR");
+    const loopDirectory = externalDirectory && "children" in externalDirectory
+      ? externalDirectory.children.find((entry) => "children" in entry && entry.path === "EXTDIR/LOOP")
+      : undefined;
+    const backEdge = loopDirectory && "children" in loopDirectory
+      ? loopDirectory.children.find((entry) => "children" in entry && entry.path === "EXTDIR/LOOP/BACK")
+      : undefined;
+
+    expect(validateIsoImage(volumeOne)).toEqual([]);
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(externalDirectory).toMatchObject({
+      path: "EXTDIR",
+      extent: 96,
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(loopDirectory).toMatchObject({
+      path: "EXTDIR/LOOP",
+      extent: 21,
+      volumeSequenceNumber: 2,
+      external: true,
+    });
+    expect(backEdge).toMatchObject({
+      path: "EXTDIR/LOOP/BACK",
+      extent: 96,
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+  });
+
   test("rejects external regular file data outside the referenced volume member", () => {
     const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
     const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
@@ -903,6 +945,30 @@ function writeExternalSecondaryDirectoryExtent(
   directory.set(self, 0);
   directory.set(parent, self.byteLength);
   directory.set(child, self.byteLength + parent.byteLength);
+}
+
+function writeCycleDirectoryA(image: Uint8Array, directorySector: number, parentExtent: number, parentVolumeSequenceNumber: number): void {
+  const directory = sector(image, directorySector);
+  directory.fill(0);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const self = directoryRecord({ extent: directorySector, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber: 1 });
+  const parent = directoryRecord({ extent: parentExtent, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: parentVolumeSequenceNumber });
+  const loop = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("LOOP"), date, volumeSequenceNumber: 2 });
+  directory.set(self, 0);
+  directory.set(parent, self.byteLength);
+  directory.set(loop, self.byteLength + parent.byteLength);
+}
+
+function writeCycleDirectoryB(image: Uint8Array, directorySector: number, parentExtent: number, parentVolumeSequenceNumber: number): void {
+  const directory = sector(image, directorySector);
+  directory.fill(0);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const self = directoryRecord({ extent: directorySector, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber: 2 });
+  const parent = directoryRecord({ extent: parentExtent, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: parentVolumeSequenceNumber });
+  const back = directoryRecord({ extent: parentExtent, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("BACK"), date, volumeSequenceNumber: parentVolumeSequenceNumber });
+  directory.set(self, 0);
+  directory.set(parent, self.byteLength);
+  directory.set(back, self.byteLength + parent.byteLength);
 }
 
 function handcraftedSecondaryDescriptorIso(input: {
