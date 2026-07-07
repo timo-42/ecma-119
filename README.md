@@ -72,7 +72,7 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 
 Generated and parsed descriptor sequences follow the ECMA-119 Volume Descriptor Set order: one Primary Volume Descriptor, zero or more Supplementary Volume Descriptors, zero or more Enhanced Volume Descriptors, zero or more Volume Partition Descriptors, zero or more Boot Records, and one or more Volume Descriptor Set Terminators.
 
-`volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number. When parsing a single image, directory and file records whose volume sequence number is within the descriptor volume set but differs from the local volume are returned as unresolved external entries with `external: true`; their metadata is preserved, but file payloads and external directory children are not loaded from the local image. Use `parseIsoVolumeSet(images)` to parse all supplied members and populate external regular file payloads from the matching volume sequence number, using the external record extent, size, and section metadata to read bytes from the referenced member.
+`volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number. When parsing a single image, directory and file records whose volume sequence number is within the descriptor volume set but differs from the local volume are returned as unresolved external entries with `external: true`; their metadata is preserved, but file payloads and external directory children are not loaded from the local image. Use `parseIsoVolumeSet(images)` to parse all supplied members and populate external directory children and regular file payloads from the matching volume sequence number, using the external record extent, size, and section metadata to read bytes from the referenced member.
 
 File input `version` defaults to 1 and may be set from 1 through 32767 to write a non-default ECMA-119 file version number. The parser preserves the full identifier, such as `README.TXT;2`, while `path` omits the version suffix.
 
@@ -103,7 +103,7 @@ Implemented support is intentionally explicit:
 - optional Type L and Type M path table copies when requested by the writer
 - local volume set member metadata and same-volume directory records
 - read-side unresolved external-volume directory and file record metadata within the declared volume set
-- read-side multi-image resolution for external regular file payloads within a supplied volume set
+- read-side multi-image resolution for external directory children and regular file payloads within a supplied volume set
 - validation that descriptor file-reference fields resolve to files described in the root directory
 - parse-time rejection of descriptor file-reference fields that do not resolve or do not use the required Level 1 shape
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
@@ -120,4 +120,4 @@ Implemented support is intentionally explicit:
 - read-side coalescing of compatible non-interleaved multi-extent file sections
 - byte-level parser for generated and compatible ECMA-119 images
 
-Executable boot semantics, partition filesystem semantics, cross-volume external directory traversal across multiple images, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, raw volume partition descriptors/payloads, and external-volume directory records are supported as descriptor/data structures only.
+Executable boot semantics, partition filesystem semantics, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, raw volume partition descriptors/payloads, and external-volume records are supported as descriptor/data structures.
