@@ -122,6 +122,66 @@ describe("volume descriptor sequence parsing", () => {
     expect(file.volumeSequenceNumber).toBe(2);
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP_MEMBER" }] },
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH_MEMBER" }] },
+    },
+  ])("writes, validates, and reads $kind trees on a local volume set member", ({ kind, options }) => {
+    const payload = new TextEncoder().encode("secondary volume member data\n");
+    const image = createIsoImage([{
+      path: "DIR/MEMBER.TXT",
+      data: payload,
+    }], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      volumeIdentifier: "MEMBER_2",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const descriptor = parsed.descriptors.find((candidate) => candidate.kind === kind);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptor).toMatchObject({
+      kind,
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+    });
+    if (descriptor?.kind !== "supplementary" && descriptor?.kind !== "enhanced") {
+      throw new Error(`expected ${kind} descriptor`);
+    }
+
+    expect(descriptor.rootDirectoryRecord.volumeSequenceNumber).toBe(2);
+    const rootDirectory = image.subarray(
+      descriptor.rootDirectoryRecord.extent * SECTOR_SIZE,
+      descriptor.rootDirectoryRecord.extent * SECTOR_SIZE + descriptor.rootDirectoryRecord.size,
+    );
+    const self = readDirectoryRecord(rootDirectory, 0);
+    const parent = readDirectoryRecord(rootDirectory, self.length);
+    const dir = readDirectoryRecord(rootDirectory, self.length + parent.length);
+    expect(self.volumeSequenceNumber).toBe(2);
+    expect(parent.volumeSequenceNumber).toBe(2);
+    expect(dir.volumeSequenceNumber).toBe(2);
+
+    const parsedDir = descriptor.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR");
+    const parsedFile = parsedDir && "children" in parsedDir
+      ? parsedDir.children.find((node) => node.path === "DIR/MEMBER.TXT")
+      : undefined;
+    expect(parsedFile).toMatchObject({
+      path: "DIR/MEMBER.TXT",
+      identifier: "MEMBER.TXT;1",
+      volumeSequenceNumber: 2,
+      size: payload.byteLength,
+    });
+    expect(parsedFile && !("children" in parsedFile) ? parsedFile.data : undefined).toEqual(payload);
+  });
+
   test("rejects invalid local volume set member options", () => {
     expect(() => createIsoImage([], { volumeSetSize: 0 })).toThrow(/volumeSetSize/i);
     expect(() => createIsoImage([], { volumeSetSize: 1.5 })).toThrow(/volumeSetSize/i);
