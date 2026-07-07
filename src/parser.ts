@@ -55,6 +55,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
   }
   issues.push(...validateRawDescriptorHeaders(image));
   issues.push(...validateRawDescriptorBothEndianFields(image));
+  issues.push(...validateRawDescriptorRootDirectoryRecordBothEndianFields(image));
   issues.push(...validateRawDescriptorDateFields(image));
   let descriptors: VolumeDescriptor[] = [];
   let descriptorSequenceFailed = false;
@@ -297,6 +298,34 @@ function rawDescriptorBothEndianProfileAt(image: Uint8Array, offset: number): Ra
     return { codePrefix: "partition", label: "volume partition", fields: rawPartitionDescriptorBothEndianFields };
   }
   return undefined;
+}
+
+function validateRawDescriptorRootDirectoryRecordBothEndianFields(image: Uint8Array): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  let sector = SYSTEM_AREA_SECTORS;
+  while (sectorOffset(sector + 1) <= image.byteLength) {
+    const offset = sectorOffset(sector);
+    if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
+      return issues;
+    }
+    if (isRootDirectoryRecordDescriptorAt(image, offset)) {
+      issues.push(...validateRawDirectoryRecordBothEndianFields(image, offset + 156, "."));
+    }
+    if (isVolumeDescriptorSetTerminatorAt(image, offset)) {
+      return issues;
+    }
+    sector += 1;
+  }
+  return issues;
+}
+
+function isRootDirectoryRecordDescriptorAt(image: Uint8Array, offset: number): boolean {
+  if (readAscii(image, offset + 1, 5) !== STANDARD_IDENTIFIER) {
+    return false;
+  }
+  const type = image[offset];
+  const version = image[offset + 6];
+  return (type === 1 && version === 1) || (type === 2 && (version === 1 || version === 2));
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
@@ -1147,6 +1176,8 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
     }
     const currentRecordIndex = recordIndex++;
     const recordPath = rawDirectoryRecordPath(directoryBytes, offset, currentRecordIndex, path);
+    const bothEndianIssues = validateRawDirectoryRecordBothEndianFields(directoryBytes, offset, recordPath);
+    issues.push(...bothEndianIssues);
     const dateIssues = validateRawDirectoryRecordDateField(
       directoryBytes,
       offset,
@@ -1159,7 +1190,8 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
       decodeDirectoryRecord(directoryBytes, offset, directoryBytes.byteLength);
     } catch (error) {
       const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
-      if (dateIssues.length === 0 || !isDirectoryRecordDateTimeError(message)) {
+      const isTargetedBothEndianError = bothEndianIssues.length > 0 && message.includes("both-endian");
+      if (!isTargetedBothEndianError && (dateIssues.length === 0 || !isDirectoryRecordDateTimeError(message))) {
         const isPaddingError = message.includes("padding byte");
         issues.push({
           code: isPaddingError ? "directory.record_padding" : "directory.record_malformed",
@@ -1177,6 +1209,35 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
   }
   return issues;
 }
+
+function validateRawDirectoryRecordBothEndianFields(bytes: Uint8Array, offset: number, path: string): ValidationIssue[] {
+  const length = bytes[offset];
+  if (length === undefined || length < 34 || offset + 34 > bytes.byteLength) {
+    return [];
+  }
+  return rawDirectoryRecordBothEndianFields.flatMap((field) => {
+    const little = field.bytes === 2
+      ? readUint16LEAt(bytes, offset + field.start)
+      : readUint32LEAt(bytes, offset + field.start);
+    const big = field.bytes === 2
+      ? readUint16BEAt(bytes, offset + field.start + field.bytes)
+      : readUint32BEAt(bytes, offset + field.start + field.bytes);
+
+    return little === big
+      ? []
+      : [{
+          code: `directory.${field.code}.endian_mismatch`,
+          message: `directory record ${field.label} at ${path} must store matching little- and big-endian values: ${little} !== ${big}`,
+          path,
+        }];
+  });
+}
+
+const rawDirectoryRecordBothEndianFields = [
+  { start: 2, bytes: 4, code: "extent", label: "location of extent" },
+  { start: 10, bytes: 4, code: "data_length", label: "data length" },
+  { start: 28, bytes: 2, code: "volume_sequence_number", label: "volume sequence number" },
+] as const;
 
 function isDirectoryRecordDateTimeError(message: string): boolean {
   return /^(month|day|hour|minute|second|time zone offset) /u.test(message)
@@ -2717,6 +2778,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
         || message.includes("directory record identifier length is inconsistent")
         || message.includes("directory record file identifier padding byte must be zero"))
     ) {
+      return true;
+    }
+    if (issue.code.startsWith("directory.") && issue.code.endsWith(".endian_mismatch") && message.includes("both-endian uint")) {
       return true;
     }
     return message.includes(issue.message) || issue.message.includes(message);

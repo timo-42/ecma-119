@@ -946,6 +946,63 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    { fieldOffset: 2, code: "directory.extent.endian_mismatch", label: "location of extent", message: /both-endian uint32/i },
+    { fieldOffset: 10, code: "directory.data_length.endian_mismatch", label: "data length", message: /both-endian uint32/i },
+    { fieldOffset: 28, code: "directory.volume_sequence_number.endian_mismatch", label: "volume sequence number", message: /both-endian uint16/i },
+  ])("reports directory record both-endian mismatches for $label", ({ fieldOffset, code, label, message }) => {
+    const image = baselineImage([{ path: "FILE.TXT", data: "file\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "FILE.TXT;1");
+    image[fileRecordOffset + fieldOffset + (fieldOffset === 28 ? 3 : 7)] ^= 0xff;
+    const issues = validateIsoImage(image);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          path: "FILE.TXT",
+          message: expect.stringContaining(`directory record ${label} at FILE.TXT must store matching little- and big-endian values`),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_malformed",
+          message,
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+          message,
+        }),
+      ]),
+    );
+  });
+
+  test("reports descriptor root directory record both-endian mismatches before descriptor parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root mismatch\n" }]);
+    image[PVD_OFFSET + 156 + 2 + 7] ^= 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.extent.endian_mismatch",
+          path: ".",
+          message: expect.stringContaining("directory record location of extent at . must store matching little- and big-endian values"),
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence",
+          message: expect.stringMatching(/both-endian uint32 mismatch/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports a missing directory self record when a directory starts with padding", () => {
     const image = baselineImage();
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
