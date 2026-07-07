@@ -37,7 +37,7 @@ export function encodeExtendedAttributeRecord(input: ExtendedAttributeRecordInpu
 
   validateOwnerGroup(ownerIdentification, groupIdentification);
   validatePermissions(permissions);
-  validateRecordLayout(recordFormat, recordAttributes, recordLength);
+  validateStructuredRecordLayout(recordFormat, recordAttributes, recordLength);
   if (version !== 1) {
     throw new RangeError("extended attribute record version must be 1");
   }
@@ -92,7 +92,7 @@ export function decodeExtendedAttributeRecord(bytes: Uint8Array): ExtendedAttrib
   const version = bytes[180]!;
   validateOwnerGroup(ownerIdentification, groupIdentification);
   validatePermissions(permissions);
-  validateRecordLayout(recordFormat, recordAttributes, recordLength);
+  validateDecodedRecordLayout(recordFormat, recordAttributes, recordLength);
   if (version !== 1) {
     throw new Error("extended attribute record version must be 1");
   }
@@ -150,15 +150,19 @@ function validatePermissions(permissions: number): void {
   }
 }
 
-function validateRecordLayout(recordFormat: number, recordAttributes: number, recordLength: number): void {
+function validateStructuredRecordLayout(recordFormat: number, recordAttributes: number, recordLength: number): void {
+  validateDecodedRecordLayout(recordFormat, recordAttributes, recordLength);
+  if (recordFormat >= 128) {
+    throw new Error("system-use record format values 128 through 255 are not supported by the structured encoder");
+  }
+}
+
+function validateDecodedRecordLayout(recordFormat: number, recordAttributes: number, recordLength: number): void {
   assertUintRange(recordFormat, 0xff, "record format");
   assertUintRange(recordAttributes, 0xff, "record attributes");
   assertUintRange(recordLength, 0xffff, "record length");
   if (recordFormat > 3 && recordFormat < 128) {
     throw new Error("record format values 4 through 127 are reserved");
-  }
-  if (recordFormat >= 128) {
-    throw new Error("system-use record format values 128 through 255 are not supported by the structured encoder");
   }
   if (recordAttributes > 2) {
     throw new Error("record attributes values 3 through 255 are reserved");
