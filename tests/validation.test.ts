@@ -3391,6 +3391,42 @@ describe("validateIsoImage hardening", () => {
     {
       kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "supplementary.volume_flags",
+      message: "supplementary volume descriptor flags bits 1 through 7 must be zero",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "enhanced.volume_flags",
+      message: "enhanced volume descriptor flags bits 1 through 7 must be zero",
+    },
+  ])("rejects reserved $kind volume flags during parsing", ({ options, descriptorOffset, code, message }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary volume flags\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    image[descriptorOffset + 7] = 0x02;
+
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(message, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code,
+        message,
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
       label: "supplementary volume",
     },
