@@ -41,6 +41,7 @@ const MAX_PATH_TABLE_RECORDS = 0xffff;
 
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
+  assertSectorAlignedImage(image);
   const descriptors = parseVolumeDescriptors(image);
   assertSupportedDescriptorSequenceProfile(descriptors);
   const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
@@ -99,6 +100,12 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
     root,
     files: collectParsedFiles(root),
   };
+}
+
+function assertSectorAlignedImage(image: Uint8Array): void {
+  if (image.byteLength % SECTOR_SIZE !== 0) {
+    throw new Error("image length must be a multiple of 2048 bytes");
+  }
 }
 
 export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): ValidationIssue[] {
