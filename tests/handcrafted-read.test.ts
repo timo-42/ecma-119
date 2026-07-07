@@ -199,7 +199,10 @@ describe("handcrafted ISO reader fixture", () => {
       version: descriptorVersion,
       volumeIdentifier,
       fileStructureVersion,
+      applicationIdentifier: "_SUPAPP.TXT;1",
+      copyrightFileIdentifier: "SUPCPY.TXT;1",
       abstractFileIdentifier: "SUPDOC.TXT;1",
+      bibliographicFileIdentifier: "SUPBIB.TXT;1",
       typeLPathTableLocation: 23,
       typeMPathTableLocation: 24,
     });
@@ -223,16 +226,23 @@ describe("handcrafted ISO reader fixture", () => {
       ? new TextDecoder("ascii").decode(childDirectory.children[0].data)
       : undefined).toBe("hello secondary\n");
 
-    const rootFile = parsedDescriptor?.kind === kind
-      ? parsedDescriptor.rootDirectoryRecord.children.find((node) => !("children" in node) && node.identifier === "SUPDOC.TXT;1")
-      : undefined;
-    expect(rootFile).toMatchObject({
-      path: "SUPDOC.TXT",
-      identifier: "SUPDOC.TXT;1",
-      extent: 28,
-      size: "secondary root reference\n".length,
-    });
-    expect(rootFile && !("children" in rootFile) ? new TextDecoder("ascii").decode(rootFile.data) : undefined).toBe("secondary root reference\n");
+    for (const expected of [
+      { identifier: "SUPAPP.TXT;1", path: "SUPAPP.TXT", extent: 28, payload: "secondary application reference\n" },
+      { identifier: "SUPBIB.TXT;1", path: "SUPBIB.TXT", extent: 29, payload: "secondary bibliographic reference\n" },
+      { identifier: "SUPCPY.TXT;1", path: "SUPCPY.TXT", extent: 30, payload: "secondary copyright reference\n" },
+      { identifier: "SUPDOC.TXT;1", path: "SUPDOC.TXT", extent: 31, payload: "secondary abstract reference\n" },
+    ]) {
+      const rootFile = parsedDescriptor?.kind === kind
+        ? parsedDescriptor.rootDirectoryRecord.children.find((node) => !("children" in node) && node.identifier === expected.identifier)
+        : undefined;
+      expect(rootFile).toMatchObject({
+        path: expected.path,
+        identifier: expected.identifier,
+        extent: expected.extent,
+        size: expected.payload.length,
+      });
+      expect(rootFile && !("children" in rootFile) ? new TextDecoder("ascii").decode(rootFile.data) : undefined).toBe(expected.payload);
+    }
   });
 });
 
@@ -517,7 +527,7 @@ function handcraftedNestedIso(): Uint8Array {
 }
 
 function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enhanced"; descriptorVersion: 1 | 2; fileStructureVersion: 1 | 2; volumeIdentifier: string }): Uint8Array {
-  const image = new Uint8Array(30 * SECTOR_SIZE);
+  const image = new Uint8Array(34 * SECTOR_SIZE);
   const pvd = sector(image, 16);
   const secondaryDescriptor = sector(image, 17);
   const terminator = sector(image, 18);
@@ -529,13 +539,22 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
   const secondaryRootDirectory = sector(image, 25);
   const secondaryChildDirectory = sector(image, 26);
   const secondaryFileData = sector(image, 27);
-  const secondaryRootFileData = sector(image, 28);
+  const secondaryApplicationFileData = sector(image, 28);
+  const secondaryBibliographicFileData = sector(image, 29);
+  const secondaryCopyrightFileData = sector(image, 30);
+  const secondaryAbstractFileData = sector(image, 31);
   const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
   const filePayload = new TextEncoder().encode("hello secondary\n");
-  const rootFilePayload = new TextEncoder().encode("secondary root reference\n");
+  const applicationPayload = new TextEncoder().encode("secondary application reference\n");
+  const bibliographicPayload = new TextEncoder().encode("secondary bibliographic reference\n");
+  const copyrightPayload = new TextEncoder().encode("secondary copyright reference\n");
+  const abstractPayload = new TextEncoder().encode("secondary abstract reference\n");
 
   secondaryFileData.set(filePayload);
-  secondaryRootFileData.set(rootFilePayload);
+  secondaryApplicationFileData.set(applicationPayload);
+  secondaryBibliographicFileData.set(bibliographicPayload);
+  secondaryCopyrightFileData.set(copyrightPayload);
+  secondaryAbstractFileData.set(abstractPayload);
 
   writePathTableRoot(primaryPathTableL, "little", 21);
   writePathTableRoot(primaryPathTableM, "big", 21);
@@ -552,11 +571,18 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
   const secondaryRootSelf = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
   const secondaryRootParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
   const secondaryChild = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("ALT"), date });
-  const secondaryRootFile = directoryRecord({ extent: 28, size: rootFilePayload.byteLength, flags: 0, identifier: asciiBytes("SUPDOC.TXT;1"), date });
+  const secondaryApplicationFile = directoryRecord({ extent: 28, size: applicationPayload.byteLength, flags: 0, identifier: asciiBytes("SUPAPP.TXT;1"), date });
+  const secondaryBibliographicFile = directoryRecord({ extent: 29, size: bibliographicPayload.byteLength, flags: 0, identifier: asciiBytes("SUPBIB.TXT;1"), date });
+  const secondaryCopyrightFile = directoryRecord({ extent: 30, size: copyrightPayload.byteLength, flags: 0, identifier: asciiBytes("SUPCPY.TXT;1"), date });
+  const secondaryAbstractFile = directoryRecord({ extent: 31, size: abstractPayload.byteLength, flags: 0, identifier: asciiBytes("SUPDOC.TXT;1"), date });
   secondaryRootDirectory.set(secondaryRootSelf, 0);
   secondaryRootDirectory.set(secondaryRootParent, secondaryRootSelf.byteLength);
   secondaryRootDirectory.set(secondaryChild, secondaryRootSelf.byteLength + secondaryRootParent.byteLength);
-  secondaryRootDirectory.set(secondaryRootFile, secondaryRootSelf.byteLength + secondaryRootParent.byteLength + secondaryChild.byteLength);
+  let secondaryRootOffset = secondaryRootSelf.byteLength + secondaryRootParent.byteLength + secondaryChild.byteLength;
+  for (const record of [secondaryApplicationFile, secondaryBibliographicFile, secondaryCopyrightFile, secondaryAbstractFile]) {
+    secondaryRootDirectory.set(record, secondaryRootOffset);
+    secondaryRootOffset += record.byteLength;
+  }
 
   const childSelf = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
   const childParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
@@ -571,7 +597,7 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
     pathTableSize: 10,
     typeLPathTableLocation: 19,
     typeMPathTableLocation: 20,
-    volumeSpaceSize: 30,
+    volumeSpaceSize: 34,
     date,
   });
 
@@ -583,8 +609,11 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
     pathTableSize: 22,
     typeLPathTableLocation: 23,
     typeMPathTableLocation: 24,
-    volumeSpaceSize: 30,
+    volumeSpaceSize: 34,
+    applicationIdentifier: "_SUPAPP.TXT;1",
+    copyrightFileIdentifier: "SUPCPY.TXT;1",
     abstractFileIdentifier: "SUPDOC.TXT;1",
+    bibliographicFileIdentifier: "SUPBIB.TXT;1",
     date,
   });
 
@@ -635,7 +664,10 @@ function writeSecondaryDescriptor(
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
     volumeSpaceSize: number;
+    applicationIdentifier?: string;
+    copyrightFileIdentifier?: string;
     abstractFileIdentifier?: string;
+    bibliographicFileIdentifier?: string;
     date: Date;
   },
 ): void {
@@ -654,18 +686,32 @@ function writeSecondaryDescriptor(
   writeUint32LE(bytes, 140, input.typeLPathTableLocation);
   writeUint32BE(bytes, 148, input.typeMPathTableLocation);
   bytes.set(input.rootDirectoryRecord, 156);
-  writeDescriptorTextFields(bytes, input.date, { abstractFileIdentifier: input.abstractFileIdentifier });
+  writeDescriptorTextFields(bytes, input.date, {
+    applicationIdentifier: input.applicationIdentifier,
+    copyrightFileIdentifier: input.copyrightFileIdentifier,
+    abstractFileIdentifier: input.abstractFileIdentifier,
+    bibliographicFileIdentifier: input.bibliographicFileIdentifier,
+  });
   bytes[881] = input.fileStructureVersion;
 }
 
-function writeDescriptorTextFields(bytes: Uint8Array, date: Date, options: { abstractFileIdentifier?: string } = {}): void {
+function writeDescriptorTextFields(
+  bytes: Uint8Array,
+  date: Date,
+  options: {
+    applicationIdentifier?: string;
+    copyrightFileIdentifier?: string;
+    abstractFileIdentifier?: string;
+    bibliographicFileIdentifier?: string;
+  } = {},
+): void {
   writeAscii(bytes, 190, 128, "", 0x20);
   writeAscii(bytes, 318, 128, "", 0x20);
   writeAscii(bytes, 446, 128, "", 0x20);
-  writeAscii(bytes, 574, 128, "HANDCRAFTED TEST", 0x20);
-  writeAscii(bytes, 702, 37, "", 0x20);
+  writeAscii(bytes, 574, 128, options.applicationIdentifier ?? "HANDCRAFTED TEST", 0x20);
+  writeAscii(bytes, 702, 37, options.copyrightFileIdentifier ?? "", 0x20);
   writeAscii(bytes, 739, 37, options.abstractFileIdentifier ?? "", 0x20);
-  writeAscii(bytes, 776, 37, "", 0x20);
+  writeAscii(bytes, 776, 37, options.bibliographicFileIdentifier ?? "", 0x20);
   bytes.set(volumeDate(date), 813);
   bytes.set(volumeDate(date), 830);
   bytes.set(volumeDate(null), 847);
