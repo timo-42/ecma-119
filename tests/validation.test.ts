@@ -229,7 +229,24 @@ describe("validateIsoImage hardening", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
 
+    const parsed = parseIsoImage(image, { includeData: true });
+    const parsedBootDescriptors = parsed.descriptors.filter((descriptor) => descriptor.kind === "boot");
+    const parsedPartition = parsed.descriptors.find(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+
     expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "partition", "boot", "boot", "terminator"]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "partition", "boot", "boot", "terminator"]);
+    expect(parsedBootDescriptors).toHaveLength(2);
+    expect(parsedBootDescriptors[0]).toMatchObject({ bootSystemIdentifier: "BOOT 1" });
+    expect(parsedBootDescriptors[1]).toMatchObject({ bootSystemIdentifier: "BOOT 2" });
+    expect(parsedPartition?.data?.subarray(0, "partition\n".length)).toEqual(new TextEncoder().encode("partition\n"));
+    expect(parsed.files[0]).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      size: "duplicate boot descriptor\n".length,
+    });
+    expect(parsed.files[0]?.data).toEqual(new TextEncoder().encode("duplicate boot descriptor\n"));
     expect(validateIsoImage(image)).toEqual([]);
   });
 
@@ -4703,8 +4720,24 @@ describe("validateIsoImage hardening", () => {
       bibliographicFileIdentifier: "",
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
+    const parsed = parseIsoImage(image, { includeData: true });
 
     expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor).toMatchObject({
+      publisherIdentifier: "_PUB.TXT;1",
+      dataPreparerIdentifier: "_PREP.TXT;1",
+      applicationIdentifier: "_APP.TXT;1",
+      copyrightFileIdentifier: "COPY.TXT;1",
+      abstractFileIdentifier: "",
+      bibliographicFileIdentifier: "",
+    });
+    expect(parsed.files.map((file) => file.identifier)).toEqual(["APP.TXT;1", "COPY.TXT;1", "PREP.TXT;1", "PUB.TXT;1"]);
+    expect(Object.fromEntries(parsed.files.map((file) => [file.path, new TextDecoder("ascii").decode(file.data)]))).toEqual({
+      "APP.TXT": "application\n",
+      "COPY.TXT": "copyright\n",
+      "PREP.TXT": "preparer\n",
+      "PUB.TXT": "publisher\n",
+    });
   });
 
   test.each([
