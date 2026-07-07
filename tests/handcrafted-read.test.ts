@@ -202,6 +202,12 @@ describe("handcrafted ISO reader fixture", () => {
 
     const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true });
     const resolved = volumeSet.images[1]?.files.find((entry) => entry.identifier === "EXT.TXT;1");
+    const resolvedDirectory = volumeSet.images[1]?.root.children.find((entry) => "children" in entry && entry.identifier === "EXTDIR");
+    const resolvedDirectoryChild = resolvedDirectory && "children" in resolvedDirectory
+      ? resolvedDirectory.children[0]
+      : undefined;
+    const metadataOnlyVolumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: false });
+    const metadataOnlyChild = metadataOnlyVolumeSet.images[1]?.files.find((entry) => entry.path === "EXTDIR/CHILD.TXT");
 
     expect(validateIsoImage(volumeOne)).toEqual([]);
     expect(validateIsoImage(volumeTwo)).toEqual([]);
@@ -215,7 +221,28 @@ describe("handcrafted ISO reader fixture", () => {
       external: true,
     });
     expect(resolved?.data).toEqual(data);
+    expect(resolvedDirectory).toMatchObject({
+      path: "EXTDIR",
+      identifier: "EXTDIR",
+      extent: 98,
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(resolvedDirectoryChild).toMatchObject({
+      path: "EXTDIR/CHILD.TXT",
+      identifier: "CHILD.TXT;1",
+      size: data.byteLength,
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(resolvedDirectoryChild && !("children" in resolvedDirectoryChild) ? resolvedDirectoryChild.data : undefined).toEqual(data);
     expect(volumeSet.files.find((entry) => entry.identifier === "EXT.TXT;1")?.data).toEqual(data);
+    expect(volumeSet.files.find((entry) => entry.path === "EXTDIR/CHILD.TXT")?.data).toEqual(data);
+    expect(metadataOnlyChild).toMatchObject({
+      path: "EXTDIR/CHILD.TXT",
+      external: true,
+    });
+    expect(metadataOnlyChild?.data).toBeUndefined();
   });
 
   test("rejects external regular file data outside the referenced volume member", () => {
@@ -226,6 +253,18 @@ describe("handcrafted ISO reader fixture", () => {
 
     expect(validateIsoImage(volumeTwo)).toEqual([]);
     expect(() => parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true })).toThrow(/invalid extent bounds for EXT\.TXT/i);
+  });
+
+  test("rejects external directory data outside the referenced volume member", () => {
+    const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
+    const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    const externalDirectoryRecord = findDirectoryRecordOffset(volumeTwo, 20 * SECTOR_SIZE, SECTOR_SIZE, "EXTDIR");
+    writeBoth32(volumeTwo, externalDirectoryRecord + 2, 100);
+    writeUint32LE(volumeTwo, 18 * SECTOR_SIZE + 12, 100);
+    writeUint32BE(volumeTwo, 19 * SECTOR_SIZE + 12, 100);
+
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(() => parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true })).toThrow(/invalid extent bounds for EXTDIR/i);
   });
 
   test("rejects inconsistent supplied volume set members", () => {
@@ -691,6 +730,7 @@ function handcraftedExternalPayloadVolumeIso(data: Uint8Array): Uint8Array {
   const pathTableL = sector(image, 18);
   const pathTableM = sector(image, 19);
   const rootDirectory = sector(image, 20);
+  const externalDirectory = sector(image, 98);
   const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
 
   writePathTableRoot(pathTableL, "little", 20);
@@ -700,6 +740,12 @@ function handcraftedExternalPayloadVolumeIso(data: Uint8Array): Uint8Array {
   const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: 1 });
   rootDirectory.set(self, 0);
   rootDirectory.set(parent, self.byteLength);
+  const externalSelf = directoryRecord({ extent: 98, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber: 1 });
+  const externalParent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: 2 });
+  const externalChild = directoryRecord({ extent: 99, size: data.byteLength, flags: 0, identifier: asciiBytes("CHILD.TXT;1"), date, volumeSequenceNumber: 1 });
+  externalDirectory.set(externalSelf, 0);
+  externalDirectory.set(externalParent, externalSelf.byteLength);
+  externalDirectory.set(externalChild, externalSelf.byteLength + externalParent.byteLength);
   image.set(data, 99 * SECTOR_SIZE);
 
   writePrimaryDescriptor(pvd, {

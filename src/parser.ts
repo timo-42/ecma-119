@@ -43,6 +43,16 @@ type DescriptorZeroRange = {
 
 const MAX_PATH_TABLE_RECORDS = 0xffff;
 
+type DirectoryTreeReadOptions = {
+  decodeIdentifier?: IdentifierDecoder;
+  identifierProfile?: DirectoryIdentifierProfile;
+  hierarchyDepthLabel?: "primary" | "supplementary";
+  validatePrimaryIdentifiers?: boolean;
+  enforceFilePathLength?: boolean;
+  depth?: number;
+  filePathLengthPrefix?: number;
+};
+
 export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?: boolean } = {}): IsoImage {
   const image = bytesFromImageInput(imageInput);
   assertSectorAlignedImage(image);
@@ -126,11 +136,9 @@ export function parseIsoVolumeSet(imageInputs: IsoImageInput[], options: { inclu
     membersBySequenceNumber.set(volumeSequenceNumber, member);
   }
 
-  if (includeData) {
-    for (const member of members) {
-      resolveExternalFileData(member.parsed.root, membersBySequenceNumber);
-      member.parsed.files = collectParsedFiles(member.parsed.root);
-    }
+  for (const member of members) {
+    resolveExternalVolumeEntries(member.parsed, membersBySequenceNumber, includeData);
+    member.parsed.files = collectParsedFiles(member.parsed.root);
   }
 
   const images = members.map((member) => member.parsed);
@@ -2417,13 +2425,17 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   return {
     ...descriptor,
     pathTables: readDescriptorPathTables(image, descriptor),
-    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), {
-      decodeIdentifier: identifierDecoderForDescriptor(descriptor),
-      ...(descriptor.kind === "primary" ? {} : { identifierProfile: descriptor.kind }),
-      enforceFilePathLength: true,
-      validatePrimaryIdentifiers: descriptor.kind === "primary",
-      ...(descriptor.kind === "primary" || descriptor.kind === "supplementary" ? { hierarchyDepthLabel: descriptor.kind } : {}),
-    }),
+    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), directoryTreeOptionsForDescriptor(descriptor)),
+  };
+}
+
+function directoryTreeOptionsForDescriptor(descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): DirectoryTreeReadOptions {
+  return {
+    decodeIdentifier: identifierDecoderForDescriptor(descriptor),
+    ...(descriptor.kind === "primary" ? {} : { identifierProfile: descriptor.kind }),
+    enforceFilePathLength: true,
+    validatePrimaryIdentifiers: descriptor.kind === "primary",
+    ...(descriptor.kind === "primary" || descriptor.kind === "supplementary" ? { hierarchyDepthLabel: descriptor.kind } : {}),
   };
 }
 
@@ -2455,7 +2467,7 @@ function readDirectoryTree(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { decodeIdentifier?: IdentifierDecoder; identifierProfile?: DirectoryIdentifierProfile; hierarchyDepthLabel?: "primary" | "supplementary"; validatePrimaryIdentifiers?: boolean; enforceFilePathLength?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
+  options: DirectoryTreeReadOptions = {},
 ): IsoDirectoryEntry {
   const depth = options.depth ?? 1;
   const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
@@ -2869,25 +2881,110 @@ function markExternalSection(section: IsoFileSection): IsoFileSection {
   return { ...section, external: true };
 }
 
-function resolveExternalFileData(
-  directory: IsoDirectoryEntry,
+function resolveExternalVolumeEntries(
+  image: IsoImage,
   membersBySequenceNumber: Map<number, { bytes: Uint8Array; parsed: IsoImage }>,
+  includeData: boolean,
 ): void {
+  const originVolumeSequenceNumber = image.primaryVolumeDescriptor.volumeSequenceNumber;
+  for (const descriptor of image.descriptors) {
+    if (descriptor.kind !== "primary" && descriptor.kind !== "supplementary" && descriptor.kind !== "enhanced") {
+      continue;
+    }
+    const resolvedRoot = resolveExternalDirectoryEntries(
+      descriptor.rootDirectoryRecord,
+      descriptor.rootDirectoryRecord,
+      descriptor,
+      membersBySequenceNumber,
+      includeData,
+      originVolumeSequenceNumber,
+      new Set(),
+    );
+    descriptor.rootDirectoryRecord = resolvedRoot;
+    markTreeExternalToOrigin(resolvedRoot, originVolumeSequenceNumber);
+    if (descriptor.kind === "primary") {
+      image.root = resolvedRoot;
+      image.primaryVolumeDescriptor.rootDirectoryRecord = resolvedRoot;
+    }
+  }
+}
+
+function resolveExternalDirectoryEntries(
+  directory: IsoDirectoryEntry,
+  parent: IsoDirectoryEntry,
+  descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  membersBySequenceNumber: Map<number, { bytes: Uint8Array; parsed: IsoImage }>,
+  includeData: boolean,
+  originVolumeSequenceNumber: number,
+  visitedExternalDirectories: Set<string>,
+): IsoDirectoryEntry {
+  let resolved = directory;
+  if (directory.external) {
+    const key = `${directory.volumeSequenceNumber}:${directory.extent}`;
+    const member = membersBySequenceNumber.get(directory.volumeSequenceNumber);
+    if (member && !visitedExternalDirectories.has(key)) {
+      visitedExternalDirectories.add(key);
+      resolved = readDirectoryTree(
+        member.bytes,
+        directory,
+        parent,
+        directory.path,
+        includeData,
+        directory.volumeSequenceNumber,
+        descriptor.volumeSetSize,
+        new Set(),
+        directoryTreeOptionsForDescriptor(descriptor),
+      );
+      resolved.external = true;
+    }
+  }
+
+  resolved.children = resolved.children.map((child) => {
+    if ("children" in child) {
+      return resolveExternalDirectoryEntries(
+        child,
+        resolved,
+        descriptor,
+        membersBySequenceNumber,
+        includeData,
+        originVolumeSequenceNumber,
+        visitedExternalDirectories,
+      );
+    }
+    if (includeData && child.external && child.data === undefined) {
+      const member = membersBySequenceNumber.get(child.volumeSequenceNumber);
+      if (member) {
+        child.data = readFileEntryData(member.bytes, child);
+      }
+    }
+    if (child.volumeSequenceNumber !== originVolumeSequenceNumber) {
+      child.external = true;
+      if (child.sections) {
+        child.sections = child.sections.map(markExternalSection);
+      }
+    }
+    return child;
+  });
+
+  return resolved;
+}
+
+function markTreeExternalToOrigin(directory: IsoDirectoryEntry, originVolumeSequenceNumber: number): void {
+  if (directory.volumeSequenceNumber !== originVolumeSequenceNumber) {
+    directory.external = true;
+    if (directory.sections) {
+      directory.sections = directory.sections.map(markExternalSection);
+    }
+  }
   for (const child of directory.children) {
     if ("children" in child) {
-      if (!child.external) {
-        resolveExternalFileData(child, membersBySequenceNumber);
+      markTreeExternalToOrigin(child, originVolumeSequenceNumber);
+    } else if (child.volumeSequenceNumber !== originVolumeSequenceNumber) {
+      child.external = true;
+      if (child.sections) {
+        child.sections = child.sections.map(markExternalSection);
       }
-      continue;
     }
-    if (!child.external || child.data !== undefined) {
-      continue;
-    }
-    const member = membersBySequenceNumber.get(child.volumeSequenceNumber);
-    if (!member) {
-      continue;
-    }
-    child.data = readFileEntryData(member.bytes, child);
   }
 }
 
