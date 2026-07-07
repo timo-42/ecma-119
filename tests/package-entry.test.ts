@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { dirname, posix as pathPosix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -19,7 +19,6 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
   types?: string;
 };
 const builtEntryPath = resolve(root, "dist/index.js");
-const maybeTest = existsSync(builtEntryPath) ? test : test.skip;
 
 type PackDryRunOutput = Array<{
   files: Array<{
@@ -31,6 +30,33 @@ type SourceMap = {
   sources?: unknown;
 };
 
+function requiredPackageEntryPaths(): string[] {
+  return [
+    packageJson.main,
+    packageJson.types,
+    packageJson.exports?.["."]?.import,
+    packageJson.exports?.["."]?.types,
+  ]
+    .filter((path): path is string => typeof path === "string")
+    .map((path) => pathPosix.normalize(path.replace(/^\.\//u, "")));
+}
+
+function buildPackage(): void {
+  execFileSync("npm", ["run", "build"], {
+    cwd: root,
+    stdio: "pipe",
+  });
+}
+
+function dryRunPacklist(): Set<string> {
+  const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const [{ files }] = JSON.parse(packOutput) as PackDryRunOutput;
+  return new Set(files.map((file) => pathPosix.normalize(file.path)));
+}
+
 describe("package entry", () => {
   test("points root exports at the built entry and declarations", () => {
     expect(packageJson.main).toBe("./dist/index.js");
@@ -39,15 +65,30 @@ describe("package entry", () => {
     expect(packageJson.exports?.["."]?.types).toBe("./dist/index.d.ts");
   });
 
-  maybeTest("matches the source root runtime exports after build", async () => {
+  test("package packlist includes manifest entry targets after a clean build", () => {
+    rmSync(resolve(root, "dist"), { force: true, recursive: true });
+    buildPackage();
+    const packedFiles = dryRunPacklist();
+
+    for (const requiredPath of requiredPackageEntryPaths()) {
+      expect(
+        packedFiles.has(requiredPath),
+        `package manifest references ${requiredPath}, but it is not included in the packed files`,
+      ).toBe(true);
+    }
+  }, 20_000);
+
+  test("matches the source root runtime exports after build", async () => {
+    buildPackage();
     const builtEntry = await import(pathToFileURL(builtEntryPath).href) as typeof sourceEntry;
 
     expect(Object.keys(builtEntry).sort((left, right) => left.localeCompare(right))).toEqual(
       Object.keys(sourceEntry).sort((left, right) => left.localeCompare(right)),
     );
-  });
+  }, 20_000);
 
-  maybeTest("built package entry writes validates and reads an image", async () => {
+  test("built package entry writes validates and reads an image", async () => {
+    buildPackage();
     const builtEntry = await import(pathToFileURL(builtEntryPath).href) as typeof sourceEntry;
     const image = builtEntry.createIsoImage([{
       path: "PACKAGE.TXT",
@@ -67,17 +108,12 @@ describe("package entry", () => {
       size: "package entry roundtrip\n".length,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("package entry roundtrip\n");
-  });
+  }, 20_000);
 
-  maybeTest("published package contains files referenced by emitted source maps", () => {
-    const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-      cwd: root,
-      encoding: "utf8",
-    });
-    const [{ files }] = JSON.parse(packOutput) as PackDryRunOutput;
-    const packedFiles = new Set(files.map((file) => pathPosix.normalize(file.path)));
-    const mapFiles = files
-      .map((file) => pathPosix.normalize(file.path))
+  test("published package contains files referenced by emitted source maps", () => {
+    buildPackage();
+    const packedFiles = dryRunPacklist();
+    const mapFiles = [...packedFiles]
       .filter((path) => path.startsWith("dist/") && path.endsWith(".map"));
 
     expect(mapFiles.length).toBeGreaterThan(0);
@@ -96,5 +132,5 @@ describe("package entry", () => {
         ).toBe(true);
       }
     }
-  });
+  }, 20_000);
 });
