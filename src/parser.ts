@@ -3421,8 +3421,20 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     ) {
       return true;
     }
+    if (
+      (issue.code === "directory.multi_extent_sequence" || issue.code === "directory.multi_extent_final_missing")
+      && secondaryDescriptorPathlessMessage(issue.message).includes(message)
+    ) {
+      return true;
+    }
     return message.includes(issue.message) || issue.message.includes(message);
   });
+}
+
+function secondaryDescriptorPathlessMessage(message: string): string {
+  return message
+    .replace(/\b(?:supplementary|enhanced):\.\//gu, "")
+    .replace(/\b(?:supplementary|enhanced):\./gu, ".");
 }
 
 function joinPath(parent: string, child: string): string {
