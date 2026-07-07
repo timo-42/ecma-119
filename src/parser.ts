@@ -2531,9 +2531,11 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     const bothEndianIssues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, recordPath);
     const dateIssues = validateExtendedAttributeRecordDateFields(extendedAttributeRecord, recordPath);
     const characterIssues = validateExtendedAttributeRecordCharacterFields(extendedAttributeRecord, recordPath);
+    const reservedIssues = validateExtendedAttributeRecordReservedBytes(extendedAttributeRecord, recordPath);
     issues.push(...bothEndianIssues);
     issues.push(...dateIssues);
     issues.push(...characterIssues);
+    issues.push(...reservedIssues);
     try {
       const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
       if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
@@ -2564,7 +2566,7 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues, ...characterIssues], extendedAttributeRecord)) {
+      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues, ...characterIssues, ...reservedIssues], extendedAttributeRecord)) {
         issues.push({
           code: "extended_attribute_record.parse",
           message,
@@ -2588,6 +2590,7 @@ function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry:
   const issues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, path);
   issues.push(...validateExtendedAttributeRecordDateFields(extendedAttributeRecord, path));
   issues.push(...validateExtendedAttributeRecordCharacterFields(extendedAttributeRecord, path));
+  issues.push(...validateExtendedAttributeRecordReservedBytes(extendedAttributeRecord, path));
   try {
     const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
     const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
@@ -2688,6 +2691,22 @@ function validateExtendedAttributeRecordCharacterFields(bytes: Uint8Array, path:
   }];
 }
 
+function validateExtendedAttributeRecordReservedBytes(bytes: Uint8Array, path: string): ValidationIssue[] {
+  if (bytes.byteLength < 246) {
+    return [];
+  }
+  for (let offset = 182; offset < 246; offset += 1) {
+    if (bytes[offset] !== 0) {
+      return [{
+        code: "extended_attribute_record.reserved_bytes",
+        message: `extended attribute record reserved bytes at ${path} must be zero`,
+        path,
+      }];
+    }
+  }
+  return [];
+}
+
 function validateExtendedAttributeRecordDateField(bytes: Uint8Array, offset: number, code: string, label: string, path: string, required: boolean): ValidationIssue[] {
   const text = readAscii(bytes, offset, 16);
   if (/^0{16}$/u.test(text)) {
@@ -2718,11 +2737,13 @@ function shouldSuppressExtendedAttributeRecordParse(message: string, issues: Val
   const hasBothEndianIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith(".endian_mismatch"));
   const hasDateIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith("_date"));
   const hasCharacterIssue = issues.some((issue) => issue.code === "extended_attribute_record.system_identifier.characters");
+  const hasReservedIssue = issues.some((issue) => issue.code === "extended_attribute_record.reserved_bytes");
   return (hasBothEndianIssue
     && message.includes("both-endian")
     && bytes[180] === 1)
     || (hasDateIssue && isExtendedAttributeRecordDateParseMessage(message))
-    || (hasCharacterIssue && message.includes("system identifier contains invalid ECMA-119 a-characters"));
+    || (hasCharacterIssue && message.includes("system identifier contains invalid ECMA-119 a-characters"))
+    || (hasReservedIssue && message.includes("reserved bytes must be zero"));
 }
 
 function isExtendedAttributeRecordDateParseMessage(message: string): boolean {

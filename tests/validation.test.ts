@@ -1864,9 +1864,17 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          code: "extended_attribute_record.reserved_bytes",
+          path: "DIR/FILE.TXT",
+          message: "extended attribute record reserved bytes at DIR/FILE.TXT must be zero",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           code: "extended_attribute_record.parse",
           path: "DIR/FILE.TXT",
-          message: expect.stringMatching(/reserved bytes/i),
         }),
       ]),
     );
@@ -2114,9 +2122,17 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          code: "extended_attribute_record.reserved_bytes",
+          path: ".",
+          message: "extended attribute record reserved bytes at . must be zero",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           code: "extended_attribute_record.parse",
           path: ".",
-          message: expect.stringMatching(/reserved bytes/i),
         }),
       ]),
     );
@@ -2200,9 +2216,17 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          code: "extended_attribute_record.reserved_bytes",
+          path,
+          message: `extended attribute record reserved bytes at ${path} must be zero`,
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           code: "extended_attribute_record.parse",
           path,
-          message: expect.stringMatching(/reserved bytes/i),
         }),
       ]),
     );

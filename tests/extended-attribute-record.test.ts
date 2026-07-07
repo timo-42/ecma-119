@@ -353,8 +353,17 @@ describe("extended attribute records", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          code: "extended_attribute_record.reserved_bytes",
+          path: "BAD_EAR.TXT",
+          message: "extended attribute record reserved bytes at BAD_EAR.TXT must be zero",
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           code: "extended_attribute_record.parse",
-          message: expect.stringMatching(/reserved bytes/i),
+          path: "BAD_EAR.TXT",
         }),
       ]),
     );
