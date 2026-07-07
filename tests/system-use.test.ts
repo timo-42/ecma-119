@@ -101,6 +101,59 @@ describe("directory record System Use", () => {
     });
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+    },
+  ])("writes and reads file and directory System Use bytes in $kind trees", ({ kind, options }) => {
+    const directorySystemUse = Uint8Array.of(0x44, 0x49, 0x52, 0x02);
+    const fileSystemUse = Uint8Array.of(0x46, 0x49, 0x4c, 0x45, 0x03);
+    const image = createIsoImage([{
+      path: "DIR/FILE.TXT",
+      data: "secondary system use\n",
+      systemUse: fileSystemUse,
+    }], {
+      directories: [{
+        path: "DIR",
+        systemUse: directorySystemUse,
+      }],
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const descriptor = parsed.descriptors.find((candidate) => candidate.kind === kind);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    if (descriptor?.kind !== "supplementary" && descriptor?.kind !== "enhanced") {
+      throw new Error(`expected ${kind} descriptor`);
+    }
+
+    const directory = descriptor.rootDirectoryRecord.children.find((entry) => "children" in entry && entry.identifier === "DIR");
+    expect(directory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      flags: 0x02,
+    });
+    expect(directory?.systemUse).toEqual(directorySystemUse);
+
+    const file = directory && "children" in directory
+      ? directory.children.find((entry) => entry.path === "DIR/FILE.TXT")
+      : undefined;
+    expect(file).toMatchObject({
+      path: "DIR/FILE.TXT",
+      identifier: "FILE.TXT;1",
+      size: "secondary system use\n".length,
+    });
+    expect(file && !("children" in file) ? file.systemUse : undefined).toEqual(fileSystemUse);
+    expect(file && !("children" in file) ? new TextDecoder("ascii").decode(file.data) : undefined).toBe("secondary system use\n");
+  });
+
   test("rejects file System Use bytes that would make a directory record exceed 255 bytes", () => {
     const tooLong = new Uint8Array(214);
 
