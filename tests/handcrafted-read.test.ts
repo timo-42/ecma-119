@@ -335,12 +335,18 @@ describe("handcrafted ISO reader fixture", () => {
   test("rejects inconsistent supplied volume set members", () => {
     const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
     const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    const mismatchedSetIdentifier = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    writeAscii(sector(mismatchedSetIdentifier, 16), 190, 128, "OTHER_SET", 0x20);
 
     expect(() => parseIsoVolumeSet([volumeTwo], { includeData: false })).toThrow(
       /volume set member 2 declares volume set size 2; expected 1/i,
     );
     expect(() => parseIsoVolumeSet([volumeOne, volumeOne], { includeData: false })).toThrow(
       /duplicate volume set member sequence number 1/i,
+    );
+    expect(validateIsoImage(mismatchedSetIdentifier)).toEqual([]);
+    expect(() => parseIsoVolumeSet([volumeOne, mismatchedSetIdentifier], { includeData: false })).toThrow(
+      /volume set member 2 declares volume set identifier "OTHER_SET"; expected <empty>/i,
     );
   });
 
