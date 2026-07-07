@@ -3601,6 +3601,73 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      expectedPath: "supplementary:.",
+      sequenceNumber: 0,
+      message: /invalid volume sequence number 0/i,
+      expectedMessage: "directory record at supplementary:. has invalid volume sequence number 0",
+    },
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      expectedPath: "supplementary:.",
+      sequenceNumber: 2,
+      message: /external volume sequence number 2/i,
+      expectedMessage: /directory record at supplementary:\. references unsupported external volume sequence number 2/i,
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      expectedPath: "enhanced:.",
+      sequenceNumber: 0,
+      message: /invalid volume sequence number 0/i,
+      expectedMessage: "directory record at enhanced:. has invalid volume sequence number 0",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      expectedPath: "enhanced:.",
+      sequenceNumber: 2,
+      message: /external volume sequence number 2/i,
+      expectedMessage: /directory record at enhanced:\. references unsupported external volume sequence number 2/i,
+    },
+  ])("reports $kind descriptor root volume sequence number $sequenceNumber issues", ({
+    options,
+    expectedPath,
+    sequenceNumber,
+    message,
+    expectedMessage,
+  }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary root sequence\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    writeUint16Both(image, secondaryDescriptorOffset + 156 + 28, sequenceNumber);
+
+    expect(() => parseIsoImage(image)).toThrow(message);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: sequenceNumber === 0 ? "directory.volume_sequence_number.range" : "directory.volume_sequence_unsupported",
+          path: expectedPath,
+          message: typeof expectedMessage === "string" ? expectedMessage : expect.stringMatching(expectedMessage),
+        }),
+      ]),
+    );
+    expect(validateIsoImage(image)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports supplementary volume sequence numbers greater than the volume set size", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
       volumeIdentifier: "VALIDATION",
