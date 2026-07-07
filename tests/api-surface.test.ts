@@ -22,6 +22,7 @@ describe("public API surface", () => {
       "encodeDirectoryRecord",
       "encodeExtendedAttributeRecord",
       "encodePathTable",
+      "encodeUcs2Identifier",
       "encodeVolumeDate",
       "EXTENDED_ATTRIBUTE_RECORD_MIN_LENGTH",
       "extendedAttributeRecordFileFlags",

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, encodeDirectoryRecord, parseIsoImage, parseVolumeDescriptors, validateIsoImage, writeUint32Both } from "../src/index";
+import { createIsoImage, encodeDirectoryRecord, parseIsoImage, parseVolumeDescriptors, readUint32BE, readUint32LE, validateIsoImage, writeUint32Both } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import {
   PVD_SECTOR,
@@ -586,6 +586,74 @@ describe("volume descriptor sequence parsing", () => {
       ? new TextDecoder("ascii").decode(parsedSupplementary.rootDirectoryRecord.children[0].data)
       : undefined).toBe("descriptor shifted\n");
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("descriptor shifted\n");
+  });
+
+  test("writes supplementary UCS-2BE directory and file identifiers", () => {
+    const image = createIsoImage([{
+      path: "DIR/FILE.TXT",
+      data: "supplementary ucs2 authoring\n",
+    }], {
+      volumeIdentifier: "PRIMARY",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        identifierEncoding: "ucs2-be",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const supplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("expected supplementary descriptor");
+    }
+
+    const directoryIdentifier = ucs2be("DIR");
+    const fileIdentifier = ucs2be("FILE.TXT;1");
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const littlePathTableOffset = readUint32LE(image, supplementaryDescriptorOffset + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, supplementaryDescriptorOffset + 148) * SECTOR_SIZE;
+    const supplementaryRootOffset = supplementary.rootDirectoryRecord.extent * SECTOR_SIZE;
+    const supplementaryRoot = image.subarray(supplementaryRootOffset, supplementaryRootOffset + supplementary.rootDirectoryRecord.size);
+    const directoryRecordOffset = findDirectoryRecordOffsetByIdentifier(supplementaryRoot, directoryIdentifier);
+    const directoryExtent = readUint32LE(supplementaryRoot, directoryRecordOffset + 2);
+    const directoryExtentBytes = image.subarray(directoryExtent * SECTOR_SIZE, (directoryExtent + 1) * SECTOR_SIZE);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+    expect(supplementary.pathTables?.typeL[1]?.identifier).toEqual(directoryIdentifier);
+    expect(supplementary.pathTables?.typeM[1]?.identifier).toEqual(directoryIdentifier);
+    expect(image.slice(littlePathTableOffset + 18, littlePathTableOffset + 18 + directoryIdentifier.byteLength)).toEqual(directoryIdentifier);
+    expect(image.slice(bigPathTableOffset + 18, bigPathTableOffset + 18 + directoryIdentifier.byteLength)).toEqual(directoryIdentifier);
+    expect(supplementary.rootDirectoryRecord.children[0]).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+    });
+    expect(findDirectoryRecordOffsetByIdentifier(directoryExtentBytes, fileIdentifier)).toBeGreaterThan(0);
+    const supplementaryDirectory = supplementary.rootDirectoryRecord.children[0];
+    if (!supplementaryDirectory || !("children" in supplementaryDirectory)) {
+      throw new Error("expected supplementary directory");
+    }
+    expect(supplementaryDirectory.children[0]).toMatchObject({
+      path: "DIR/FILE.TXT",
+      identifier: "FILE.TXT;1",
+      size: "supplementary ucs2 authoring\n".length,
+    });
+    expect(supplementaryDirectory.children[0] && !("children" in supplementaryDirectory.children[0])
+      ? new TextDecoder("ascii").decode(supplementaryDirectory.children[0].data)
+      : undefined).toBe("supplementary ucs2 authoring\n");
+  });
+
+  test("requires UCS-2 escape sequences for supplementary UCS-2BE identifier authoring", () => {
+    expect(() => createIsoImage([{ path: "README.TXT", data: "bad ucs2 authoring\n" }], {
+      supplementaryVolumeDescriptors: [{ identifierEncoding: "ucs2-be" }],
+    })).toThrow(/requires supported UCS-2 escape sequences/i);
+    expect(() => createIsoImage([{ path: "README.TXT", data: "bad enhanced ucs2 authoring\n" }], {
+      enhancedVolumeDescriptors: [{
+        identifierEncoding: "ucs2-be",
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40),
+      }],
+    })).toThrow(/requires supported UCS-2 escape sequences/i);
   });
 
   test("writes primary volume descriptor file identifier fields", () => {
@@ -1576,6 +1644,10 @@ function pathTableBytes(image: Uint8Array, sectorNumber: number, byteLength: num
 
 function findDirectoryRecordOffset(directory: Uint8Array, identifier: string): number {
   const expected = new TextEncoder().encode(identifier);
+  return findDirectoryRecordOffsetByIdentifier(directory, expected);
+}
+
+function findDirectoryRecordOffsetByIdentifier(directory: Uint8Array, expected: Uint8Array): number {
   let offset = 0;
   while (offset < directory.byteLength) {
     const length = directory[offset]!;
@@ -1590,5 +1662,15 @@ function findDirectoryRecordOffset(directory: Uint8Array, identifier: string): n
     }
     offset += length;
   }
-  throw new Error(`missing directory record ${identifier}`);
+  throw new Error(`missing directory record ${new TextDecoder("ascii").decode(expected)}`);
+}
+
+function ucs2be(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length * 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    bytes[index * 2] = code >> 8;
+    bytes[index * 2 + 1] = code & 0xff;
+  }
+  return bytes;
 }
