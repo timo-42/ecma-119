@@ -1327,15 +1327,12 @@ function validateDirectoryRecordLayout(image: Uint8Array, directory: IsoDirector
     const length = directoryBytes[offset]!;
     if (length === 0) {
       const nextSectorOffset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
-      for (let paddingOffset = offset; paddingOffset < nextSectorOffset && paddingOffset < directoryBytes.byteLength; paddingOffset += 1) {
-        if (directoryBytes[paddingOffset] !== 0) {
-          issues.push({
-            code: "directory.unused_bytes",
-            message: `unused directory bytes after the last record at ${path} must be zero`,
-            path,
-          });
-          break;
-        }
+      if (hasNonzeroUnusedDirectoryBytes(directoryBytes, offset, nextSectorOffset)) {
+        issues.push({
+          code: "directory.unused_bytes",
+          message: `unused directory bytes after the last record at ${path} must be zero`,
+          path,
+        });
       }
       offset = nextSectorOffset;
       continue;
@@ -2118,7 +2115,11 @@ function readDirectoryTree(
       if (recordIndex === 1) {
         throw new Error(`directory parent record is missing at ${path || "."}`);
       }
-      offset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      const nextSectorOffset = Math.ceil((offset + 1) / SECTOR_SIZE) * SECTOR_SIZE;
+      if (hasNonzeroUnusedDirectoryBytes(bytes, offset, nextSectorOffset)) {
+        throw new Error(`unused directory bytes after the last record at ${path || "."} must be zero`);
+      }
+      offset = nextSectorOffset;
       continue;
     }
     if ((offset % SECTOR_SIZE) + length > SECTOR_SIZE) {
@@ -2214,6 +2215,15 @@ function assertDirectoryDataLengthForParsing(directory: Pick<IsoDirectoryEntry, 
   if (directory.size <= 0 || directory.size % SECTOR_SIZE !== 0) {
     throw new Error(`directory data length at ${path} must be a positive multiple of the logical block size`);
   }
+}
+
+function hasNonzeroUnusedDirectoryBytes(bytes: Uint8Array, offset: number, nextSectorOffset: number): boolean {
+  for (let paddingOffset = offset; paddingOffset < nextSectorOffset && paddingOffset < bytes.byteLength; paddingOffset += 1) {
+    if (bytes[paddingOffset] !== 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function assertOrdinaryDirectoryRecordIdentifierForParsing(record: DecodedDirectoryRecord, path: string): void {
@@ -3243,6 +3253,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "directory.file_extent_bounds" && message.includes("invalid extent bounds")) {
+      return true;
+    }
+    if (issue.code === "directory.unused_bytes" && message.includes("unused directory bytes after the last record")) {
       return true;
     }
     if (

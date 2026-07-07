@@ -1359,23 +1359,28 @@ describe("validateIsoImage hardening", () => {
 
   test("reports nonzero unused bytes after the last root directory record", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root unused bytes\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const unusedStart = directoryRecordContentEnd(image, rootDirectoryOffset, rootDirectorySizeAt(image, PVD_OFFSET));
     image[unusedStart + 1] = 0xff;
 
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.unused_bytes",
-          path: ".",
-          message: "unused directory bytes after the last record at . must be zero",
-        }),
-      ]),
-    );
+    expect(() => parseIsoImage(image)).toThrow(/unused directory bytes after the last record at \. must be zero/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "directory.unused_bytes",
+        path: ".",
+        message: "unused directory bytes after the last record at . must be zero",
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports nonzero unused bytes after the last nested directory record", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested unused bytes\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
@@ -1384,15 +1389,16 @@ describe("validateIsoImage hardening", () => {
     const unusedStart = directoryRecordContentEnd(image, dirOffset, dirSize);
     image[unusedStart + 1] = 0xff;
 
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.unused_bytes",
-          path: "DIR",
-          message: "unused directory bytes after the last record at DIR must be zero",
-        }),
-      ]),
-    );
+    expect(() => parseIsoImage(image)).toThrow(/unused directory bytes after the last record at DIR must be zero/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "directory.unused_bytes",
+        path: "DIR",
+        message: "unused directory bytes after the last record at DIR must be zero",
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports a malformed directory record instead of relying on undefined reads", () => {
