@@ -45,6 +45,19 @@ export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel
   return { parts: [...directoryParts, isoIdentifier], fileName, isoIdentifier };
 }
 
+export function normalizeFileIdentifierReference(value: string, identifierLevel: IdentifierLevel = 1): string {
+  const versionSeparator = value.lastIndexOf(";");
+  if (versionSeparator === -1) {
+    return normalizeFilePath(value, identifierLevel).isoIdentifier;
+  }
+  const versionText = value.slice(versionSeparator + 1);
+  if (!/^[1-9][0-9]*$/u.test(versionText)) {
+    throw new RangeError("file version number must be an integer from 1 to 32767");
+  }
+  const version = checkedFileVersionNumber(Number(versionText));
+  return normalizeFilePath(value.slice(0, versionSeparator), identifierLevel, version).isoIdentifier;
+}
+
 export function normalizeDirectoryPath(path: string, identifierLevel: IdentifierLevel = 1): NormalizedDirectoryPath {
   const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) {
