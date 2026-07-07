@@ -34,6 +34,8 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   for (const descriptor of descriptors) {
     if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
+      assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
+      assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
     }
@@ -94,7 +96,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
       }));
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
-          issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor, descriptors));
+          issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor, descriptors, pvd));
         }
       }
       issues.push(...validateVolumePartitionDescriptors(image, descriptors, pvd));
@@ -1737,6 +1739,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   image: Uint8Array,
   descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
   descriptors: VolumeDescriptor[],
+  pvd: PrimaryVolumeDescriptor,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const label = descriptor.kind === "supplementary" ? "supplementary" : "enhanced";
@@ -1774,6 +1777,7 @@ function validateSupplementaryLikeVolumeDescriptor(
     });
   }
   issues.push(...validateVolumeDescriptorMetadata(descriptor, label, `${label} volume descriptor`));
+  issues.push(...validateVolumeSetConsistency(descriptor, pvd, label));
   issues.push(...validateDirectoryEntryInterleaving(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryReservedFileFlags(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryDirectoryFlags(descriptor.rootDirectoryRecord, `${label}:.`));
@@ -2895,6 +2899,18 @@ function assertVolumeDescriptorMetadata(descriptor: PathTableValidationInput, la
   }
 }
 
+function assertVolumeSetConsistentWithPrimary(
+  descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  pvd: PrimaryVolumeDescriptor,
+): void {
+  if (descriptor.volumeSetSize !== pvd.volumeSetSize) {
+    throw new Error(`${descriptor.kind} volume descriptor volume set size must match primary volume descriptor`);
+  }
+  if (descriptor.volumeSequenceNumber !== pvd.volumeSequenceNumber) {
+    throw new Error(`${descriptor.kind} volume descriptor volume sequence number must match primary volume descriptor`);
+  }
+}
+
 function assertSupportedDescriptorProfile(descriptor: PathTableValidationInput, label: string): void {
   if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
     throw new Error(`${label} logical block size must be 2048 for the supported profile`);
@@ -2929,6 +2945,27 @@ function validateVolumeDescriptorMetadata(descriptor: PathTableValidationInput, 
     issues.push({
       code: `${codePrefix}.volume_sequence_number.bounds`,
       message: `${label} volume sequence number must be less than or equal to volume set size`,
+    });
+  }
+  return issues;
+}
+
+function validateVolumeSetConsistency(
+  descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor,
+  pvd: PrimaryVolumeDescriptor,
+  codePrefix: string,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (descriptor.volumeSetSize !== pvd.volumeSetSize) {
+    issues.push({
+      code: `${codePrefix}.volume_set_size.mismatch`,
+      message: `${codePrefix} volume descriptor volume set size must match primary volume descriptor`,
+    });
+  }
+  if (descriptor.volumeSequenceNumber !== pvd.volumeSequenceNumber) {
+    issues.push({
+      code: `${codePrefix}.volume_sequence_number.mismatch`,
+      message: `${codePrefix} volume descriptor volume sequence number must match primary volume descriptor`,
     });
   }
   return issues;
@@ -3217,6 +3254,18 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     if (
       (issue.code === "supplementary.volume_flags" || issue.code === "enhanced.volume_flags")
       && message.includes(`${issue.code.split(".")[0]} volume descriptor flags bits 1 through 7 must be zero`)
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "supplementary.volume_set_size.mismatch" || issue.code === "enhanced.volume_set_size.mismatch")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor volume set size must match primary volume descriptor`)
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "supplementary.volume_sequence_number.mismatch" || issue.code === "enhanced.volume_sequence_number.mismatch")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor volume sequence number must match primary volume descriptor`)
     ) {
       return true;
     }
