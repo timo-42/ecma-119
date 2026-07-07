@@ -32,7 +32,11 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
   validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
   for (const descriptor of descriptors) {
-    if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+    if (descriptor.kind === "boot") {
+      assertSupportedBootVolumeDescriptor(descriptor);
+    } else if (descriptor.kind === "partition") {
+      assertSupportedPartitionVolumeDescriptor(descriptor);
+    } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
@@ -2940,6 +2944,24 @@ function assertSupportedDirectoryFileFlags(flags: number, path: string): void {
 function assertSupportedDirectoryRecordDirectoryFlags(flags: number, path: string): void {
   if ((flags & FILE_FLAG_DIRECTORY) !== 0 && (flags & 0x0c) !== 0) {
     throw new Error(`directory record at ${path} identifies a directory and must not set Associated File or Record bits`);
+  }
+}
+
+function assertSupportedBootVolumeDescriptor(descriptor: BootVolumeDescriptor): void {
+  if (!isAString(readAscii(descriptor.raw, 7, 32))) {
+    throw new Error("boot system identifier contains invalid ECMA-119 a-characters");
+  }
+  if (!isAString(readAscii(descriptor.raw, 39, 32))) {
+    throw new Error("boot identifier contains invalid ECMA-119 a-characters");
+  }
+}
+
+function assertSupportedPartitionVolumeDescriptor(descriptor: VolumePartitionDescriptor): void {
+  if (!isAString(readAscii(descriptor.raw, 8, 32))) {
+    throw new Error("volume partition descriptor system identifier contains invalid ECMA-119 a-characters");
+  }
+  if (!isDString(readAscii(descriptor.raw, 40, 32).replace(/ +$/u, ""))) {
+    throw new Error("volume partition descriptor volume partition identifier contains invalid ECMA-119 d-characters");
   }
 }
 
