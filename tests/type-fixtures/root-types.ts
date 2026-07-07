@@ -44,6 +44,7 @@ const file: IsoInputFile = {
 
 const directory: IsoInputDirectory = {
   path: "DIR",
+  multiExtent: { sectionSize: 2048 },
   interleave: { fileUnitSize: 1, interleaveGapSize: 0 },
   hidden: true,
   extendedAttributeRecord: byteInput,
