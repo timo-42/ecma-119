@@ -2071,11 +2071,22 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   );
   return {
     ...descriptor,
-    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, new Set()),
+    rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, new Set(), {
+      validatePrimaryIdentifiers: descriptor.kind === "primary",
+    }),
   };
 }
 
-function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, parent: IsoDirectoryEntry, path: string, includeData: boolean, localVolumeSequenceNumber: number, visited: Set<number>): IsoDirectoryEntry {
+function readDirectoryTree(
+  image: Uint8Array,
+  directory: IsoDirectoryEntry,
+  parent: IsoDirectoryEntry,
+  path: string,
+  includeData: boolean,
+  localVolumeSequenceNumber: number,
+  visited: Set<number>,
+  options: { validatePrimaryIdentifiers?: boolean } = {},
+): IsoDirectoryEntry {
   assertSupportedDirectoryEntry(directory, path || ".", localVolumeSequenceNumber);
   assertDirectoryDataLengthForParsing(directory, path || ".");
   assertDirectoryInBounds(image, directory, path || ".");
@@ -2118,11 +2129,16 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, pare
       assertDotDirectoryRecordForParsing(record, index, directory, parent, path || ".");
       continue;
     }
+    const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
+    const identifier = decodeFileIdentifier(record.identifier);
+    const cleanName = stripVersion(identifier);
+    const recordPath = joinPath(path, cleanName) || ".";
+    assertOrdinaryDirectoryRecordIdentifierForParsing(record, recordPath);
+    if (options.validatePrimaryIdentifiers) {
+      assertPrimaryDirectoryRecordIdentifierForParsing(record, recordPath);
+    }
 
-    if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
-      const identifier = decodeFileIdentifier(record.identifier);
-      const cleanName = stripVersion(identifier);
-      const recordPath = joinPath(path, cleanName);
+    if (isDirectory) {
       const chain = readDirectorySectionChain(bytes, offset, record, recordPath);
       offset = chain.nextOffset;
       recordIndex += chain.records.length - 1;
@@ -2140,11 +2156,9 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, pare
           child.extendedAttributeRecordFields = fields;
         }
       }
-      children.push(readDirectoryTree(image, child, directory, childPath, includeData, localVolumeSequenceNumber, new Set(visited)));
+      children.push(readDirectoryTree(image, child, directory, childPath, includeData, localVolumeSequenceNumber, new Set(visited), options));
     } else {
-      const identifier = decodeFileIdentifier(record.identifier);
-      const cleanName = stripVersion(identifier);
-      const filePath = joinPath(path, cleanName);
+      const filePath = recordPath;
       const chain = readFileSectionChain(bytes, offset, record, filePath);
       offset = chain.nextOffset;
       recordIndex += chain.records.length - 1;
@@ -2192,6 +2206,20 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, pare
 function assertDirectoryDataLengthForParsing(directory: Pick<IsoDirectoryEntry, "size">, path: string): void {
   if (directory.size <= 0 || directory.size % SECTOR_SIZE !== 0) {
     throw new Error(`directory data length at ${path} must be a positive multiple of the logical block size`);
+  }
+}
+
+function assertOrdinaryDirectoryRecordIdentifierForParsing(record: DecodedDirectoryRecord, path: string): void {
+  if (record.identifier.length === 1 && (record.identifier[0] === 0 || record.identifier[0] === 1)) {
+    throw new Error(`directory record at ${path} must not use special identifier ${record.identifier[0]} outside self/parent records`);
+  }
+}
+
+function assertPrimaryDirectoryRecordIdentifierForParsing(record: DecodedDirectoryRecord, path: string): void {
+  const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
+  const valid = isDirectory ? isSupportedPrimaryDirectoryIdentifier(record.identifier) : isSupportedPrimaryFileIdentifier(record.identifier);
+  if (!valid) {
+    throw new Error(`primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 primary d-characters" : "file identifier contains invalid ECMA-119 primary file identifier"} at ${path}`);
   }
 }
 
