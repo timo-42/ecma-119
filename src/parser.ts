@@ -63,6 +63,13 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSetSize);
   const includeData = options.includeData ?? true;
   const populatedDescriptors = descriptors.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
+  for (const descriptor of populatedDescriptors) {
+    if (descriptor.kind === "primary") {
+      assertDescriptorPathTableHierarchy(image, descriptor, "path_table");
+    } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+      assertDescriptorPathTableHierarchy(image, descriptor, `${descriptor.kind}_path_table`);
+    }
+  }
   const primaryVolumeDescriptor = populatedDescriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
   if (!primaryVolumeDescriptor) {
     throw new Error("missing primary volume descriptor");
@@ -613,6 +620,56 @@ function validatePathTableReferenceForParsing(
   validateDecodedPathTableForParsing(pathTable, descriptor, label);
 }
 
+function assertDescriptorPathTableHierarchy(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  codePrefix: string,
+): void {
+  if (descriptor.rootDirectoryRecord.volumeSequenceNumber !== descriptor.volumeSequenceNumber) {
+    return;
+  }
+  const expected = expectedPathTableRecords(image, descriptor.rootDirectoryRecord);
+  if (!expected) {
+    return;
+  }
+
+  const mandatory = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.typeLPathTableLocation, "little");
+  const issues = validatePathTableAgainstHierarchy(mandatory, expected, codePrefix, "Type L");
+  if (issues.length > 0) {
+    throw new Error(issues[0]!.message);
+  }
+  const mandatoryBig = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.typeMPathTableLocation, "big");
+  const bigIssues = validatePathTableAgainstHierarchy(mandatoryBig, expected, codePrefix, "Type M");
+  if (bigIssues.length > 0) {
+    throw new Error(bigIssues[0]!.message);
+  }
+
+  if (descriptor.optionalTypeLPathTableLocation !== 0) {
+    const optionalLittle = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.optionalTypeLPathTableLocation, "little");
+    const optionalIssues = validatePathTableAgainstHierarchy(optionalLittle, expected, `${codePrefix}.optional.little`, "optional Type L");
+    if (optionalIssues.length > 0) {
+      throw new Error(optionalIssues[0]!.message);
+    }
+  }
+  if (descriptor.optionalTypeMPathTableLocation !== 0) {
+    const optionalBig = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.optionalTypeMPathTableLocation, "big");
+    const optionalIssues = validatePathTableAgainstHierarchy(optionalBig, expected, `${codePrefix}.optional.big`, "optional Type M");
+    if (optionalIssues.length > 0) {
+      throw new Error(optionalIssues[0]!.message);
+    }
+  }
+}
+
+function decodeDescriptorPathTableForHierarchy(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  location: number,
+  endian: "little" | "big",
+): PathTableRecord[] {
+  const start = location * SECTOR_SIZE;
+  return decodePathTable(image.subarray(start, start + descriptor.pathTableSize), endian);
+}
+
 function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], descriptor: PathTableValidationInput, label: string): void {
   if (pathTable.length === 0) {
     throw new Error(`${label} must contain the root directory record`);
@@ -918,7 +975,8 @@ function validatePathTableReferences(
   if (expected) {
     if (little.records) {
       issues.push(...validatePathTableAgainstHierarchy(little.records, expected, codePrefix, "Type L"));
-    } else if (big.records) {
+    }
+    if (big.records) {
       issues.push(...validatePathTableAgainstHierarchy(big.records, expected, codePrefix, "Type M"));
     }
     if (optionalLittle.records) {
