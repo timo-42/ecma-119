@@ -1512,6 +1512,13 @@ function validateDirectoryHierarchy(
       issues.push(...validateDirectoryRecordVolumeSequence(record, recordPath || ".", localVolumeSequenceNumber));
     }
     if (
+      index >= 2
+      && (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY
+      && record.volumeSequenceNumber === localVolumeSequenceNumber
+    ) {
+      issues.push(...validateFileSectionBounds(image, record, recordPath || "."));
+    }
+    if (
       index < 2
       || (record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY
       || isMultiExtentContinuationRecord
@@ -1552,6 +1559,23 @@ function validateFilePathLength(record: DecodedDirectoryRecord, path: string, fi
   return [{
     code: "directory.file_path_length",
     message: `file path length at ${path} must not exceed ${MAX_FILE_PATH_LENGTH} bytes`,
+    path,
+  }];
+}
+
+function validateFileSectionBounds(image: Uint8Array, record: DecodedDirectoryRecord, path: string): ValidationIssue[] {
+  if (sectionInBounds(image, {
+    extent: record.extent,
+    extendedAttributeRecordLength: record.extendedAttributeRecordLength,
+    dataLength: record.dataLength,
+    fileUnitSize: record.fileUnitSize,
+    interleaveGapSize: record.interleaveGapSize,
+  })) {
+    return [];
+  }
+  return [{
+    code: "directory.file_extent_bounds",
+    message: `file record at ${path} has invalid extent bounds`,
     path,
   }];
 }
@@ -3033,6 +3057,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "extended_attribute_record.bounds" && message.includes("invalid extent bounds")) {
+      return true;
+    }
+    if (issue.code === "directory.file_extent_bounds" && message.includes("invalid extent bounds")) {
       return true;
     }
     return message.includes(issue.message) || issue.message.includes(message);
