@@ -1890,6 +1890,63 @@ describe("validateIsoImage hardening", () => {
     expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "extended_attribute_record.parse" })]));
   });
 
+  test("reports invalid directory extended attribute record system identifiers without duplicate parse issues", () => {
+    const image = createIsoImage({
+      files: [{
+        path: "DIR/FILE.TXT",
+        data: "directory ear system identifier\n",
+      }],
+      directories: [{
+        path: "DIR",
+        extendedAttributeRecord: {
+          systemIdentifier: "VALIDATION",
+        },
+      }],
+      volumeIdentifier: "VALIDATION",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).root.children.find((node) => node.path === "DIR")?.extendedAttributeRecordFields?.systemIdentifier).toBe("VALIDATION");
+    expect(validateIsoImage(image)).toEqual([]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const directoryExtent = readBothEndianUint32(image, directoryRecordOffset + 2);
+    image[directoryExtent * SECTOR_SIZE + 84] = "a".charCodeAt(0);
+
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "extended_attribute_record.system_identifier.characters",
+        path: "DIR",
+        message: "extended attribute record system identifier at DIR contains invalid ECMA-119 a-characters",
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "extended_attribute_record.parse" })]));
+  });
+
+  test("reports invalid primary descriptor root extended attribute record system identifiers without duplicate parse issues", () => {
+    const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    }));
+    expect(parseIsoImage(image).primaryVolumeDescriptor.rootDirectoryRecord.extendedAttributeRecordFields?.systemIdentifier).toBe("VALIDATION");
+    expect(validateIsoImage(image)).toEqual([]);
+
+    const rootExtent = rootDirectoryExtent(image);
+    image[rootExtent * SECTOR_SIZE + 84] = "a".charCodeAt(0);
+
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "extended_attribute_record.system_identifier.characters",
+        path: ".",
+        message: "extended attribute record system identifier at . contains invalid ECMA-119 a-characters",
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "extended_attribute_record.parse" })]));
+  });
+
   test("writes structured extended attribute record both-endian fields and reads the image back", () => {
     const image = baselineImage([{
       path: "EAR.TXT",
