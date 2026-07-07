@@ -9,6 +9,7 @@ import {
   type IsoFileSection,
   type IsoImage,
   type IsoNode,
+  type IsoPathTables,
   type BootVolumeDescriptor,
   type EnhancedVolumeDescriptor,
   type PrimaryVolumeDescriptor,
@@ -2106,10 +2107,30 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   );
   return {
     ...descriptor,
+    pathTables: readDescriptorPathTables(image, descriptor),
     rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, new Set(), {
       validatePrimaryIdentifiers: descriptor.kind === "primary",
     }),
   };
+}
+
+function readDescriptorPathTables(image: Uint8Array, descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): IsoPathTables {
+  const pathTables: IsoPathTables = {
+    typeL: readPathTable(image, descriptor.typeLPathTableLocation, descriptor.pathTableSize, "little"),
+    typeM: readPathTable(image, descriptor.typeMPathTableLocation, descriptor.pathTableSize, "big"),
+  };
+  if (descriptor.optionalTypeLPathTableLocation !== 0) {
+    pathTables.optionalTypeL = readPathTable(image, descriptor.optionalTypeLPathTableLocation, descriptor.pathTableSize, "little");
+  }
+  if (descriptor.optionalTypeMPathTableLocation !== 0) {
+    pathTables.optionalTypeM = readPathTable(image, descriptor.optionalTypeMPathTableLocation, descriptor.pathTableSize, "big");
+  }
+  return pathTables;
+}
+
+function readPathTable(image: Uint8Array, location: number, size: number, endian: "little" | "big"): PathTableRecord[] {
+  const start = location * SECTOR_SIZE;
+  return decodePathTable(image.subarray(start, start + size), endian);
 }
 
 function readDirectoryTree(

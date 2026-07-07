@@ -779,6 +779,26 @@ describe("volume descriptor sequence parsing", () => {
     expect(primary.optionalTypeMPathTableLocation).not.toBe(0);
     expect(primary.optionalTypeLPathTableLocation).not.toBe(primary.typeLPathTableLocation);
     expect(primary.optionalTypeMPathTableLocation).not.toBe(primary.typeMPathTableLocation);
+    expect(primary.pathTables).toMatchObject({
+      typeL: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: new TextEncoder().encode("DIR"), parentDirectoryNumber: 1 }),
+      ],
+      typeM: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: new TextEncoder().encode("DIR"), parentDirectoryNumber: 1 }),
+      ],
+      optionalTypeL: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: new TextEncoder().encode("DIR"), parentDirectoryNumber: 1 }),
+      ],
+      optionalTypeM: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: new TextEncoder().encode("DIR"), parentDirectoryNumber: 1 }),
+      ],
+    });
+    expect(primary.pathTables?.optionalTypeL).toEqual(primary.pathTables?.typeL);
+    expect(primary.pathTables?.optionalTypeM).toEqual(primary.pathTables?.typeM);
     expect(pathTableBytes(image, primary.optionalTypeLPathTableLocation, primary.pathTableSize)).toEqual(
       pathTableBytes(image, primary.typeLPathTableLocation, primary.pathTableSize),
     );
@@ -824,6 +844,19 @@ describe("volume descriptor sequence parsing", () => {
     if (supplementary?.kind !== "supplementary") {
       throw new Error("expected supplementary descriptor");
     }
+    const parsed = parseIsoImage(image, { includeData: false });
+    const parsedPrimary = parsed.primaryVolumeDescriptor;
+    const parsedSupplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    const parsedEnhanced = parsed.descriptors.find((descriptor) => descriptor.kind === "enhanced");
+
+    expect(parsedPrimary.pathTables?.optionalTypeL).toEqual(parsedPrimary.pathTables?.typeL);
+    expect(parsedPrimary.pathTables?.optionalTypeM).toBeUndefined();
+    expect(parsedSupplementary?.kind === "supplementary" ? parsedSupplementary.pathTables?.optionalTypeL : undefined).toBeUndefined();
+    expect(parsedSupplementary?.kind === "supplementary" ? parsedSupplementary.pathTables?.optionalTypeM : undefined).toEqual(
+      parsedSupplementary?.kind === "supplementary" ? parsedSupplementary.pathTables?.typeM : undefined,
+    );
+    expect(parsedEnhanced?.kind === "enhanced" ? parsedEnhanced.pathTables?.optionalTypeL : undefined).toBeUndefined();
+    expect(parsedEnhanced?.kind === "enhanced" ? parsedEnhanced.pathTables?.optionalTypeM : undefined).toBeUndefined();
     expect(pathTableBytes(image, supplementary.optionalTypeMPathTableLocation, supplementary.pathTableSize)).toEqual(
       pathTableBytes(image, supplementary.typeMPathTableLocation, supplementary.pathTableSize),
     );
@@ -852,6 +885,10 @@ describe("volume descriptor sequence parsing", () => {
     expect(enhanced.optionalTypeMPathTableLocation).not.toBe(0);
     expect(enhanced.optionalTypeLPathTableLocation).not.toBe(enhanced.typeLPathTableLocation);
     expect(enhanced.optionalTypeMPathTableLocation).not.toBe(enhanced.typeMPathTableLocation);
+    expect(enhanced.pathTables?.typeL).toHaveLength(2);
+    expect(enhanced.pathTables?.typeM).toHaveLength(2);
+    expect(enhanced.pathTables?.optionalTypeL).toEqual(enhanced.pathTables?.typeL);
+    expect(enhanced.pathTables?.optionalTypeM).toEqual(enhanced.pathTables?.typeM);
     expect(pathTableBytes(image, enhanced.optionalTypeLPathTableLocation, enhanced.pathTableSize)).toEqual(
       pathTableBytes(image, enhanced.typeLPathTableLocation, enhanced.pathTableSize),
     );

@@ -135,6 +135,18 @@ describe("handcrafted ISO reader fixture", () => {
       identifier: "CHILD.TXT;1",
       size: 13,
     });
+    expect(parsed.primaryVolumeDescriptor.pathTables).toMatchObject({
+      typeL: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), extent: 20, parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: new TextEncoder().encode("DIR"), extent: 21, parentDirectoryNumber: 1 }),
+      ],
+      typeM: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), extent: 20, parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: new TextEncoder().encode("DIR"), extent: 21, parentDirectoryNumber: 1 }),
+      ],
+    });
+    expect(parsed.primaryVolumeDescriptor.pathTables?.optionalTypeL).toBeUndefined();
+    expect(parsed.primaryVolumeDescriptor.pathTables?.optionalTypeM).toBeUndefined();
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hello nested\n");
   });
 
