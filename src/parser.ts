@@ -2829,6 +2829,9 @@ function assertDotDirectoryRecordForParsing(
   if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
     throw new Error(`directory ${recordName} record at ${path} must have the Directory flag set`);
   }
+  if (index === 1 && directory.volumeSequenceNumber !== parent.volumeSequenceNumber) {
+    return;
+  }
   if (
     record.extent !== expectedEntry.extent
     || record.extendedAttributeRecordLength !== expectedEntry.extendedAttributeRecordLength

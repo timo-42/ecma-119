@@ -16,6 +16,8 @@ import {
   type IsoImage,
   type IsoImageInput,
   type IsoInputDirectory,
+  type IsoInputExternalDirectory,
+  type IsoInputExternalFile,
   type IsoInputFile,
   type IsoNode,
   type IsoVolumeSet,
@@ -57,8 +59,30 @@ const associatedDirectory: IsoInputDirectory = {
   associated: true,
 };
 
+const externalFile: IsoInputExternalFile = {
+  path: "REMOTE.TXT",
+  targetVolumeSequenceNumber: 2,
+  targetExtent: 20,
+  size: 4,
+  version: 1,
+  hidden: true,
+  associated: true,
+  systemUse: byteInput,
+};
+
+const externalDirectory: IsoInputExternalDirectory = {
+  path: "REMOTE_DIR",
+  targetVolumeSequenceNumber: 2,
+  targetExtent: 21,
+  size: 2048,
+  hidden: true,
+  systemUse: byteInput,
+};
+
 const options: CreateIsoOptions = {
   directories: [directory],
+  externalFiles: [externalFile],
+  volumeSetSize: 2,
   systemArea: byteInput,
   bootRecord: {
     bootSystemIdentifier: "BOOT",
@@ -77,6 +101,11 @@ const options: CreateIsoOptions = {
     volumeIdentifier: "ENH",
     escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
   }],
+};
+
+const externalDirectoryOptions: CreateIsoOptions = {
+  externalDirectories: [externalDirectory],
+  volumeSetSize: 2,
 };
 
 const image = createIsoImage([file], options);
@@ -116,6 +145,7 @@ void descriptors;
 void directoryEntry;
 void enhanced;
 void entryPath;
+void externalDirectoryOptions;
 void fileEntry;
 void imageFromObjectOverload;
 void issues;

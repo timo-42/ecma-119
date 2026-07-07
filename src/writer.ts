@@ -14,14 +14,14 @@ import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FIL
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { encodeUcs2Identifier, isLevelOneFileIdentifier, type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
+import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, type IsoInputExternalDirectory, type IsoInputExternalFile, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
   kind: "file";
   name: string;
   isoIdentifier: string;
-  data: Uint8Array;
+  data?: Uint8Array;
   sections: FileSectionNode[];
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordLength: number;
@@ -29,6 +29,8 @@ type FileNode = {
   timeZoneOffsetMinutes: number;
   extent: number;
   flags: number;
+  volumeSequenceNumber?: number;
+  external?: boolean;
   systemUse?: Uint8Array;
 };
 
@@ -53,6 +55,8 @@ type DirectoryNode = {
   timeZoneOffsetMinutes: number;
   extent: number;
   dataLength: number;
+  volumeSequenceNumber?: number;
+  external?: boolean;
   fileUnitSize: number;
   interleaveGapSize: number;
   extendedAttributeRecord?: Uint8Array;
@@ -112,7 +116,8 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const timeZoneOffsetMinutes = options.timeZoneOffsetMinutes ?? 0;
   const identifierLevel = checkedIdentifierLevel(options.identifierLevel ?? 1);
   const volumeSet = checkedVolumeSetOptions(options);
-  const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes, identifierLevel);
+  validateExternalDirectoryDescriptorScope(options);
+  const root = buildTree(files, options.directories ?? [], options.externalFiles ?? [], options.externalDirectories ?? [], now, timeZoneOffsetMinutes, identifierLevel, volumeSet);
   validateDescriptorFileReferences(options, root, identifierLevel);
   const directories = collectDirectories(root);
   assertPathTableDirectoryCapacity(directories.length);
@@ -163,6 +168,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
 
   prepareDirectoryLayout(directories);
   for (const directory of directories) {
+    if (directory.external) {
+      continue;
+    }
     for (const [index, section] of directory.sections.entries()) {
       section.extent = nextSector;
       if (index === 0) {
@@ -174,6 +182,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   for (const descriptor of secondaryDescriptors) {
     prepareDirectoryLayout(directories, descriptor);
     for (const directory of directories) {
+      if (directory.external) {
+        continue;
+      }
       for (const [index, section] of descriptor.directorySections.get(directory)!.entries()) {
         section.extent = nextSector;
         if (index === 0) {
@@ -234,6 +245,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
 
   for (const directory of directories) {
+    if (directory.external) {
+      continue;
+    }
     if (directory.extendedAttributeRecord) {
       image.set(directory.extendedAttributeRecord, sectorOffset(directory.extent));
     }
@@ -241,6 +255,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
+      if (directory.external) {
+        continue;
+      }
       const extent = descriptor.directoryExtents.get(directory)!;
       if (directory.extendedAttributeRecord) {
         image.set(directory.extendedAttributeRecord, sectorOffset(extent));
@@ -250,6 +267,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
 
   for (const file of fileNodes) {
+    if (file.data === undefined) {
+      continue;
+    }
     if (file.extendedAttributeRecord) {
       image.set(file.extendedAttributeRecord, sectorOffset(file.extent));
     }
@@ -307,7 +327,16 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   return image;
 }
 
-function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date, defaultTimeZoneOffsetMinutes: number, identifierLevel: IdentifierLevel): DirectoryNode {
+function buildTree(
+  files: IsoInputFile[],
+  directories: IsoInputDirectory[],
+  externalFiles: IsoInputExternalFile[],
+  externalDirectories: IsoInputExternalDirectory[],
+  now: Date,
+  defaultTimeZoneOffsetMinutes: number,
+  identifierLevel: IdentifierLevel,
+  volumeSet: VolumeSetOptions,
+): DirectoryNode {
   const state: BuildTreeState = { directoryCount: 1 };
   const root: DirectoryNode = {
     kind: "directory",
@@ -336,6 +365,9 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         throw new Error(`path segment conflicts with a file: ${part}`);
       }
       if (existing) {
+        if (existing.external) {
+          throw new Error(`path segment references an external directory: ${part}`);
+        }
         directory = existing;
         continue;
       }
@@ -449,6 +481,79 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
     }
   }
 
+  for (const input of externalDirectories) {
+    const normalized = normalizeDirectoryPath(input.path, identifierLevel);
+    if (normalized.parts.length === 0) {
+      throw new Error("external directory records must not target the root directory");
+    }
+    const externalVolumeSequenceNumber = checkedExternalVolumeSequenceNumber(input.targetVolumeSequenceNumber, volumeSet);
+    const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
+    const parent = ensureDirectory(root, normalized.parts.slice(0, -1), input.date ?? now, directoryTimeZoneOffsetMinutes, state);
+    const name = normalized.parts.at(-1)!;
+    if (hasFileChildWithIdentifier(parent, name)) {
+      throw new Error(`path segment conflicts with a file: ${name}`);
+    }
+    if (parent.children.has(directoryChildKey(name))) {
+      throw new Error(`duplicate directory path: ${input.path}`);
+    }
+    const external = externalSectionsFor(input, "directory");
+    const directory: DirectoryNode = {
+      kind: "directory",
+      name,
+      isoIdentifier: name,
+      parent,
+      children: new Map(),
+      sections: external.sections,
+      date: input.date ?? now,
+      timeZoneOffsetMinutes: directoryTimeZoneOffsetMinutes,
+      extent: external.sections[0]!.extent,
+      dataLength: external.dataLength,
+      volumeSequenceNumber: externalVolumeSequenceNumber,
+      external: true,
+      fileUnitSize: external.sections[0]!.fileUnitSize,
+      interleaveGapSize: external.sections[0]!.interleaveGapSize,
+      extendedAttributeRecordLength: external.sections[0]!.extendedAttributeRecordLength,
+      flags: inputDirectoryFlags(FILE_FLAG_DIRECTORY, input),
+      pathTableIndex: 0,
+    };
+    if (input.systemUse !== undefined) {
+      directory.systemUse = toBytes(input.systemUse);
+    }
+    parent.children.set(directoryChildKey(name), directory);
+  }
+
+  for (const input of externalFiles) {
+    const normalized = normalizeFilePath(input.path, identifierLevel, input.version ?? 1);
+    const fileTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
+    const directory = ensureDirectory(root, normalized.parts.slice(0, -1), input.date ?? now, fileTimeZoneOffsetMinutes, state);
+    if (directory.children.has(directoryChildKey(normalized.isoIdentifier))) {
+      throw new Error(`path conflicts with a directory: ${input.path}`);
+    }
+    const flags = inputFileFlags(input);
+    if (directory.children.has(fileChildKey(normalized.isoIdentifier, flags))) {
+      throw new Error(`duplicate file path: ${input.path}`);
+    }
+    const externalVolumeSequenceNumber = checkedExternalVolumeSequenceNumber(input.targetVolumeSequenceNumber, volumeSet);
+    const external = externalSectionsFor(input, "file");
+    const fileNode: FileNode = {
+      kind: "file",
+      name: normalized.fileName,
+      isoIdentifier: normalized.isoIdentifier,
+      sections: external.sections,
+      extendedAttributeRecordLength: external.sections[0]!.extendedAttributeRecordLength,
+      date: input.date ?? now,
+      timeZoneOffsetMinutes: fileTimeZoneOffsetMinutes,
+      extent: external.sections[0]!.extent,
+      flags,
+      volumeSequenceNumber: externalVolumeSequenceNumber,
+      external: true,
+    };
+    if (input.systemUse !== undefined) {
+      fileNode.systemUse = toBytes(input.systemUse);
+    }
+    directory.children.set(fileChildKey(normalized.isoIdentifier, flags), fileNode);
+  }
+
   return root;
 }
 
@@ -460,6 +565,9 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
       throw new Error(`path segment conflicts with a file: ${part}`);
     }
     if (existing) {
+      if (existing.external) {
+        throw new Error(`path segment references an external directory: ${part}`);
+      }
       directory = existing;
       continue;
     }
@@ -555,6 +663,25 @@ function directorySectionsFor(
     sections.push(fileSection(offset, Math.min(sectionSize, dataLength - offset), interleave));
   }
   return sections;
+}
+
+function externalSectionsFor(input: IsoInputExternalFile | IsoInputExternalDirectory, kind: "file" | "directory"): { sections: FileSectionNode[]; dataLength: number } {
+  const extendedAttributeRecordLength = checkedExternalExtendedAttributeRecordLength(input.extendedAttributeRecordLength ?? 0);
+  const fileUnitSize = checkedExternalInterleaveField(input.fileUnitSize ?? 0, "fileUnitSize");
+  const interleaveGapSize = checkedExternalInterleaveField(input.interleaveGapSize ?? 0, "interleaveGapSize");
+  if (fileUnitSize === 0 && interleaveGapSize !== 0) {
+    throw new Error("external record interleaveGapSize must be 0 when fileUnitSize is 0");
+  }
+  if (fileUnitSize !== 0 && extendedAttributeRecordLength !== 0 && extendedAttributeRecordLength !== fileUnitSize) {
+    throw new Error("external interleaved extendedAttributeRecordLength must equal fileUnitSize");
+  }
+  const dataLength = kind === "directory"
+    ? checkedExternalDirectorySize(input.size ?? SECTOR_SIZE)
+    : checkedExternalSize(input.size ?? 0);
+  const section = fileSection(0, dataLength, { fileUnitSize, interleaveGapSize });
+  section.extent = checkedExternalExtent(input.targetExtent);
+  section.extendedAttributeRecordLength = extendedAttributeRecordLength;
+  return { sections: [section], dataLength };
 }
 
 function fileSection(
@@ -685,9 +812,13 @@ function collectFiles(root: DirectoryNode): FileNode[] {
   const visit = (directory: DirectoryNode): void => {
     for (const child of [...directory.children.values()].sort(compareNode)) {
       if (child.kind === "file") {
-        files.push(child);
+        if (!child.external) {
+          files.push(child);
+        }
       } else {
-        visit(child);
+        if (!child.external) {
+          visit(child);
+        }
       }
     }
   };
@@ -697,6 +828,14 @@ function collectFiles(root: DirectoryNode): FileNode[] {
 
 function prepareDirectoryLayout(directories: DirectoryNode[], layout?: PreparedSecondaryDescriptor): void {
   for (const directory of [...directories].reverse()) {
+    if (directory.external) {
+      if (layout) {
+        layout.directoryExtents.set(directory, directory.extent);
+        layout.directoryDataLengths.set(directory, directory.dataLength);
+        layout.directorySections.set(directory, directory.sections);
+      }
+      continue;
+    }
     const dataLength = directoryDataLength(directory, layout);
     const paddedLength = paddedDirectoryDataLength(dataLength);
     const sections = directorySectionsFor(paddedLength, directory.multiExtent, {
@@ -743,12 +882,12 @@ function encodeDirectoryExtent(directory: DirectoryNode, volumeSequenceNumber: n
     if (child.kind === "directory") {
       const sections = directorySectionsForLayout(child, layout);
       for (const [sectionIndex, section] of sections.entries()) {
-        record = directoryRecordForDirectorySection(child, sections, section, sectionIndex, identifier, volumeSequenceNumber);
+        record = directoryRecordForDirectorySection(child, sections, section, sectionIndex, identifier, child.volumeSequenceNumber ?? volumeSequenceNumber);
         offset = appendRecord(bytes, offset, record);
       }
     } else {
       for (const [sectionIndex, section] of child.sections.entries()) {
-        record = directoryRecordForFileSection(child, section, sectionIndex, identifier, volumeSequenceNumber);
+        record = directoryRecordForFileSection(child, section, sectionIndex, identifier, child.volumeSequenceNumber ?? volumeSequenceNumber);
         offset = appendRecord(bytes, offset, record);
       }
     }
@@ -1290,9 +1429,65 @@ function checkedVolumeSetOptions(options: CreateIsoOptions): VolumeSetOptions {
   return { volumeSetSize, volumeSequenceNumber };
 }
 
+function validateExternalDirectoryDescriptorScope(options: CreateIsoOptions): void {
+  if ((options.externalDirectories?.length ?? 0) === 0) {
+    return;
+  }
+  if ((options.supplementaryVolumeDescriptors?.length ?? 0) > 0 || (options.enhancedVolumeDescriptors?.length ?? 0) > 0) {
+    throw new Error("externalDirectories cannot be used with supplementary or enhanced volume descriptors");
+  }
+}
+
+function checkedExternalVolumeSequenceNumber(value: number, volumeSet: VolumeSetOptions): number {
+  const volumeSequenceNumber = checkedVolumeSetField(value, "targetVolumeSequenceNumber");
+  if (volumeSequenceNumber > volumeSet.volumeSetSize) {
+    throw new RangeError("targetVolumeSequenceNumber must be less than or equal to volumeSetSize");
+  }
+  if (volumeSequenceNumber === volumeSet.volumeSequenceNumber) {
+    throw new Error("external records must reference a different volume sequence number");
+  }
+  return volumeSequenceNumber;
+}
+
 function checkedVolumeSetField(value: number, name: string): number {
   if (!Number.isInteger(value) || value < 1 || value > 0xffff) {
     throw new RangeError(`${name} must be an integer from 1 to 65535`);
+  }
+  return value;
+}
+
+function checkedExternalExtent(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new RangeError("targetExtent must be an integer from 0 to 4294967295");
+  }
+  return value;
+}
+
+function checkedExternalSize(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new RangeError("external record size must be an integer from 0 to 4294967295");
+  }
+  return value;
+}
+
+function checkedExternalDirectorySize(value: number): number {
+  const size = checkedExternalSize(value);
+  if (size < SECTOR_SIZE || size % SECTOR_SIZE !== 0) {
+    throw new RangeError(`external directory size must be a positive multiple of ${SECTOR_SIZE}`);
+  }
+  return size;
+}
+
+function checkedExternalExtendedAttributeRecordLength(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new RangeError("external record extendedAttributeRecordLength must be an integer from 0 to 255");
+  }
+  return value;
+}
+
+function checkedExternalInterleaveField(value: number, label: "fileUnitSize" | "interleaveGapSize"): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new RangeError(`external record ${label} must be an integer from 0 to 255`);
   }
   return value;
 }
