@@ -604,7 +604,6 @@ function writePrimaryDescriptor(
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
     volumeSpaceSize: number;
-    abstractFileIdentifier?: string;
     date: Date;
   },
 ): void {
@@ -636,6 +635,7 @@ function writeSecondaryDescriptor(
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
     volumeSpaceSize: number;
+    abstractFileIdentifier?: string;
     date: Date;
   },
 ): void {
