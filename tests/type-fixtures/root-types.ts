@@ -9,6 +9,8 @@ import {
   type CreateIsoOptions,
   type EnhancedVolumeDescriptor,
   type ExtendedAttributeRecordInput,
+  type IsoBootCatalog,
+  type IsoBootCatalogEntry,
   type IsoDirectoryEntry,
   type IsoFileEntry,
   type IsoImage,
@@ -100,7 +102,12 @@ const enhanced: EnhancedVolumeDescriptor | undefined = parsed.descriptors.find(
 const partition: VolumePartitionDescriptor | undefined = parsed.descriptors.find(
   (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
 );
+const bootCatalog: IsoBootCatalog | undefined = parsed.descriptors.find(
+  (descriptor) => descriptor.kind === "boot",
+)?.bootCatalog;
+const bootCatalogEntry: IsoBootCatalogEntry | undefined = bootCatalog?.entries[0];
 
+void bootCatalogEntry;
 void descriptors;
 void directoryEntry;
 void enhanced;
