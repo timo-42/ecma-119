@@ -2827,10 +2827,13 @@ describe("validateIsoImage hardening", () => {
 
   test("reports associated directory record flags", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "associated directory flag\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     image[directoryRecordOffset + 25] |= 0x04;
 
+    expect(() => parseIsoImage(image)).toThrow(/directory record at DIR identifies a directory and must not set Associated File or Record bits/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2844,10 +2847,13 @@ describe("validateIsoImage hardening", () => {
 
   test("reports record-bit directory records without extended attribute records", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "record directory flag\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const directoryRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     image[directoryRecordOffset + 25] |= 0x08;
 
+    expect(() => parseIsoImage(image)).toThrow(/directory record at DIR identifies a directory and must not set Associated File or Record bits/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2905,8 +2911,29 @@ describe("validateIsoImage hardening", () => {
 
   test("reports descriptor root associated directory flags", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root associated directory flag\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
     image[PVD_OFFSET + 156 + 25] |= 0x04;
 
+    expect(() => parseIsoImage(image)).toThrow(/directory record at \. identifies a directory and must not set Associated File or Record bits/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_flags_directory",
+          path: ".",
+          message: "directory record at . identifies a directory and must not set Associated File or Record bits",
+        }),
+      ]),
+    );
+  });
+
+  test("reports descriptor root record-bit directory flags", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "root record directory flag\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    image[PVD_OFFSET + 156 + 25] |= 0x08;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory record at \. identifies a directory and must not set Associated File or Record bits/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
