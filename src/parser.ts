@@ -2259,6 +2259,8 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     const identifier = decodeFileIdentifier(record.identifier);
     const recordPath = joinPath(path === "." ? "" : path, stripVersion(identifier)) || ".";
     const extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+    const bothEndianIssues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, recordPath);
+    issues.push(...bothEndianIssues);
     try {
       const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
       if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
@@ -2288,11 +2290,14 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
         }
       }
     } catch (error) {
-      issues.push({
-        code: "extended_attribute_record.parse",
-        message: error instanceof Error ? error.message : String(error),
-        path: recordPath,
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      if (!shouldSuppressExtendedAttributeRecordParse(message, bothEndianIssues, extendedAttributeRecord)) {
+        issues.push({
+          code: "extended_attribute_record.parse",
+          message,
+          path: recordPath,
+        });
+      }
     }
   }
   return issues;
@@ -2303,24 +2308,60 @@ function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry:
     return [];
   }
   const extendedAttributeRecord = image.slice(entry.extent * SECTOR_SIZE, (entry.extent + entry.extendedAttributeRecordLength) * SECTOR_SIZE);
+  const issues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, path);
   try {
     const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
     const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
     if ((entry.flags & 0x10) !== expected) {
-      return [{
+      issues.push({
         code: "extended_attribute_record.file_flags",
         message: `directory record flags for ${path} do not match associated extended attribute record fields`,
         path,
-      }];
+      });
     }
   } catch (error) {
-    return [{
-      code: "extended_attribute_record.parse",
-      message: error instanceof Error ? error.message : String(error),
-      path,
-    }];
+    const message = error instanceof Error ? error.message : String(error);
+    if (!shouldSuppressExtendedAttributeRecordParse(message, issues, extendedAttributeRecord)) {
+      issues.push({
+        code: "extended_attribute_record.parse",
+        message,
+        path,
+      });
+    }
   }
-  return [];
+  return issues;
+}
+
+const extendedAttributeRecordBothEndianFields = [
+  { start: 0, code: "owner_identification", label: "owner identification" },
+  { start: 4, code: "group_identification", label: "group identification" },
+  { start: 80, code: "record_length", label: "record length" },
+  { start: 246, code: "application_use_length", label: "application use length" },
+] as const;
+
+function validateExtendedAttributeRecordBothEndianFields(bytes: Uint8Array, path: string): ValidationIssue[] {
+  if (bytes.byteLength < 250) {
+    return [];
+  }
+  const issues: ValidationIssue[] = [];
+  for (const field of extendedAttributeRecordBothEndianFields) {
+    const little = readUint16LEAt(bytes, field.start);
+    const big = readUint16BEAt(bytes, field.start + 2);
+    if (little !== big) {
+      issues.push({
+        code: `extended_attribute_record.${field.code}.endian_mismatch`,
+        message: `extended attribute record ${field.label} at ${path} must store matching little- and big-endian values: ${little} !== ${big}`,
+        path,
+      });
+    }
+  }
+  return issues;
+}
+
+function shouldSuppressExtendedAttributeRecordParse(message: string, issues: ValidationIssue[], bytes: Uint8Array): boolean {
+  return issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith(".endian_mismatch"))
+    && message.includes("both-endian")
+    && bytes[180] === 1;
 }
 
 function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttributeRecordLength: number, length: number, path: string): void {
