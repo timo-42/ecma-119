@@ -1,7 +1,7 @@
 import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readDirectoryDateTime, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { decodeFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
+import { decodeFileIdentifier, isLevelOneFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
   type IsoDirectoryEntry,
@@ -1894,16 +1894,24 @@ function validateDescriptorRootFileReferences(
   }
   const issues: ValidationIssue[] = [];
   const path = descriptorRootValidationPath(descriptor);
-  const fields = [
-    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 318, 128), code: "publisher_identifier.file_reference", label: "publisher identifier" },
-    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 446, 128), code: "data_preparer_identifier.file_reference", label: "data preparer identifier" },
-    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 574, 128), code: "application_identifier.file_reference", label: "application identifier" },
-    { identifier: descriptor.copyrightFileIdentifier, code: "copyright_file_identifier.file_reference", label: "copyright file identifier" },
-    { identifier: descriptor.abstractFileIdentifier, code: "abstract_file_identifier.file_reference", label: "abstract file identifier" },
-    { identifier: descriptor.bibliographicFileIdentifier, code: "bibliographic_file_identifier.file_reference", label: "bibliographic file identifier" },
+  const fields: DescriptorFileReferenceField[] = [
+    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 318, 128), code: "publisher_identifier.file_reference", label: "publisher identifier", prefixed: true },
+    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 446, 128), code: "data_preparer_identifier.file_reference", label: "data preparer identifier", prefixed: true },
+    { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 574, 128), code: "application_identifier.file_reference", label: "application identifier", prefixed: true },
+    { identifier: descriptor.copyrightFileIdentifier, code: "copyright_file_identifier.file_reference", label: "copyright file identifier", prefixed: false },
+    { identifier: descriptor.abstractFileIdentifier, code: "abstract_file_identifier.file_reference", label: "abstract file identifier", prefixed: false },
+    { identifier: descriptor.bibliographicFileIdentifier, code: "bibliographic_file_identifier.file_reference", label: "bibliographic file identifier", prefixed: false },
   ];
   for (const field of fields) {
     if (!field.identifier) {
+      continue;
+    }
+    if (field.prefixed && !isLevelOneFileIdentifier(new TextEncoder().encode(field.identifier))) {
+      issues.push({
+        code: `${codePrefix}.${field.code}.identifier`,
+        message: `${descriptor.kind} volume descriptor ${field.label} references ${field.identifier}, which must be an ECMA-119 Level 1 file identifier`,
+        path,
+      });
       continue;
     }
     if (!rootFileIdentifiers.has(field.identifier)) {
@@ -1916,6 +1924,13 @@ function validateDescriptorRootFileReferences(
   }
   return issues;
 }
+
+type DescriptorFileReferenceField = {
+  identifier: string | undefined;
+  code: string;
+  label: string;
+  prefixed: boolean;
+};
 
 function descriptorRootValidationPath(descriptor: PathTableValidationInput): string {
   return descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`;

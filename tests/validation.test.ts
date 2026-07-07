@@ -3723,6 +3723,54 @@ describe("validateIsoImage hardening", () => {
 
   test.each([
     {
+      fieldOffset: 318,
+      code: "publisher_identifier.file_reference.identifier",
+      label: "publisher identifier",
+      reference: "LONGPUBLISHER.TXT;1",
+    },
+    {
+      fieldOffset: 446,
+      code: "data_preparer_identifier.file_reference.identifier",
+      label: "data preparer identifier",
+      reference: "LONGPREPARER.TXT;1",
+    },
+    {
+      fieldOffset: 574,
+      code: "application_identifier.file_reference.identifier",
+      label: "application identifier",
+      reference: "LONGAPPFILE.TXT;1",
+    },
+  ])("reports primary prefixed $label references outside Level 1 shape", ({ fieldOffset, code, label, reference }) => {
+    const image = createIsoImage([
+      { path: "LONGPUBLISHER.TXT", data: "publisher\n" },
+      { path: "LONGPREPARER.TXT", data: "preparer\n" },
+      { path: "LONGAPPFILE.TXT", data: "application\n" },
+    ], {
+      identifierLevel: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path).sort()).toEqual([
+      "LONGAPPFILE.TXT",
+      "LONGPREPARER.TXT",
+      "LONGPUBLISHER.TXT",
+    ]);
+    expect(validateIsoImage(image)).toEqual([]);
+
+    writeDescriptorTextField(image, PVD_OFFSET + fieldOffset, 128, `_${reference}`);
+
+    expect(parseIsoImage(image).files.map((file) => file.path)).toHaveLength(3);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: `pvd.${code}`,
+        path: ".",
+        message: `primary volume descriptor ${label} references ${reference}, which must be an ECMA-119 Level 1 file identifier`,
+      }),
+    ]);
+  });
+
+  test.each([
+    {
       kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP", escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40) }] },
       codePrefix: "supplementary",
@@ -3908,6 +3956,53 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary",
+      fieldOffset: 318,
+      code: "publisher_identifier.file_reference.identifier",
+      label: "publisher identifier",
+      reference: "LONGPUBLISHER.TXT;1",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced",
+      fieldOffset: 574,
+      code: "application_identifier.file_reference.identifier",
+      label: "application identifier",
+      reference: "LONGAPPFILE.TXT;1",
+    },
+  ])("reports $kind prefixed $label references outside Level 1 shape", ({ options, codePrefix, fieldOffset, code, label, reference }) => {
+    const image = createIsoImage([
+      { path: "LONGPUBLISHER.TXT", data: "publisher\n" },
+      { path: "LONGAPPFILE.TXT", data: "application\n" },
+    ], {
+      identifierLevel: 2,
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path).sort()).toEqual([
+      "LONGAPPFILE.TXT",
+      "LONGPUBLISHER.TXT",
+    ]);
+    expect(validateIsoImage(image)).toEqual([]);
+
+    writeDescriptorTextField(image, 17 * SECTOR_SIZE + fieldOffset, 128, `_${reference}`);
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: `${codePrefix}.${code}`,
+        path: `${codePrefix}:.`,
+        message: `${codePrefix} volume descriptor ${label} references ${reference}, which must be an ECMA-119 Level 1 file identifier`,
+      }),
+    ]);
   });
 
   test("reports enhanced path table parent issues", () => {
@@ -4657,6 +4752,11 @@ function copyDirectoryRecordIdentifier(image: Uint8Array, sourceOffset: number, 
     throw new Error("directory record identifiers must have matching lengths");
   }
   image.set(image.subarray(sourceOffset + 33, sourceOffset + 33 + sourceLength), targetOffset + 33);
+}
+
+function writeDescriptorTextField(image: Uint8Array, offset: number, length: number, value: string): void {
+  image.fill(0x20, offset, offset + length);
+  image.set(new TextEncoder().encode(value), offset);
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
