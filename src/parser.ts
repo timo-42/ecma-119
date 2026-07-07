@@ -817,6 +817,7 @@ function validatePathTableReference(
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
     issues.push({ code: `${codePrefix}.${endian}.root`, message: `first ${label} path table record must be the root directory with parent number 1` });
   }
+  const directoryIdentifierLengthLimit = pathTableDirectoryIdentifierLengthLimit(descriptor);
   for (const [index, record] of pathTable.entries()) {
     const isRoot = index === 0;
     if (record.parentDirectoryNumber < 1) {
@@ -834,6 +835,12 @@ function validatePathTableReference(
         message: `${label} path table record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`,
       });
     }
+    if (!isRoot && record.identifier.length > directoryIdentifierLengthLimit) {
+      issues.push({
+        code: `${codePrefix}.${endian}.identifier.length`,
+        message: `${label} path table record ${index + 1} directory identifier length must not exceed ${directoryIdentifierLengthLimit} bytes`,
+      });
+    }
     if (descriptor.kind === "primary" && !isRoot) {
       if (!isSupportedPrimaryDirectoryIdentifier(record.identifier)) {
         issues.push({
@@ -845,6 +852,10 @@ function validatePathTableReference(
   }
   issues.push(...validatePathTableOrder(pathTable, codePrefix, endian));
   return { issues, records: pathTable };
+}
+
+function pathTableDirectoryIdentifierLengthLimit(descriptor: PathTableValidationInput): number {
+  return descriptor.kind === "enhanced" ? 207 : 31;
 }
 
 function validatePathTableOrder(
