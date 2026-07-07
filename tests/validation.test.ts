@@ -2769,6 +2769,45 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("does not validate external regular file extents on local volume set members", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "external file extent\n" }], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    writeUint32Both(image, fileRecordOffset + 2, image.byteLength / SECTOR_SIZE);
+    writeUint16Both(image, fileRecordOffset + 28, 1);
+
+    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 1/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.volume_sequence_unsupported",
+          path: "README.TXT",
+          message: expect.stringMatching(/external volume sequence number 1/i),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_extent_bounds",
+          path: "README.TXT",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("does not traverse external child directory extents on local volume set members", () => {
     const image = createIsoImage([
       { path: "DIR/FILE.TXT", data: "nested\n" },
