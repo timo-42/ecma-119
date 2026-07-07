@@ -58,6 +58,28 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("no extension\n");
   });
 
+  test("writes, validates, and reads Level 2 no-extension file identifiers with explicit empty extensions", () => {
+    const image = createIsoImage([{
+      path: "README.",
+      data: "level two empty extension\n",
+      version: 32767,
+    }], {
+      identifierLevel: 2,
+      volumeIdentifier: "L2_NO_EXT",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "README",
+      identifier: "README.;32767",
+      size: "level two empty extension\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("level two empty extension\n");
+  });
+
   test("writes, validates, and reads file paths at the ECMA-119 path length limit", () => {
     const directories = [...Array.from({ length: 6 }, () => "D".repeat(31)), "E".repeat(30)];
     const fileName = `${"F".repeat(26)}.TXT`;

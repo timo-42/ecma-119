@@ -101,7 +101,7 @@ export function toLevelTwoFileIdentifier(name: string, version = 1): string {
   const versionText = String(checkedFileVersionNumber(version));
   const original = name.toUpperCase();
   const pieces = original.split(".");
-  if (pieces.length > 2 || pieces[0]!.length === 0 || (pieces.length === 2 && pieces[1]!.length === 0)) {
+  if (pieces.length > 2 || pieces[0]!.length === 0) {
     throw new Error(`invalid ECMA-119 Level 2 file name: ${name}`);
   }
   const base = normalizeDCharacters(pieces[0]!, "file name");
