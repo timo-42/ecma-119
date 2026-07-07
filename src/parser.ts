@@ -2,7 +2,7 @@ import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, re
 import { bytesFromImageInput } from "./byte-input.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { decodeFileIdentifier, isLevelOneFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
+import { decodeFileIdentifier, decodeUcs2FileIdentifier, isLevelOneFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
 import {
   type IsoDirectoryEntry,
@@ -25,6 +25,7 @@ import {
 } from "./types.js";
 
 type DirectoryIdentifierProfile = "supplementary" | "enhanced";
+type IdentifierDecoder = (identifier: Uint8Array) => string;
 type DescriptorCharacterField = {
   start: number;
   length: number;
@@ -2382,6 +2383,7 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
     ...descriptor,
     pathTables: readDescriptorPathTables(image, descriptor),
     rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), {
+      decodeIdentifier: identifierDecoderForDescriptor(descriptor),
       ...(descriptor.kind === "primary" ? {} : { identifierProfile: descriptor.kind }),
       enforceFilePathLength: true,
       validatePrimaryIdentifiers: descriptor.kind === "primary",
@@ -2418,10 +2420,11 @@ function readDirectoryTree(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { identifierProfile?: DirectoryIdentifierProfile; hierarchyDepthLabel?: "primary" | "supplementary"; validatePrimaryIdentifiers?: boolean; enforceFilePathLength?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
+  options: { decodeIdentifier?: IdentifierDecoder; identifierProfile?: DirectoryIdentifierProfile; hierarchyDepthLabel?: "primary" | "supplementary"; validatePrimaryIdentifiers?: boolean; enforceFilePathLength?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
 ): IsoDirectoryEntry {
   const depth = options.depth ?? 1;
   const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
+  const decodeIdentifier = options.decodeIdentifier ?? decodeFileIdentifier;
   assertSupportedDirectoryEntry(directory, path || ".", volumeSetSize);
   if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return markExternalDirectory(directory);
@@ -2478,7 +2481,7 @@ function readDirectoryTree(
       continue;
     }
     const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
-    const identifier = decodeFileIdentifier(record.identifier);
+    const identifier = decodeIdentifier(record.identifier);
     const cleanName = stripVersion(identifier);
     const recordPath = joinPath(path, cleanName) || ".";
     assertOrdinaryDirectoryRecordIdentifierForParsing(record, recordPath);
@@ -2502,7 +2505,7 @@ function readDirectoryTree(
     if (isDirectory) {
       assertSupportedDirectoryRecord(record, recordPath || ".", volumeSetSize);
       const childPath = joinPath(path, identifier);
-      const child = directoryEntryFromRecord(record, childPath, []);
+      const child = directoryEntryFromRecord(record, childPath, [], decodeIdentifier);
       if (record.volumeSequenceNumber !== localVolumeSequenceNumber) {
         children.push(markExternalDirectory(child));
         continue;
@@ -2645,6 +2648,44 @@ function assertDirectoryRecordIdentifierProfileForParsing(record: DecodedDirecto
   if (record.identifier.length > limit) {
     throw new Error(`${profile} directory record directory identifier length at ${path} must not exceed ${limit} bytes`);
   }
+}
+
+function identifierDecoderForDescriptor(descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): IdentifierDecoder {
+  if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+    const sequence = secondaryEscapeSequence(descriptor.escapeSequences);
+    if (
+      bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x40))
+      || bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x43))
+      || bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x45))
+    ) {
+      return decodeSecondaryFileIdentifier;
+    }
+  }
+  return decodeFileIdentifier;
+}
+
+function decodeSecondaryFileIdentifier(identifier: Uint8Array): string {
+  if (isLikelyBigEndianUcs2LatinIdentifier(identifier)) {
+    return decodeUcs2FileIdentifier(identifier);
+  }
+  return decodeFileIdentifier(identifier);
+}
+
+function isLikelyBigEndianUcs2LatinIdentifier(identifier: Uint8Array): boolean {
+  if (identifier.byteLength < 2 || identifier.byteLength % 2 !== 0) {
+    return false;
+  }
+  for (let offset = 0; offset < identifier.byteLength; offset += 2) {
+    if (identifier[offset] !== 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function secondaryEscapeSequence(bytes: Uint8Array): Uint8Array {
+  const sequenceEnd = bytes.indexOf(0);
+  return sequenceEnd === -1 ? bytes : bytes.subarray(0, sequenceEnd);
 }
 
 function assertDotDirectoryRecordForParsing(
@@ -3808,10 +3849,10 @@ function ordinaryDirectoryRecordKey(record: DecodedDirectoryRecord): string {
   return `${bytesKey(record.identifier)}:${associated}`;
 }
 
-function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[]): IsoDirectoryEntry {
+function directoryEntryFromRecord(record: DecodedDirectoryRecord, path: string, children: IsoNode[], decodeIdentifier: IdentifierDecoder = decodeFileIdentifier): IsoDirectoryEntry {
   const entry: IsoDirectoryEntry = {
     path,
-    identifier: decodeFileIdentifier(record.identifier),
+    identifier: decodeIdentifier(record.identifier),
     extent: record.extent,
     extendedAttributeRecordLength: record.extendedAttributeRecordLength,
     size: record.dataLength,

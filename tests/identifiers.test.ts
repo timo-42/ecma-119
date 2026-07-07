@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  decodeUcs2FileIdentifier,
   isLevelOneDirectoryIdentifier,
   isLevelOneFileIdentifier,
   isLevelTwoDirectoryIdentifier,
@@ -95,6 +96,25 @@ describe("Level 2 identifier predicates", () => {
   });
 });
 
+describe("UCS-2 identifier decoding", () => {
+  test("decodes ECMA-119 special and UCS-2 file identifiers", () => {
+    expect(decodeUcs2FileIdentifier(Uint8Array.of(0))).toBe(".");
+    expect(decodeUcs2FileIdentifier(Uint8Array.of(1))).toBe("..");
+    expect(decodeUcs2FileIdentifier(ucs2be("Å/É.T;1"))).toBe("Å/É.T;1");
+    expect(() => decodeUcs2FileIdentifier(Uint8Array.of(0, 0x41, 0))).toThrow(/UCS-2 file identifier byte length/i);
+  });
+});
+
 function bytes(value: string): Uint8Array {
   return encoder.encode(value);
+}
+
+function ucs2be(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length * 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    bytes[index * 2] = code >>> 8;
+    bytes[index * 2 + 1] = code & 0xff;
+  }
+  return bytes;
 }
