@@ -1680,6 +1680,8 @@ describe("validateIsoImage hardening", () => {
 
   test("reports primary directory record identifiers outside primary rules", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "identifier rules\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
@@ -1689,12 +1691,31 @@ describe("validateIsoImage hardening", () => {
     image[dirRecordOffset + 33] = "#".charCodeAt(0);
     image[fileRecordOffset + 33] = "#".charCodeAt(0);
 
+    expect(() => parseIsoImage(image)).toThrow(/primary directory record directory identifier contains invalid ECMA-119 primary d-characters/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.directory_identifier.characters",
           message: expect.stringMatching(/primary d-characters/i),
         }),
+        expect.objectContaining({
+          code: "directory.file_identifier.characters",
+          message: expect.stringMatching(/primary file identifier/i),
+        }),
+      ]),
+    );
+  });
+
+  test("rejects primary file identifiers outside primary rules during parsing", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "file identifier parse\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const fileRecordOffset = findDirectoryRecordOffsetByPath(image, ["DIR", "FILE.TXT;1"]);
+    image[fileRecordOffset + 33] = "#".charCodeAt(0);
+
+    expect(() => parseIsoImage(image)).toThrow(/primary directory record file identifier contains invalid ECMA-119 primary file identifier/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_identifier.characters",
           message: expect.stringMatching(/primary file identifier/i),
@@ -3797,10 +3818,13 @@ describe("validateIsoImage hardening", () => {
         ["DIR", "FILE.TXT;1"],
         descriptorOffset + 156,
       );
+      expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
       image[recordOffset + 32] = 1;
       image[recordOffset + 33] = specialIdentifier;
       image[recordOffset + 34] = 0;
 
+      expect(() => parseIsoImage(image)).toThrow(new RegExp(`special identifier ${specialIdentifier}`));
       expect(validateIsoImage(image)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
