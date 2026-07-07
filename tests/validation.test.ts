@@ -1391,8 +1391,9 @@ describe("validateIsoImage hardening", () => {
   test("reports descriptor root directory record both-endian mismatches before descriptor parsing", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root mismatch\n" }]);
     image[PVD_OFFSET + 156 + 2 + 7] ^= 0xff;
+    const issues = validateIsoImage(image);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.extent.endian_mismatch",
@@ -1403,6 +1404,16 @@ describe("validateIsoImage hardening", () => {
           code: "descriptor.sequence",
           message: expect.stringMatching(/both-endian uint32 mismatch/i),
         }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_malformed", path: "." }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_padding", path: "." }),
       ]),
     );
   });
@@ -1447,14 +1458,25 @@ describe("validateIsoImage hardening", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     image[descriptorOffset + 156 + 2 + 7] ^= 0xff;
+    const issues = validateIsoImage(image);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.extent.endian_mismatch",
           path,
           message: expect.stringContaining(`directory record location of extent at ${path} must store matching little- and big-endian values`),
         }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_malformed", path }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_padding", path }),
       ]),
     );
   });
@@ -1512,14 +1534,25 @@ describe("validateIsoImage hardening", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     image[descriptorOffset + 156 + 18 + 1] = 13;
+    const issues = validateIsoImage(image);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code,
           path,
           message: expect.stringMatching(/root directory record date\/time is invalid: month/i),
         }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_malformed", path }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_padding", path }),
       ]),
     );
   });
