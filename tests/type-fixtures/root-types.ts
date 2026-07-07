@@ -1,6 +1,7 @@
 import {
   createIsoImage,
   parseIsoImage,
+  parseIsoVolumeSet,
   parseVolumeDescriptors,
   validateIsoImage,
   type BootRecordOptions,
@@ -15,6 +16,7 @@ import {
   type IsoInputDirectory,
   type IsoInputFile,
   type IsoNode,
+  type IsoVolumeSet,
   type PrimaryVolumeDescriptor,
   type SupplementaryVolumeDescriptor,
   type ValidationIssue,
@@ -69,6 +71,7 @@ const options: CreateIsoOptions = {
 const image = createIsoImage([file], options);
 const parsed: IsoImage = parseIsoImage(image);
 const parsedFromView: IsoImage = parseIsoImage(imageInput, { includeData: false });
+const volumeSet: IsoVolumeSet = parseIsoVolumeSet([image, imageInput], { includeData: false });
 const descriptors: VolumeDescriptor[] = parseVolumeDescriptors(image);
 const issues: ValidationIssue[] = validateIsoImage(image);
 
@@ -97,3 +100,4 @@ void parsedFromView;
 void partition;
 void primary;
 void supplementary;
+void volumeSet;

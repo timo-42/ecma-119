@@ -10,6 +10,7 @@ import {
   type IsoFileSection,
   type IsoImage,
   type IsoImageInput,
+  type IsoVolumeSet,
   type IsoNode,
   type IsoPathTables,
   type BootVolumeDescriptor,
@@ -102,6 +103,40 @@ export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?
     primaryVolumeDescriptor,
     root,
     files: collectParsedFiles(root),
+  };
+}
+
+export function parseIsoVolumeSet(imageInputs: IsoImageInput[], options: { includeData?: boolean } = {}): IsoVolumeSet {
+  const includeData = options.includeData ?? true;
+  const members = imageInputs.map((imageInput) => {
+    const bytes = bytesFromImageInput(imageInput);
+    const parsed = parseIsoImage(bytes, options);
+    return { bytes, parsed };
+  });
+  const membersBySequenceNumber = new Map<number, { bytes: Uint8Array; parsed: IsoImage }>();
+
+  for (const member of members) {
+    const { volumeSetSize, volumeSequenceNumber } = member.parsed.primaryVolumeDescriptor;
+    if (volumeSetSize !== imageInputs.length) {
+      throw new Error(`volume set member ${volumeSequenceNumber} declares volume set size ${volumeSetSize}; expected ${imageInputs.length}`);
+    }
+    if (membersBySequenceNumber.has(volumeSequenceNumber)) {
+      throw new Error(`duplicate volume set member sequence number ${volumeSequenceNumber}`);
+    }
+    membersBySequenceNumber.set(volumeSequenceNumber, member);
+  }
+
+  if (includeData) {
+    for (const member of members) {
+      resolveExternalFileData(member.parsed.root, membersBySequenceNumber);
+      member.parsed.files = collectParsedFiles(member.parsed.root);
+    }
+  }
+
+  const images = members.map((member) => member.parsed);
+  return {
+    images,
+    files: images.flatMap((image) => image.files),
   };
 }
 
@@ -2818,6 +2853,62 @@ function markExternalFile(file: IsoFileEntry): IsoFileEntry {
 
 function markExternalSection(section: IsoFileSection): IsoFileSection {
   return { ...section, external: true };
+}
+
+function resolveExternalFileData(
+  directory: IsoDirectoryEntry,
+  membersBySequenceNumber: Map<number, { bytes: Uint8Array; parsed: IsoImage }>,
+): void {
+  for (const child of directory.children) {
+    if ("children" in child) {
+      if (!child.external) {
+        resolveExternalFileData(child, membersBySequenceNumber);
+      }
+      continue;
+    }
+    if (!child.external || child.data !== undefined) {
+      continue;
+    }
+    const member = membersBySequenceNumber.get(child.volumeSequenceNumber);
+    if (!member) {
+      continue;
+    }
+    child.data = readFileEntryData(member.bytes, child);
+  }
+}
+
+function readFileEntryData(image: Uint8Array, file: IsoFileEntry): Uint8Array {
+  const sections = file.sections ?? [{
+    extent: file.extent,
+    extendedAttributeRecordLength: file.extendedAttributeRecordLength,
+    size: file.size,
+    flags: file.flags,
+    fileUnitSize: file.fileUnitSize,
+    interleaveGapSize: file.interleaveGapSize,
+    volumeSequenceNumber: file.volumeSequenceNumber,
+  }];
+  const totalSize = sections.reduce((sum, section) => sum + section.size, 0);
+  const data = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const section of sections) {
+    if (!sectionInBounds(image, {
+      extent: section.extent,
+      extendedAttributeRecordLength: section.extendedAttributeRecordLength,
+      dataLength: section.size,
+      fileUnitSize: section.fileUnitSize,
+      interleaveGapSize: section.interleaveGapSize,
+    })) {
+      throw new Error(`invalid extent bounds for ${file.path || file.identifier}`);
+    }
+    offset = readSectionPayload(image, {
+      extent: section.extent,
+      extendedAttributeRecordLength: section.extendedAttributeRecordLength,
+      dataLength: section.size,
+      fileUnitSize: section.fileUnitSize,
+      interleaveGapSize: section.interleaveGapSize,
+    }, data, offset);
+  }
+  return data;
 }
 
 function fileSectionFromRecord(record: DecodedDirectoryRecord): IsoFileSection {
