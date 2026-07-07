@@ -4553,15 +4553,15 @@ describe("validateIsoImage hardening", () => {
     },
   ])("reports invalid $kind descriptor character fields", ({ options, codePrefix }) => {
     const fields = [
-      { offset: 8, code: "system_identifier.characters", label: "system identifier", byte: 0x7b },
-      { offset: 40, code: "volume_identifier.characters", label: "volume identifier", byte: 0x7b },
-      { offset: 190, code: "volume_set_identifier.characters", label: "volume set identifier", byte: 0x7b },
-      { offset: 318, code: "publisher_identifier.characters", label: "publisher identifier", byte: 0x7b },
-      { offset: 446, code: "data_preparer_identifier.characters", label: "data preparer identifier", byte: 0x7b },
-      { offset: 574, code: "application_identifier.characters", label: "application identifier", byte: 0x7b },
-      { offset: 702, code: "copyright_file_identifier.characters", label: "copyright file identifier", byte: 0x2a },
-      { offset: 739, code: "abstract_file_identifier.characters", label: "abstract file identifier", byte: 0x2a },
-      { offset: 776, code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier", byte: 0x2a },
+      { offset: 8, code: "system_identifier.characters", label: "system identifier", kind: "a", byte: 0x7b },
+      { offset: 40, code: "volume_identifier.characters", label: "volume identifier", kind: "d", byte: 0x7b },
+      { offset: 190, code: "volume_set_identifier.characters", label: "volume set identifier", kind: "d", byte: 0x7b },
+      { offset: 318, code: "publisher_identifier.characters", label: "publisher identifier", kind: "a", byte: 0x7b },
+      { offset: 446, code: "data_preparer_identifier.characters", label: "data preparer identifier", kind: "a", byte: 0x7b },
+      { offset: 574, code: "application_identifier.characters", label: "application identifier", kind: "a", byte: 0x7b },
+      { offset: 702, code: "copyright_file_identifier.characters", label: "copyright file identifier", kind: "file", byte: 0x2a },
+      { offset: 739, code: "abstract_file_identifier.characters", label: "abstract file identifier", kind: "file", byte: 0x2a },
+      { offset: 776, code: "bibliographic_file_identifier.characters", label: "bibliographic file identifier", kind: "file", byte: 0x2a },
     ];
 
     for (const field of fields) {
@@ -4573,7 +4573,13 @@ describe("validateIsoImage hardening", () => {
       const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
       image[secondaryDescriptorOffset + field.offset] = field.byte;
 
-      expect(validateIsoImage(image)).toEqual(
+      expect(parseVolumeDescriptors(image).some((descriptor) => descriptor.kind === codePrefix)).toBe(true);
+      expect(() => parseIsoImage(image)).toThrow(
+        new RegExp(`${codePrefix} volume descriptor ${field.label} contains invalid ECMA-119 ${field.kind}-characters`, "i"),
+      );
+
+      const issues = validateIsoImage(image);
+      expect(issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             code: `${codePrefix}.${field.code}`,
@@ -4581,6 +4587,7 @@ describe("validateIsoImage hardening", () => {
           }),
         ]),
       );
+      expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
     }
   });
 
