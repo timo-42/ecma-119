@@ -2642,7 +2642,9 @@ describe("validateIsoImage hardening", () => {
       systemIdentifier: "VALIDATION",
     }));
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory record flags for \. do not match associated extended attribute record fields/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "extended_attribute_record.file_flags",
@@ -2651,6 +2653,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
@@ -2675,7 +2678,9 @@ describe("validateIsoImage hardening", () => {
       systemIdentifier: "VALIDATION",
     }));
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory record flags for \. do not match associated extended attribute record fields/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "extended_attribute_record.file_flags",
@@ -2684,6 +2689,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports root directory self record identifier mismatches", () => {
