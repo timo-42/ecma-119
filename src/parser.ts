@@ -444,12 +444,34 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector:
 }
 
 function validatePrimaryDescriptorReferences(image: Uint8Array, pvd: PrimaryVolumeDescriptor): void {
-  const pathTableStart = pvd.typeLPathTableLocation * SECTOR_SIZE;
+  validatePathTableReferenceForParsing(image, pvd, "little", pvd.typeLPathTableLocation, "primary volume descriptor Type L path table");
+  validatePathTableReferenceForParsing(image, pvd, "big", pvd.typeMPathTableLocation, "primary volume descriptor Type M path table");
+  if (pvd.optionalTypeLPathTableLocation !== 0) {
+    validatePathTableReferenceForParsing(image, pvd, "little", pvd.optionalTypeLPathTableLocation, "primary volume descriptor optional Type L path table");
+  }
+  if (pvd.optionalTypeMPathTableLocation !== 0) {
+    validatePathTableReferenceForParsing(image, pvd, "big", pvd.optionalTypeMPathTableLocation, "primary volume descriptor optional Type M path table");
+  }
+}
+
+function validatePathTableReferenceForParsing(
+  image: Uint8Array,
+  pvd: PrimaryVolumeDescriptor,
+  endian: "little" | "big",
+  location: number,
+  label: string,
+): void {
+  const pathTableStart = location * SECTOR_SIZE;
   const pathTableEnd = pathTableStart + pvd.pathTableSize;
   if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
-    throw new Error("primary volume descriptor path table extent is out of bounds");
+    throw new Error(`${label} extent is out of bounds`);
   }
-  decodePathTable(image.subarray(pathTableStart, pathTableEnd), "little");
+  try {
+    decodePathTable(image.subarray(pathTableStart, pathTableEnd), endian);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} is invalid: ${message}`);
+  }
 }
 
 function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): ValidationIssue[] {
