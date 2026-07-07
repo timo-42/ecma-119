@@ -124,11 +124,16 @@ export function parseIsoVolumeSet(imageInputs: IsoImageInput[], options: { inclu
     return { bytes, parsed };
   });
   const membersBySequenceNumber = new Map<number, { bytes: Uint8Array; parsed: IsoImage }>();
+  let expectedVolumeSetIdentifier: string | undefined;
 
   for (const member of members) {
-    const { volumeSetSize, volumeSequenceNumber } = member.parsed.primaryVolumeDescriptor;
+    const { volumeSetIdentifier, volumeSetSize, volumeSequenceNumber } = member.parsed.primaryVolumeDescriptor;
     if (volumeSetSize !== imageInputs.length) {
       throw new Error(`volume set member ${volumeSequenceNumber} declares volume set size ${volumeSetSize}; expected ${imageInputs.length}`);
+    }
+    expectedVolumeSetIdentifier ??= volumeSetIdentifier;
+    if (volumeSetIdentifier !== expectedVolumeSetIdentifier) {
+      throw new Error(`volume set member ${volumeSequenceNumber} declares volume set identifier ${formatVolumeSetIdentifier(volumeSetIdentifier)}; expected ${formatVolumeSetIdentifier(expectedVolumeSetIdentifier)}`);
     }
     if (membersBySequenceNumber.has(volumeSequenceNumber)) {
       throw new Error(`duplicate volume set member sequence number ${volumeSequenceNumber}`);
@@ -146,6 +151,10 @@ export function parseIsoVolumeSet(imageInputs: IsoImageInput[], options: { inclu
     images,
     files: images.flatMap((image) => image.files),
   };
+}
+
+function formatVolumeSetIdentifier(value: string): string {
+  return value === "" ? "<empty>" : `"${value}"`;
 }
 
 function assertSectorAlignedImage(image: Uint8Array): void {
