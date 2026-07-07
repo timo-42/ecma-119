@@ -180,6 +180,16 @@ export function decodeUcs2FileIdentifier(identifier: Uint8Array): string {
   return value;
 }
 
+export function encodeUcs2Identifier(identifier: string): Uint8Array {
+  const bytes = new Uint8Array(identifier.length * 2);
+  for (let index = 0; index < identifier.length; index += 1) {
+    const code = identifier.charCodeAt(index);
+    bytes[index * 2] = code >> 8;
+    bytes[index * 2 + 1] = code & 0xff;
+  }
+  return bytes;
+}
+
 export function stripVersion(identifier: string): string {
   return identifier.replace(/\.?;[0-9]+$/u, "");
 }

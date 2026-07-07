@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   decodeUcs2FileIdentifier,
+  encodeUcs2Identifier,
   isLevelOneDirectoryIdentifier,
   isLevelOneFileIdentifier,
   isLevelTwoDirectoryIdentifier,
@@ -102,6 +103,11 @@ describe("UCS-2 identifier decoding", () => {
     expect(decodeUcs2FileIdentifier(Uint8Array.of(1))).toBe("..");
     expect(decodeUcs2FileIdentifier(ucs2be("資料/é.T;1"))).toBe("資料/é.T;1");
     expect(() => decodeUcs2FileIdentifier(Uint8Array.of(0, 0x41, 0))).toThrow(/UCS-2 file identifier byte length/i);
+  });
+
+  test("encodes UCS-2 identifiers as big-endian code units", () => {
+    expect(encodeUcs2Identifier("DIR")).toEqual(Uint8Array.of(0, 0x44, 0, 0x49, 0, 0x52));
+    expect(decodeUcs2FileIdentifier(encodeUcs2Identifier("é.T;1"))).toBe("é.T;1");
   });
 });
 

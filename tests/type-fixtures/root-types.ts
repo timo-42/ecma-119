@@ -67,6 +67,7 @@ const options: CreateIsoOptions = {
   supplementaryVolumeDescriptors: [{
     volumeIdentifier: "SUPP",
     escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40),
+    identifierEncoding: "ucs2-be",
   }],
   enhancedVolumeDescriptors: [{
     volumeIdentifier: "ENH",

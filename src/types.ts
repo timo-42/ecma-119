@@ -117,6 +117,7 @@ export type SupplementaryVolumeDescriptorOptions = {
   systemIdentifier?: string;
   volumeIdentifier?: string;
   escapeSequences?: ByteInput;
+  identifierEncoding?: "primary" | "ucs2-be";
   volumeSetIdentifier?: string;
   publisherIdentifier?: string;
   dataPreparerIdentifier?: string;

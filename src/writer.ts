@@ -12,7 +12,7 @@ import {
 import { bytesFromInput } from "./byte-input.js";
 import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN, FILE_FLAG_MULTI_EXTENT } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { isLevelOneFileIdentifier, type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
+import { encodeUcs2Identifier, isLevelOneFileIdentifier, type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
 import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
@@ -77,6 +77,7 @@ type PreparedVolumePartition = {
 type PreparedSecondaryDescriptor = {
   kind: "supplementary" | "enhanced";
   options: SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions;
+  identifierEncoding: SecondaryIdentifierEncoding;
   optionalPathTables: Required<Exclude<OptionalPathTableCopies, boolean>>;
   pathRecords: PathTableRecord[];
   pathTableBytesL: Uint8Array;
@@ -94,6 +95,8 @@ type VolumeSetOptions = {
   volumeSetSize: number;
   volumeSequenceNumber: number;
 };
+
+type SecondaryIdentifierEncoding = "primary" | "ucs2-be";
 
 export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInputFile[] } & CreateIsoOptions), maybeOptions: CreateIsoOptions = {}): Uint8Array {
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
@@ -160,7 +163,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   for (const descriptor of secondaryDescriptors) {
     for (const directory of directories) {
       descriptor.directoryExtents.set(directory, nextSector);
-      const dataLength = directoryDataLength(directory);
+      const dataLength = directoryDataLength(directory, descriptor);
       const paddedLength = Math.max(SECTOR_SIZE, dataLength === 0 ? SECTOR_SIZE : Math.ceil(dataLength / SECTOR_SIZE) * SECTOR_SIZE);
       descriptor.directoryDataLengths.set(directory, paddedLength);
       nextSector += directoryExtentSectors({ ...directory, dataLength: paddedLength });
@@ -639,12 +642,12 @@ function collectFiles(root: DirectoryNode): FileNode[] {
   return files;
 }
 
-function directoryDataLength(directory: DirectoryNode): number {
+function directoryDataLength(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): number {
   let offset = 0;
   offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory, Uint8Array.of(0)));
   offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
   for (const child of [...directory.children.values()].sort(compareNode)) {
-    const recordLength = directoryRecordLengthForNode(child, asciiBytes(child.isoIdentifier));
+    const recordLength = directoryRecordLengthForNode(child, identifierBytesForNode(child, layout));
     const recordCount = child.kind === "file" ? child.sections.length : 1;
     for (let index = 0; index < recordCount; index += 1) {
       offset = nextRecordOffset(offset, recordLength);
@@ -659,7 +662,7 @@ function encodeDirectoryExtent(directory: DirectoryNode, volumeSequenceNumber: n
   offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory, Uint8Array.of(0), volumeSequenceNumber, layout));
   offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1), volumeSequenceNumber, layout));
   for (const child of [...directory.children.values()].sort(compareNode)) {
-    const identifier = asciiBytes(child.isoIdentifier);
+    const identifier = identifierBytesForNode(child, layout);
     let record: Uint8Array;
     if (child.kind === "directory") {
       record = directoryRecordForDirectory(child, identifier, volumeSequenceNumber, layout);
@@ -736,6 +739,13 @@ function directoryExtentFor(directory: DirectoryNode, layout?: PreparedSecondary
 
 function directoryDataLengthFor(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): number {
   return layout ? layout.directoryDataLengths.get(directory)! : directory.dataLength;
+}
+
+function identifierBytesForNode(node: DirectoryNode | FileNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
+  if (layout?.identifierEncoding === "ucs2-be") {
+    return encodeUcs2Identifier(node.isoIdentifier);
+  }
+  return asciiBytes(node.isoIdentifier);
 }
 
 function appendRecord(bytes: Uint8Array, offset: number, record: Uint8Array): number {
@@ -931,8 +941,9 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
 
   return descriptors.map((descriptor) => {
     const optionalPathTables = normalizeOptionalPathTables(descriptor.options.optionalPathTables ?? options.optionalPathTables);
+    const identifierEncoding = normalizeSecondaryIdentifierEncoding(descriptor.kind, descriptor.options);
     const pathRecords: PathTableRecord[] = directories.map((directory) => ({
-      identifier: directory.parent ? asciiBytes(directory.isoIdentifier) : Uint8Array.of(0),
+      identifier: directory.parent ? identifierBytesForPathTable(directory, identifierEncoding) : Uint8Array.of(0),
       extent: 0,
       extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
       parentDirectoryNumber: directory.parent ? directory.parent.pathTableIndex : 1,
@@ -942,6 +953,7 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
     return {
       kind: descriptor.kind,
       options: descriptor.options,
+      identifierEncoding,
       optionalPathTables,
       pathRecords,
       pathTableBytesL,
@@ -955,6 +967,24 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
       directoryDataLengths: new Map(),
     };
   });
+}
+
+function normalizeSecondaryIdentifierEncoding(kind: PreparedSecondaryDescriptor["kind"], options: SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions): SecondaryIdentifierEncoding {
+  const value = options.identifierEncoding ?? "primary";
+  if (value !== "primary" && value !== "ucs2-be") {
+    throw new RangeError("secondary descriptor identifierEncoding must be \"primary\" or \"ucs2-be\"");
+  }
+  if (value === "ucs2-be") {
+    const escapeSequences = options.escapeSequences === undefined ? new Uint8Array() : toBytes(options.escapeSequences);
+    if (!isSupportedSecondaryEscapeSequence(kind, escapeSequences) || allZero(escapeSequences)) {
+      throw new Error("secondary descriptor identifierEncoding \"ucs2-be\" requires supported UCS-2 escape sequences");
+    }
+  }
+  return value;
+}
+
+function identifierBytesForPathTable(directory: DirectoryNode, encoding: SecondaryIdentifierEncoding): Uint8Array {
+  return encoding === "ucs2-be" ? encodeUcs2Identifier(directory.isoIdentifier) : asciiBytes(directory.isoIdentifier);
 }
 
 const descriptorFileReferenceFields = [

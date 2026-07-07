@@ -2772,15 +2772,13 @@ function isLikelyBigEndianUcs2Identifier(identifier: Uint8Array): boolean {
   if (isPlainAsciiIdentifierBytes(identifier)) {
     return false;
   }
-  let hasNonAsciiByte = false;
   for (let offset = 0; offset < identifier.byteLength; offset += 2) {
     const code = (identifier[offset]! << 8) | identifier[offset + 1]!;
     if (!isPrintableUcs2IdentifierCodeUnit(code)) {
       return false;
     }
-    hasNonAsciiByte ||= identifier[offset]! > 0 || identifier[offset + 1]! > 0x7f;
   }
-  return hasNonAsciiByte;
+  return true;
 }
 
 function isPlainAsciiIdentifierBytes(identifier: Uint8Array): boolean {

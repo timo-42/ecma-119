@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 4th edition / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, writer-generated single-section non-interleaved directories, read-side compatible multi-extent/interleaved directory records, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
+This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees and optional UCS-2BE identifier authoring, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, writer-generated single-section non-interleaved directories, read-side compatible multi-extent/interleaved directory records, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
 
 The implementation targets ECMA-119 4th edition, June 2019. Tests exercise generated write-then-read ISO images, handcrafted in-memory reader images that are not produced by the writer, and checked-in ISO byte fixtures produced by an independent external tool.
 
@@ -76,6 +76,8 @@ Use `volumePartition` for a single raw Volume Partition Descriptor or `volumePar
 
 Generated and parsed descriptor sequences follow the ECMA-119 Volume Descriptor Set order: one Primary Volume Descriptor, zero or more Supplementary Volume Descriptors, zero or more Enhanced Volume Descriptors, zero or more Volume Partition Descriptors, zero or more Boot Records, and one or more Volume Descriptor Set Terminators.
 
+Supplementary and enhanced descriptor inputs default to `identifierEncoding: "primary"`, which mirrors the primary ECMA-119 identifier bytes into their separate directory trees and path tables. Use `identifierEncoding: "ucs2-be"` with supported escape sequences such as `%/@`, `%/C`, or `%/E` to write secondary directory and file identifiers as UCS-2BE bytes. This is a byte-level supplementary/enhanced descriptor feature; it does not enable full Joliet profile semantics.
+
 `volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number. When parsing a single image, directory and file records whose volume sequence number is within the descriptor volume set but differs from the local volume are returned as unresolved external entries with `external: true`; their metadata is preserved, but file payloads and external directory children are not loaded from the local image. Use `parseIsoVolumeSet(images)` to parse all supplied members and populate external directory children and regular file payloads from the matching volume sequence number, using the external record extent, size, and section metadata to read bytes from the referenced member. Supplied members must agree on declared volume set size and primary volume set identifier.
 
 File input `version` defaults to 1 and may be set from 1 through 32767 to write a non-default ECMA-119 file version number. The parser preserves the full identifier, such as `README.TXT;2`, while `path` omits the version suffix.
@@ -101,6 +103,7 @@ Implemented support is intentionally explicit:
 - opaque System Area authoring and parsing
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
+- optional UCS-2BE identifier bytes in supplementary/enhanced path tables and directory records when requested
 - per-descriptor metadata and date/time overrides for supplementary and enhanced volume descriptors
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
@@ -133,7 +136,7 @@ Known gaps in the current package:
 - boot catalog parsing, boot image loading, and executable boot behavior beyond preserving Boot Record descriptor bytes
 - filesystem parsing inside Volume Partition Descriptor payloads; partition data is exposed as opaque bytes
 - Rock Ridge metadata semantics, including POSIX names, permissions, links, and relocation records
-- full Joliet extension semantics; supplementary/enhanced descriptors and UCS-2-style identifiers can be parsed, but Joliet-specific behavior is not implemented as a separate profile
+- full Joliet extension semantics; supplementary/enhanced descriptors can author and parse UCS-2-style identifiers, but Joliet-specific behavior is not implemented as a separate profile
 - writer-authored multi-image volume sets with cross-volume external records; the parser can resolve compatible external records when all member images are supplied to `parseIsoVolumeSet`
 - writer-authored multi-section or interleaved directory records; generated directories are single-section, non-interleaved ECMA-119 directory files
 - complete compatibility with arbitrary extension-heavy ISO 9660 images outside the documented ECMA-119 profile
