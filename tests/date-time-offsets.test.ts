@@ -258,8 +258,9 @@ describe("ECMA-119 date/time zone offsets", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     image[PVD_OFFSET + 156 + 19] = 13;
+    const issues = validateIsoImage(image);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.root_directory_record.date",
@@ -270,6 +271,16 @@ describe("ECMA-119 date/time zone offsets", () => {
           code: "descriptor.sequence",
           message: expect.stringMatching(/month/i),
         }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_malformed", path: "." }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "directory.record_padding", path: "." }),
       ]),
     );
   });
