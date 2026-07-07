@@ -62,7 +62,6 @@ export function normalizeDirectoryPath(path: string, identifierLevel: Identifier
 
 export function toLevelOneFileIdentifier(name: string, version = 1): string {
   const versionText = String(checkedFileVersionNumber(version));
-  const upper = normalizeDCharacters(name.toUpperCase().replace(/\./gu, "_DOT_"), "file identifier");
   const original = name.toUpperCase();
   const pieces = original.split(".");
   if (pieces.length > 2 || pieces[0]!.length === 0) {
@@ -76,7 +75,7 @@ export function toLevelOneFileIdentifier(name: string, version = 1): string {
   if (extension.length > 3) {
     throw new Error(`file extension exceeds 3 d-characters: ${name}`);
   }
-  return extension ? `${base}.${extension};${versionText}` : `${upper};${versionText}`;
+  return `${base}.${extension};${versionText}`;
 }
 
 export function toLevelTwoFileIdentifier(name: string, version = 1): string {
@@ -91,7 +90,7 @@ export function toLevelTwoFileIdentifier(name: string, version = 1): string {
   if (base.length + extension.length > 30) {
     throw new Error(`file name and extension exceed 30 d-characters: ${name}`);
   }
-  return extension ? `${base}.${extension};${versionText}` : `${base};${versionText}`;
+  return `${base}.${extension};${versionText}`;
 }
 
 export function isLevelOneDirectoryIdentifier(identifier: Uint8Array): boolean {
@@ -105,7 +104,7 @@ export function isLevelOneFileIdentifier(identifier: Uint8Array): boolean {
   if (text === undefined) {
     return false;
   }
-  const match = /^([A-Z0-9_]{1,8})(?:\.([A-Z0-9_]{1,3}))?;([1-9][0-9]{0,4})$/u.exec(text);
+  const match = /^([A-Z0-9_]{1,8})\.([A-Z0-9_]{0,3});([1-9][0-9]{0,4})$/u.exec(text);
   return match !== null && Number(match[3]) <= 32767;
 }
 
@@ -120,7 +119,7 @@ export function isLevelTwoFileIdentifier(identifier: Uint8Array): boolean {
   if (text === undefined) {
     return false;
   }
-  const match = /^([A-Z0-9_]{1,30})(?:\.([A-Z0-9_]{1,30}))?;([1-9][0-9]{0,4})$/u.exec(text);
+  const match = /^([A-Z0-9_]{1,30})\.([A-Z0-9_]{0,30});([1-9][0-9]{0,4})$/u.exec(text);
   if (match === null || Number(match[3]) > 32767) {
     return false;
   }
@@ -146,7 +145,7 @@ export function decodeFileIdentifier(identifier: Uint8Array): string {
 }
 
 export function stripVersion(identifier: string): string {
-  return identifier.replace(/;[0-9]+$/u, "");
+  return identifier.replace(/\.?;[0-9]+$/u, "");
 }
 
 function isDCharacterByte(byte: number): boolean {

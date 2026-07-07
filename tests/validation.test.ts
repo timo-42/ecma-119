@@ -505,10 +505,29 @@ describe("validateIsoImage hardening", () => {
     expect(directoryRecordIdentifiers(image, rootDirectoryOffset, SECTOR_SIZE)).toEqual([
       "\u0000",
       "\u0001",
-      "A;1",
+      "A.;1",
       "A0.TXT;1",
       "A_.TXT;1",
     ]);
+  });
+
+  test("reports no-extension primary file identifiers that omit separator 1", () => {
+    const image = baselineImage([{ path: "A", data: "missing separator\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "A.;1");
+    image[fileRecordOffset + 32] = 3;
+    image.set(new TextEncoder().encode("A;1"), fileRecordOffset + 33);
+    image[fileRecordOffset + 36] = 0;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_identifier.characters",
+          path: "A",
+          message: expect.stringMatching(/primary file identifier/i),
+        }),
+      ]),
+    );
   });
 
   test("reports directory records that are out of ECMA-119 file identifier order", () => {
