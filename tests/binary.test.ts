@@ -202,6 +202,16 @@ describe('ECMA-119 binary helpers', () => {
     expect(String.fromCharCode(...bytes.slice(0, 16))).toBe('0000000000000000');
     expect(bytes[16]).toBe(0);
     expect(readVolumeDescriptorDateTime(bytes, 0)).toBeNull();
+
+    bytes[16] = 1;
+    expect(() => readVolumeDescriptorDateTime(bytes, 0)).toThrow(/unspecified.*zero GMT offset/i);
+  });
+
+  test('rejects non-decimal volume descriptor date/time fields', () => {
+    expect(() => readVolumeDescriptorDateTime(Uint8Array.from([
+      ...'20241X0100000000'.split('').map((char) => char.charCodeAt(0)),
+      0,
+    ]), 0)).toThrow(/16 decimal digits/i);
   });
 
   test('rejects invalid date/time fields', () => {
