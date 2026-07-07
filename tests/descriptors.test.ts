@@ -34,6 +34,30 @@ describe("volume descriptor sequence parsing", () => {
     expect(parsed.files[0]?.data).toEqual(new Uint8Array());
   });
 
+  test("writes, validates, and reads no-extension file identifiers with both separators", () => {
+    const image = createIsoImage([{
+      path: "README",
+      data: "no extension\n",
+    }], {
+      volumeIdentifier: "NO_EXT",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const root = parsed.primaryVolumeDescriptor.rootDirectoryRecord;
+    const rootDirectory = image.subarray(root.extent * SECTOR_SIZE, root.extent * SECTOR_SIZE + root.size);
+    const record = findDirectoryRecord(rootDirectory, "README.;1");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(record).toBeDefined();
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path: "README",
+      identifier: "README.;1",
+      size: "no extension\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("no extension\n");
+  });
+
   test("writes, validates, and reads a local volume set member", () => {
     const payload = new TextEncoder().encode("volume member data\n");
     const image = createIsoImage([{

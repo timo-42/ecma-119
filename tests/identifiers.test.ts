@@ -24,7 +24,8 @@ describe("Level 1 identifier predicates", () => {
 
   test("validates versioned file identifiers", () => {
     expect(isLevelOneFileIdentifier(bytes("README.TXT;1"))).toBe(true);
-    expect(isLevelOneFileIdentifier(bytes("README;32767"))).toBe(true);
+    expect(isLevelOneFileIdentifier(bytes("README.;32767"))).toBe(true);
+    expect(isLevelOneFileIdentifier(bytes("README;32767"))).toBe(false);
     expect(isLevelOneFileIdentifier(bytes("README.TXT;0"))).toBe(false);
     expect(isLevelOneFileIdentifier(bytes("README.TXT;32768"))).toBe(false);
     expect(isLevelOneFileIdentifier(bytes("TOO_LONG1.TXT;1"))).toBe(false);
@@ -34,7 +35,7 @@ describe("Level 1 identifier predicates", () => {
 
   test("normalizes file identifiers with explicit versions", () => {
     expect(toLevelOneFileIdentifier("readme.txt", 12)).toBe("README.TXT;12");
-    expect(toLevelOneFileIdentifier("readme", 32767)).toBe("README;32767");
+    expect(toLevelOneFileIdentifier("readme", 32767)).toBe("README.;32767");
     expect(() => toLevelOneFileIdentifier("README.TXT", 0)).toThrow(/file version number/i);
     expect(() => toLevelOneFileIdentifier("README.TXT", 32768)).toThrow(/file version number/i);
   });
@@ -51,7 +52,8 @@ describe("Level 2 identifier predicates", () => {
 
   test("validates versioned file identifiers", () => {
     expect(isLevelTwoFileIdentifier(bytes("LONGFILENAME1234567890.TXT;1"))).toBe(true);
-    expect(isLevelTwoFileIdentifier(bytes("README;32767"))).toBe(true);
+    expect(isLevelTwoFileIdentifier(bytes("README.;32767"))).toBe(true);
+    expect(isLevelTwoFileIdentifier(bytes("README;32767"))).toBe(false);
     expect(isLevelTwoFileIdentifier(bytes("README.TXT;0"))).toBe(false);
     expect(isLevelTwoFileIdentifier(bytes("README.TXT;32768"))).toBe(false);
     expect(isLevelTwoFileIdentifier(bytes(`${"A".repeat(28)}.TXT;1`))).toBe(false);
@@ -63,6 +65,7 @@ describe("Level 2 identifier predicates", () => {
   test("normalizes file identifiers", () => {
     expect(toLevelTwoFileIdentifier("longfilename1234567890.txt")).toBe("LONGFILENAME1234567890.TXT;1");
     expect(toLevelTwoFileIdentifier("longfilename1234567890.txt", 42)).toBe("LONGFILENAME1234567890.TXT;42");
+    expect(toLevelTwoFileIdentifier("longfilename1234567890", 42)).toBe("LONGFILENAME1234567890.;42");
     expect(() => toLevelTwoFileIdentifier(`${"A".repeat(28)}.TXT`)).toThrow(/30 d-characters/i);
   });
 });
