@@ -3201,6 +3201,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     if (issue.code === "directory.file_extent_bounds" && message.includes("invalid extent bounds")) {
       return true;
     }
+    if (
+      (issue.code === "supplementary.logical_block_size" || issue.code === "enhanced.logical_block_size")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor logical block size must be 2048`)
+    ) {
+      return true;
+    }
     return message.includes(issue.message) || issue.message.includes(message);
   });
 }

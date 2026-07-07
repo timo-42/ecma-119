@@ -3377,14 +3377,14 @@ describe("validateIsoImage hardening", () => {
     writeUint16Both(image, descriptorOffset + 128, 1024);
 
     expect(() => parseIsoImage(image)).toThrow(new RegExp(parseMessage, "i"));
-    expect(validateIsoImage(image)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code,
-          message,
-        }),
-      ]),
-    );
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code,
+        message,
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
