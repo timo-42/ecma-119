@@ -97,6 +97,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const identifierLevel = checkedIdentifierLevel(options.identifierLevel ?? 1);
   const volumeSet = checkedVolumeSetOptions(options);
   const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes, identifierLevel);
+  validateDescriptorFileReferences(options, root, identifierLevel);
   const directories = collectDirectories(root);
   const pathRecords: PathTableRecord[] = directories.map((directory) => ({
     identifier: directory === root ? Uint8Array.of(0) : asciiBytes(directory.isoIdentifier),
@@ -940,6 +941,58 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
       directoryDataLengths: new Map(),
     };
   });
+}
+
+const descriptorFileReferenceFields = [
+  { key: "copyrightFileIdentifier", label: "copyright file identifier" },
+  { key: "abstractFileIdentifier", label: "abstract file identifier" },
+  { key: "bibliographicFileIdentifier", label: "bibliographic file identifier" },
+] as const;
+
+function validateDescriptorFileReferences(options: CreateIsoOptions, root: DirectoryNode, identifierLevel: IdentifierLevel): void {
+  validateDescriptorFileReferenceOptions("primary", options, root, identifierLevel);
+  for (const descriptor of options.supplementaryVolumeDescriptors ?? []) {
+    validateDescriptorFileReferenceOptions("supplementary", descriptor, root, identifierLevel, options);
+  }
+  for (const descriptor of options.enhancedVolumeDescriptors ?? []) {
+    validateDescriptorFileReferenceOptions("enhanced", descriptor, root, identifierLevel, options);
+  }
+}
+
+function validateDescriptorFileReferenceOptions(
+  kind: "primary" | "supplementary" | "enhanced",
+  options: CreateIsoOptions | SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions,
+  root: DirectoryNode,
+  identifierLevel: IdentifierLevel,
+  baseOptions?: CreateIsoOptions,
+): void {
+  for (const field of descriptorFileReferenceFields) {
+    const value = options[field.key] ?? baseOptions?.[field.key] ?? "";
+    if (value === "") {
+      continue;
+    }
+    if (hasPathSeparatorInFileReference(value)) {
+      throw new Error(`${kind} volume descriptor ${field.label} must reference a file in the root directory`);
+    }
+    const identifier = normalizeFileIdentifierReference(value, identifierLevel);
+    if (!hasRootFile(root, identifier)) {
+      throw new Error(`${kind} volume descriptor ${field.label} references ${identifier}, which is not a file described in the root directory`);
+    }
+  }
+}
+
+function hasPathSeparatorInFileReference(value: string): boolean {
+  const path = value.slice(0, value.lastIndexOf(";") === -1 ? value.length : value.lastIndexOf(";"));
+  return path.includes("/") || path.includes("\\");
+}
+
+function hasRootFile(root: DirectoryNode, identifier: string): boolean {
+  for (const child of root.children.values()) {
+    if (child.kind === "file" && child.isoIdentifier === identifier) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeOptionalPathTables(value: OptionalPathTableCopies | undefined): { typeL: boolean; typeM: boolean } {

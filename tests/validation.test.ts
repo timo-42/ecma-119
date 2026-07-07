@@ -4378,10 +4378,10 @@ describe("validateIsoImage hardening", () => {
     const image = createIsoImage([{ path: "COPY.TXT", data: "root reference\n" }], {
       publisherIdentifier: "_MISSING.TXT;1",
       copyrightFileIdentifier: "COPY.TXT",
-      abstractFileIdentifier: "ABSENT.TXT",
-      bibliographicFileIdentifier: "BIBLIO.TXT",
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
+    writeDescriptorTextField(image, PVD_OFFSET + 739, 37, "ABSENT.TXT;1");
+    writeDescriptorTextField(image, PVD_OFFSET + 776, 37, "BIBLIO.TXT;1");
 
     expect(parseIsoImage(image).primaryVolumeDescriptor).toMatchObject({
       publisherIdentifier: "_MISSING.TXT;1",
@@ -4665,24 +4665,29 @@ describe("validateIsoImage hardening", () => {
   test.each([
     {
       kind: "supplementary",
-      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP", abstractFileIdentifier: "SUPABS.TXT" }] },
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
       code: "abstract_file_identifier.file_reference",
+      fieldOffset: 739,
+      fieldValue: "SUPABS.TXT;1",
       reference: "SUPABS.TXT;1",
     },
     {
       kind: "enhanced",
-      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH", applicationIdentifier: "_ENHAPP.TXT;1" }] },
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
       codePrefix: "enhanced",
       code: "application_identifier.file_reference",
+      fieldOffset: 574,
+      fieldValue: "_ENHAPP.TXT;1",
       reference: "ENHAPP.TXT;1",
     },
-  ])("reports $kind descriptor file references missing from the root directory", ({ options, codePrefix, code, reference }) => {
+  ])("reports $kind descriptor file references missing from the root directory", ({ options, codePrefix, code, fieldOffset, fieldValue, reference }) => {
     const image = createIsoImage([{ path: "COPY.TXT", data: "secondary descriptor file references\n" }], {
       volumeIdentifier: "VALIDATION",
       ...options,
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
+    writeDescriptorTextField(image, 17 * SECTOR_SIZE + fieldOffset, fieldOffset === 574 ? 128 : 37, fieldValue);
 
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
