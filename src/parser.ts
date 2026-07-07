@@ -622,6 +622,9 @@ function validateRawDirectoryRecordDateField(image: Uint8Array, recordOffset: nu
   if (length === undefined || length < 25 || recordOffset + length > image.byteLength) {
     return [];
   }
+  if (allZero(image.subarray(recordOffset + 18, recordOffset + 25))) {
+    return [];
+  }
   try {
     readDirectoryDateTime(image, recordOffset + 18);
     return [];

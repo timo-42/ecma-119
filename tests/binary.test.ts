@@ -90,6 +90,10 @@ describe('ECMA-119 binary helpers', () => {
     expect([...bytes]).toEqual([126, 7, 6, 1, 2, 3, 8]);
     expect(readDirectoryDateTime(bytes, 0)).toEqual(value);
     expect(dateTimeToDate(value).toISOString()).toBe('2026-07-05T23:02:03.000Z');
+
+    writeDirectoryDateTime(bytes, 0, null);
+    expect([...bytes]).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(readDirectoryDateTime(bytes, 0)).toBeNull();
   });
 
   test('converts Date values to ECMA-119 date/time components with explicit offsets', () => {
@@ -121,6 +125,7 @@ describe('ECMA-119 binary helpers', () => {
     const date = new Date(Date.UTC(2026, 6, 5, 23, 2, 3, 450));
 
     expect([...encodeDirectoryDate(date, 120)]).toEqual([126, 7, 6, 1, 2, 3, 8]);
+    expect([...encodeDirectoryDate(null)]).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(String.fromCharCode(...encodeVolumeDate(date, -60).slice(0, 16))).toBe('2026070522020345');
     expect(encodeVolumeDate(date, -60)[16]).toBe(0xfc);
   });
