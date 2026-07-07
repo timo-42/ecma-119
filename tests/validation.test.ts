@@ -1057,28 +1057,61 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("rejects malformed supplementary optional Type M path tables during parsing", () => {
-    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      label: "Type L",
+      endian: "little" as const,
+      validationCode: "supplementary_path_table.optional.little.record_length",
+    },
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      label: "Type M",
+      endian: "big" as const,
+      validationCode: "supplementary_path_table.optional.big.record_length",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      label: "Type L",
+      endian: "little" as const,
+      validationCode: "enhanced_path_table.optional.little.record_length",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      label: "Type M",
+      endian: "big" as const,
+      validationCode: "enhanced_path_table.optional.big.record_length",
+    },
+  ])("rejects malformed $kind optional $label path tables during parsing", ({ kind, options, label, endian, validationCode }) => {
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const baseImage = createIsoImage([{ path: "DIR/FILE.TXT", data: "parse secondary optional path table\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const validOptionalImage = withOptionalPathTableCopy(baseImage, secondaryDescriptorOffset, endian, () => {});
+    expect(parseIsoImage(validOptionalImage).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     const image = withOptionalPathTableCopy(
-      createIsoImage([{ path: "DIR/FILE.TXT", data: "parse secondary optional path table\n" }], {
-        volumeIdentifier: "VALIDATION",
-        supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
-        createdAt: new Date("2024-01-01T00:00:00Z"),
-      }),
-      supplementaryDescriptorOffset,
-      "big",
+      baseImage,
+      secondaryDescriptorOffset,
+      endian,
       (result, optionalPathTableOffset) => {
         result[optionalPathTableOffset + 10] = 0;
       },
     );
 
     expect(() => parseIsoImage(image)).toThrow(
-      /supplementary volume descriptor optional Type M path table is invalid: .*zero identifier length/i,
+      new RegExp(`${kind} volume descriptor optional ${label} path table is invalid: .*zero identifier length`, "i"),
     );
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "supplementary_path_table.optional.big.record_length",
+          code: validationCode,
           message: expect.stringMatching(/zero identifier length/i),
         }),
       ]),
