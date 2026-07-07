@@ -67,6 +67,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
       assertDescriptorCharacterFields(descriptor, commonVolumeDescriptorCharacterFields());
       assertDescriptorRootDirectoryRecordIdentifier(descriptor, descriptor.kind);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
+      assertDescriptorVolumeSpaceSize(image, descriptor, descriptors, descriptor.kind);
     } else if (descriptor.kind === "terminator") {
       assertVolumeDescriptorSetTerminatorReservedBytes(descriptor);
     }
@@ -849,7 +850,16 @@ function volumeSpaceLowerBoundMessage(volumeSpaceSize: number, minimumVolumeSpac
 }
 
 function assertPrimaryVolumeSpaceSize(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): void {
-  const issues = validateVolumeSpaceSize(image, pvd, descriptors, "pvd");
+  assertDescriptorVolumeSpaceSize(image, pvd, descriptors, "pvd");
+}
+
+function assertDescriptorVolumeSpaceSize(
+  image: Uint8Array,
+  descriptor: PathTableValidationInput,
+  descriptors: VolumeDescriptor[],
+  codePrefix: string,
+): void {
+  const issues = validateVolumeSpaceSize(image, descriptor, descriptors, codePrefix);
   if (issues.length > 0) {
     throw new Error(issues[0]!.message);
   }
@@ -3838,7 +3848,14 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (
-      (issue.code === "pvd.volume_space_size" || issue.code === "pvd.volume_space_size.lower_bound")
+      (
+        issue.code === "pvd.volume_space_size"
+        || issue.code === "pvd.volume_space_size.lower_bound"
+        || issue.code === "supplementary.volume_space_size"
+        || issue.code === "supplementary.volume_space_size.lower_bound"
+        || issue.code === "enhanced.volume_space_size"
+        || issue.code === "enhanced.volume_space_size.lower_bound"
+      )
       && issue.message === message
     ) {
       return true;
