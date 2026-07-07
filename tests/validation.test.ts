@@ -2621,6 +2621,29 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("preserves malformed primary descriptor root extended attribute bytes during parsing", () => {
+    const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    }));
+    const rootExtent = rootDirectoryExtent(image);
+    const ear = image.slice(rootExtent * SECTOR_SIZE, (rootExtent + 1) * SECTOR_SIZE);
+    ear[182] = 0xff;
+    image.set(ear, rootExtent * SECTOR_SIZE);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(parsed.primaryVolumeDescriptor.rootDirectoryRecord.extendedAttributeRecord).toEqual(ear);
+    expect(parsed.primaryVolumeDescriptor.rootDirectoryRecord.extendedAttributeRecordFields).toBeUndefined();
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.reserved_bytes",
+          path: ".",
+        }),
+      ]),
+    );
+  });
+
   test("reports invalid primary descriptor root extended attribute bounds before parsing", () => {
     const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
       systemIdentifier: "VALIDATION",

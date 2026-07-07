@@ -80,6 +80,8 @@ Directory records are written as a single non-interleaved file section as requir
 
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
+When parsing Extended Attribute Records, raw bytes are preserved on the parsed file or directory entry. Structured `extendedAttributeRecordFields` are populated only when those bytes decode as a valid ECMA-119 Extended Attribute Record; use `validateIsoImage` for diagnostics when raw EAR bytes contain malformed structured fields.
+
 Parsed primary, supplementary, and enhanced volume descriptors expose decoded path table records under `pathTables`, including mandatory Type L/Type M tables and any optional copies present in the descriptor.
 
 ## Scope
