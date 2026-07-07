@@ -2337,6 +2337,73 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects root directory self record volume sequence mismatches during parsing", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "root self volume sequence\n" }], {
+      volumeIdentifier: "VALIDATION",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 1,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    writeUint16Both(image, rootDirectoryOffset + 28, 2);
+
+    expect(() => parseIsoImage(image)).toThrow(/directory self record at \. does not match the current directory volume sequence number/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.self_record.volume_sequence_number",
+          path: ".",
+          message: "directory self record at . does not match the current directory volume sequence number",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("rejects nested directory self record volume sequence mismatches during parsing", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested self volume sequence\n" }], {
+      volumeIdentifier: "VALIDATION",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 1,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
+    writeUint16Both(image, dirDirectoryOffset + 28, 2);
+
+    expect(() => parseIsoImage(image)).toThrow(/directory self record at DIR does not match the current directory volume sequence number/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.self_record.volume_sequence_number",
+          path: "DIR",
+          message: "directory self record at DIR does not match the current directory volume sequence number",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports root directory parent record extent mismatches", () => {
     const image = baselineImage();
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
@@ -2372,6 +2439,42 @@ describe("validateIsoImage hardening", () => {
           code: "directory.parent_record.extent",
           path: "DIR",
           message: "directory parent record at DIR does not match the parent directory extent fields",
+        }),
+      ]),
+    );
+  });
+
+  test("rejects nested directory parent record volume sequence mismatches during parsing", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested parent volume sequence\n" }], {
+      volumeIdentifier: "VALIDATION",
+      volumeSetSize: 2,
+      volumeSequenceNumber: 1,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
+    const parentRecordOffset = dirDirectoryOffset + image[dirDirectoryOffset]!;
+    writeUint16Both(image, parentRecordOffset + 28, 2);
+
+    expect(() => parseIsoImage(image)).toThrow(/directory parent record at DIR does not match the parent directory volume sequence number/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.parent_record.volume_sequence_number",
+          path: "DIR",
+          message: "directory parent record at DIR does not match the parent directory volume sequence number",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
