@@ -1783,7 +1783,7 @@ function validateDescriptorRootDirectoryRecordIdentifier(
   return [{
     code: `${codePrefix}.root_directory_record.identifier`,
     message: `${label} volume descriptor root directory record must use identifier 0`,
-    path: ".",
+    path: descriptorRootValidationPath(descriptor),
   }];
 }
 
