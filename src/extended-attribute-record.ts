@@ -159,9 +159,6 @@ function validatePermissions(permissions: number): void {
 
 function validateStructuredRecordLayout(recordFormat: number, recordAttributes: number, recordLength: number): void {
   validateDecodedRecordLayout(recordFormat, recordAttributes, recordLength);
-  if (recordFormat >= 128) {
-    throw new Error("system-use record format values 128 through 255 are not supported by the structured encoder");
-  }
 }
 
 function validateDecodedRecordLayout(recordFormat: number, recordAttributes: number, recordLength: number): void {

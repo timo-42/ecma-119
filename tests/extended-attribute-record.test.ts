@@ -334,10 +334,6 @@ describe("extended attribute records", () => {
     })).toThrow(/reserved/i);
 
     expect(() => encodeExtendedAttributeRecord({
-      recordFormat: 128,
-    })).toThrow(/system-use record format values 128 through 255/i);
-
-    expect(() => encodeExtendedAttributeRecord({
       recordAttributes: 3,
     })).toThrow(/reserved/i);
 
@@ -630,6 +626,37 @@ describe("extended attribute records", () => {
 
     expect(record[25]! & 0x08).toBe(0x08);
     expect(validateIsoImage(image)).toEqual([]);
+  });
+
+  test("writes structured system-use record format extended attributes and parses fields back", () => {
+    const data = asciiBytes("structured system-use record format\n");
+    const systemUse = Uint8Array.of(0x53, 0x59, 0x53, 0x80);
+    const image = createIsoImage([{
+      path: "SYSUSE.TXT",
+      data,
+      extendedAttributeRecord: {
+        recordFormat: 128,
+        recordAttributes: 2,
+        recordLength: 0x1234,
+        systemIdentifier: "SYS_USE",
+        systemUse,
+      },
+    }]);
+
+    const record = findRootFileRecord(image, "SYSUSE.TXT;1");
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
+
+    expect(record[25]! & 0x08).toBe(0x08);
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(file?.data).toEqual(data);
+    expect(file?.extendedAttributeRecordFields).toMatchObject({
+      recordFormat: 128,
+      recordAttributes: 2,
+      recordLength: 0x1234,
+      systemIdentifier: "SYS_USE",
+    });
+    expect(file?.extendedAttributeRecordFields?.systemUse.subarray(0, systemUse.byteLength)).toEqual(systemUse);
   });
 
   test("writes raw system-use record format extended attributes and parses fields back", () => {
