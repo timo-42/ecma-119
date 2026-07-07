@@ -9,6 +9,7 @@ import {
   writeUint32Both,
   writeUint32LE,
 } from "./binary.js";
+import { bytesFromInput } from "./byte-input.js";
 import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN, FILE_FLAG_MULTI_EXTENT } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { isLevelOneFileIdentifier, type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
@@ -1325,17 +1326,11 @@ function comparePathTableIdentifierBytes(left: Uint8Array, right: Uint8Array): n
 }
 
 function toBytes(data: ByteInput): Uint8Array {
-  if (typeof data === "string") {
-    return new TextEncoder().encode(data);
-  }
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  return new Uint8Array(data);
+  return bytesFromInput(data);
 }
 
 function isExtendedAttributeRecordInput(data: ByteInput | ExtendedAttributeRecordInput): data is ExtendedAttributeRecordInput {
-  return typeof data === "object" && !(data instanceof Uint8Array);
+  return typeof data === "object" && !(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data);
 }
 
 function decodeOptionalExtendedAttributeRecord(bytes: Uint8Array): ReturnType<typeof decodeExtendedAttributeRecord> | undefined {

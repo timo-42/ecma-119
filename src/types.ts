@@ -4,7 +4,8 @@ export const SECTOR_SIZE = 2048;
 export const SYSTEM_AREA_SECTORS = 16;
 export const STANDARD_IDENTIFIER = "CD001";
 
-export type ByteInput = Uint8Array | string;
+export type ByteInput = string | ArrayBuffer | ArrayBufferView;
+export type IsoImageInput = ArrayBuffer | ArrayBufferView;
 
 export type IsoInputFile = {
   path: string;
