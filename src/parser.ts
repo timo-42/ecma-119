@@ -35,7 +35,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
     if (descriptor.kind === "boot") {
       assertSupportedBootVolumeDescriptor(descriptor);
     } else if (descriptor.kind === "partition") {
-      assertSupportedPartitionVolumeDescriptor(descriptor);
+      assertSupportedPartitionVolumeDescriptor(image, descriptor, pvd);
     } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
@@ -2956,12 +2956,26 @@ function assertSupportedBootVolumeDescriptor(descriptor: BootVolumeDescriptor): 
   }
 }
 
-function assertSupportedPartitionVolumeDescriptor(descriptor: VolumePartitionDescriptor): void {
+function assertSupportedPartitionVolumeDescriptor(image: Uint8Array, descriptor: VolumePartitionDescriptor, pvd: PrimaryVolumeDescriptor): void {
   if (!isAString(readAscii(descriptor.raw, 8, 32))) {
     throw new Error("volume partition descriptor system identifier contains invalid ECMA-119 a-characters");
   }
   if (!isDString(readAscii(descriptor.raw, 40, 32).replace(/ +$/u, ""))) {
     throw new Error("volume partition descriptor volume partition identifier contains invalid ECMA-119 d-characters");
+  }
+  const location = descriptor.volumePartitionLocation;
+  const size = descriptor.volumePartitionSize;
+  const end = location + size;
+  const volumeSpaceSectors = Math.min(Math.floor(image.byteLength / SECTOR_SIZE), pvd.volumeSpaceSize);
+  if (
+    !Number.isInteger(location)
+    || !Number.isInteger(size)
+    || size < 1
+    || end > 0xffffffff
+    || end > volumeSpaceSectors
+    || location > volumeSpaceSectors
+  ) {
+    throw new Error(`volume partition extent ${location}+${size} is out of bounds`);
   }
 }
 
