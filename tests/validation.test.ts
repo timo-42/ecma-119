@@ -1297,7 +1297,9 @@ describe("validateIsoImage hardening", () => {
       },
     );
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/optional Type L path table record 2 does not match the mandatory Type L path table/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.optional.little.mismatch",
@@ -1309,6 +1311,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports optional Type M path tables that differ from the mandatory copy", () => {
@@ -1321,7 +1324,9 @@ describe("validateIsoImage hardening", () => {
       },
     );
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/optional Type M path table record 2 does not match the mandatory Type M path table/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.optional.big.mismatch",
@@ -1333,6 +1338,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
@@ -4118,7 +4124,9 @@ describe("validateIsoImage hardening", () => {
       },
     );
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/optional Type M path table record 2 does not match the mandatory Type M path table/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.optional.big.mismatch`,
@@ -4130,6 +4138,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports unsupported supplementary file structure versions", () => {

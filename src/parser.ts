@@ -658,6 +658,10 @@ function assertDescriptorPathTableHierarchy(
 
   if (descriptor.optionalTypeLPathTableLocation !== 0) {
     const optionalLittle = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.optionalTypeLPathTableLocation, "little");
+    const copyIssues = validatePathTableCopy(mandatory, optionalLittle, codePrefix, "little");
+    if (copyIssues.length > 0) {
+      throw new Error(copyIssues[0]!.message);
+    }
     const optionalIssues = validatePathTableAgainstHierarchy(optionalLittle, expected, `${codePrefix}.optional.little`, "optional Type L");
     if (optionalIssues.length > 0) {
       throw new Error(optionalIssues[0]!.message);
@@ -665,6 +669,10 @@ function assertDescriptorPathTableHierarchy(
   }
   if (descriptor.optionalTypeMPathTableLocation !== 0) {
     const optionalBig = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.optionalTypeMPathTableLocation, "big");
+    const copyIssues = validatePathTableCopy(mandatoryBig, optionalBig, codePrefix, "big");
+    if (copyIssues.length > 0) {
+      throw new Error(copyIssues[0]!.message);
+    }
     const optionalIssues = validatePathTableAgainstHierarchy(optionalBig, expected, `${codePrefix}.optional.big`, "optional Type M");
     if (optionalIssues.length > 0) {
       throw new Error(optionalIssues[0]!.message);
