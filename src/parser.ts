@@ -2890,6 +2890,7 @@ function assertSupportedDirectoryRecord(
   options: { allowInterleaving?: boolean; allowMultiExtent?: boolean } = {},
 ): void {
   assertSupportedDirectoryFileFlags(record.flags, path);
+  assertSupportedDirectoryRecordDirectoryFlags(record.flags, path);
   if (!options.allowInterleaving && (record.fileUnitSize !== 0 || record.interleaveGapSize !== 0)) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
@@ -2913,6 +2914,7 @@ function assertSupportedDirectoryRecord(
 
 function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string, localVolumeSequenceNumber: number): void {
   assertSupportedDirectoryFileFlags(entry.flags, path);
+  assertSupportedDirectoryRecordDirectoryFlags(entry.flags, path);
   if (entry.fileUnitSize === 0 && entry.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
   }
@@ -2932,6 +2934,12 @@ function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string, l
 function assertSupportedDirectoryFileFlags(flags: number, path: string): void {
   if ((flags & 0x60) !== 0) {
     throw new Error(`directory record has reserved file flag bits set at ${path}`);
+  }
+}
+
+function assertSupportedDirectoryRecordDirectoryFlags(flags: number, path: string): void {
+  if ((flags & FILE_FLAG_DIRECTORY) !== 0 && (flags & 0x0c) !== 0) {
+    throw new Error(`directory record at ${path} identifies a directory and must not set Associated File or Record bits`);
   }
 }
 
