@@ -58,6 +58,8 @@ The root package entry intentionally exposes these API groups:
 
 `timeZoneOffsetMinutes` is signed minutes east of UTC, must be divisible by 15, supports -720 through 780, and defaults to 0. File, directory, and structured Extended Attribute Record inputs can override the global value for their own ECMA-119 date/time fields.
 
+Primary descriptor file-reference fields remain constrained to ECMA-119 Level 1 file identifiers even when `identifierLevel: 2` is used for authored primary directory records. Publisher, data preparer, and application identifiers that begin with `_` are treated as root-directory file references and must also use Level 1 file identifiers.
+
 `systemArea` may be supplied as up to 32,768 bytes copied into logical sectors 0 through 15. Shorter values are zero-padded by the writer, omitted values leave the System Area all zeroes, and `parseIsoImage(image).systemArea` exposes the 16-sector byte range.
 
 Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes, but executable boot semantics are left to consuming systems.
@@ -94,6 +96,7 @@ Implemented support is intentionally explicit:
 - local volume set member metadata and same-volume directory records
 - read-side unresolved external-volume directory and file record metadata within the declared volume set
 - validation that descriptor file-reference fields resolve to files described in the root directory
+- parse-time rejection of descriptor file-reference fields that do not resolve or do not use the required Level 1 shape
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - file version number authoring from 1 through 32767
 - directory records with standard `.` and `..` entries, written and parsed as single non-interleaved directory sections

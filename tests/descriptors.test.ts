@@ -657,30 +657,34 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([{ path: "COPY.TXT", data: "" }], {
       enhancedVolumeDescriptors: [{ bibliographicFileIdentifier: "MISSING.TXT" }],
     })).toThrow(/enhanced volume descriptor bibliographic file identifier references MISSING\.TXT;1, which is not a file described in the root directory/i);
+    expect(() => createIsoImage([{ path: "LONGCOPYRIGHTFILENAME.TXT", data: "" }], {
+      identifierLevel: 2,
+      copyrightFileIdentifier: "LONGCOPYRIGHTFILENAME.TXT",
+    })).toThrow(/primary volume descriptor copyright file identifier references LONGCOPYRIGHTFILENAME\.TXT;1, which must be an ECMA-119 Level 1 file identifier/i);
+    expect(() => createIsoImage([{ path: "LONGPUBLISHER.TXT", data: "" }], {
+      identifierLevel: 2,
+      publisherIdentifier: "_LONGPUBLISHER.TXT;1",
+    })).toThrow(/primary volume descriptor publisher identifier references LONGPUBLISHER\.TXT;1, which must be an ECMA-119 Level 1 file identifier/i);
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "" }], {
+      publisherIdentifier: "_MISSING.TXT;1",
+    })).toThrow(/primary volume descriptor publisher identifier references MISSING\.TXT;1, which is not a file described in the root directory/i);
   });
 
   test("writes, validates, and reads Level 2 primary identifiers", () => {
     const payload = "level two primary identifiers\n";
-    const image = createIsoImage([
-      {
-        path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
-        data: payload,
-      },
-      {
-        path: "LONGCOPYRIGHTFILENAME.TXT",
-        data: "copyright\n",
-      },
-    ], {
+    const image = createIsoImage([{
+      path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
+      data: payload,
+    }], {
       identifierLevel: 2,
-      copyrightFileIdentifier: "LONGCOPYRIGHTFILENAME.TXT",
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
 
     const parsed = parseIsoImage(image, { includeData: true });
 
     expect(validateIsoImage(image)).toEqual([]);
-    expect(parsed.primaryVolumeDescriptor.copyrightFileIdentifier).toBe("LONGCOPYRIGHTFILENAME.TXT;1");
-    expect(parsed.files).toHaveLength(2);
+    expect(parsed.primaryVolumeDescriptor.copyrightFileIdentifier).toBe("");
+    expect(parsed.files).toHaveLength(1);
     expect(parsed.files.find((file) => file.path === "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT")).toMatchObject({
       path: "LONGDIRECTORYNAME/LONGFILENAME1234567890.TXT",
       identifier: "LONGFILENAME1234567890.TXT;1",

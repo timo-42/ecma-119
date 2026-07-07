@@ -4500,20 +4500,16 @@ describe("validateIsoImage hardening", () => {
 
   test("reports primary descriptor file references missing from the root directory", () => {
     const image = createIsoImage([{ path: "COPY.TXT", data: "root reference\n" }], {
-      publisherIdentifier: "_MISSING.TXT;1",
       copyrightFileIdentifier: "COPY.TXT",
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
+    writeDescriptorTextField(image, PVD_OFFSET + 318, 128, "_MISSING.TXT;1");
     writeDescriptorTextField(image, PVD_OFFSET + 739, 37, "ABSENT.TXT;1");
     writeDescriptorTextField(image, PVD_OFFSET + 776, 37, "BIBLIO.TXT;1");
 
-    expect(parseIsoImage(image).primaryVolumeDescriptor).toMatchObject({
-      publisherIdentifier: "_MISSING.TXT;1",
-      copyrightFileIdentifier: "COPY.TXT;1",
-      abstractFileIdentifier: "ABSENT.TXT;1",
-      bibliographicFileIdentifier: "BIBLIO.TXT;1",
-    });
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/publisher identifier references MISSING\.TXT;1.*root directory/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.publisher_identifier.file_reference",
@@ -4532,6 +4528,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("accepts descriptor file references that resolve to root directory files", () => {
@@ -4590,7 +4587,7 @@ describe("validateIsoImage hardening", () => {
 
     writeDescriptorTextField(image, PVD_OFFSET + fieldOffset, 128, `_${reference}`);
 
-    expect(parseIsoImage(image).files.map((file) => file.path)).toHaveLength(3);
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`${label} references ${reference}, which must be an ECMA-119 Level 1 file identifier`, "i"));
     const issues = validateIsoImage(image);
     expect(issues).toEqual([
       expect.objectContaining({
@@ -4599,6 +4596,7 @@ describe("validateIsoImage hardening", () => {
         message: `primary volume descriptor ${label} references ${reference}, which must be an ECMA-119 Level 1 file identifier`,
       }),
     ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports primary prefixed descriptor reference shape when root file resolution is unavailable", () => {
@@ -4621,6 +4619,28 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+  });
+
+  test("reports primary file reference fields outside Level 1 shape", () => {
+    const image = createIsoImage([{ path: "LONGCOPYRIGHTFILENAME.TXT", data: "copyright\n" }], {
+      identifierLevel: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["LONGCOPYRIGHTFILENAME.TXT"]);
+    expect(validateIsoImage(image)).toEqual([]);
+
+    writeDescriptorTextField(image, PVD_OFFSET + 702, 37, "LONGCOPYRIGHTFILENAME.TXT;1");
+
+    expect(() => parseIsoImage(image)).toThrow(/copyright file identifier references LONGCOPYRIGHTFILENAME\.TXT;1, which must be an ECMA-119 Level 1 file identifier/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "pvd.copyright_file_identifier.file_reference.identifier",
+        path: ".",
+        message: "primary volume descriptor copyright file identifier references LONGCOPYRIGHTFILENAME.TXT;1, which must be an ECMA-119 Level 1 file identifier",
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
@@ -4813,7 +4833,9 @@ describe("validateIsoImage hardening", () => {
     });
     writeDescriptorTextField(image, 17 * SECTOR_SIZE + fieldOffset, fieldOffset === 574 ? 128 : 37, fieldValue);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`${reference}.*root directory`, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.${code}`,
@@ -4822,6 +4844,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
@@ -4861,6 +4884,7 @@ describe("validateIsoImage hardening", () => {
 
     writeDescriptorTextField(image, 17 * SECTOR_SIZE + fieldOffset, 128, `_${reference}`);
 
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`${label} references ${reference}, which must be an ECMA-119 Level 1 file identifier`, "i"));
     const issues = validateIsoImage(image);
     expect(issues).toEqual([
       expect.objectContaining({
@@ -4869,6 +4893,7 @@ describe("validateIsoImage hardening", () => {
         message: `${codePrefix} volume descriptor ${label} references ${reference}, which must be an ECMA-119 Level 1 file identifier`,
       }),
     ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports enhanced path table parent issues", () => {
