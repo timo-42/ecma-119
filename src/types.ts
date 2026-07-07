@@ -255,6 +255,7 @@ export type IsoBootCatalogBootEntry = {
   systemType: number;
   sectorCount: number;
   loadRba: number;
+  data?: Uint8Array;
   raw: Uint8Array;
 };
 

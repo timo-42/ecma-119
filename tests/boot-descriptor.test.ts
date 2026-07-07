@@ -146,7 +146,9 @@ describe("boot volume descriptor writing", () => {
     const image = imageWithBootCatalog();
     const descriptorOnlyBoot = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "boot");
     const parsed = parseIsoImage(image, { includeData: true });
+    const metadataOnly = parseIsoImage(image, { includeData: false });
     const boot = parsed.descriptors.find((descriptor) => descriptor.kind === "boot");
+    const metadataOnlyBoot = metadataOnly.descriptors.find((descriptor) => descriptor.kind === "boot");
 
     if (boot?.kind !== "boot") {
       throw new Error("expected parsed boot descriptor");
@@ -155,7 +157,7 @@ describe("boot volume descriptor writing", () => {
     expect(validateIsoImage(image)).toEqual([]);
     expect(descriptorOnlyBoot?.kind === "boot" ? descriptorOnlyBoot.bootCatalog : undefined).toBeUndefined();
     expect(boot.bootCatalog).toMatchObject({
-      location: image.byteLength / SECTOR_SIZE - 1,
+      location: image.byteLength / SECTOR_SIZE - 2,
       validationEntry: {
         kind: "validation",
         headerId: 1,
@@ -172,17 +174,20 @@ describe("boot volume descriptor writing", () => {
         loadSegment: 0x7c0,
         systemType: 0,
         sectorCount: 4,
-        loadRba: 42,
+        loadRba: image.byteLength / SECTOR_SIZE - 1,
       },
     });
     expect(boot.bootCatalog?.raw.byteLength).toBe(SECTOR_SIZE);
     expect(boot.bootCatalog?.entries.map((entry) => entry.kind)).toEqual(["validation", "initial"]);
+    expect(boot.bootCatalog?.initialEntry.data).toEqual(bootImageBytes());
+    expect(boot.bootCatalog?.entries[1]?.kind === "initial" ? boot.bootCatalog.entries[1].data : undefined).toEqual(bootImageBytes());
+    expect(metadataOnlyBoot?.kind === "boot" ? metadataOnlyBoot.bootCatalog?.initialEntry.data : undefined).toBeUndefined();
     expect(parsed.files.map((file) => file.path)).toEqual(["BOOT.TXT"]);
   });
 
   test("reports invalid El Torito boot catalog checksums", () => {
     const image = imageWithBootCatalog();
-    image[(image.byteLength - SECTOR_SIZE) + 4] ^= 0xff;
+    image[bootCatalogOffset(image) + 4] ^= 0xff;
 
     expect(() => parseIsoImage(image, { includeData: false })).toThrow(/El Torito boot catalog validation entry checksum must sum to zero/i);
     expect(validateIsoImage(image)).toEqual([
@@ -205,6 +210,20 @@ describe("boot volume descriptor writing", () => {
       }),
     ]);
   });
+
+  test("reports out-of-bounds El Torito boot image extents", () => {
+    const image = imageWithBootCatalog();
+    const catalogOffset = bootCatalogOffset(image);
+    writeUint32LE(image, catalogOffset + 32 + 8, image.byteLength / SECTOR_SIZE + 1);
+
+    expect(() => parseIsoImage(image, { includeData: true })).toThrow(/El Torito initial boot image extent .* is out of bounds/i);
+    expect(validateIsoImage(image)).toEqual([
+      expect.objectContaining({
+        code: "boot.catalog.initial.image_bounds",
+        message: expect.stringMatching(/El Torito initial boot image extent .* is out of bounds/i),
+      }),
+    ]);
+  });
 });
 
 function ascii(bytes: Uint8Array, start: number, end: number): string {
@@ -219,14 +238,17 @@ function imageWithBootCatalog(): Uint8Array {
     createdAt: new Date("2024-01-01T00:00:00Z"),
   });
   const catalogSector = base.byteLength / SECTOR_SIZE;
-  const image = new Uint8Array(base.byteLength + SECTOR_SIZE);
+  const bootImage = bootImageBytes();
+  const bootImageSector = catalogSector + 1;
+  const image = new Uint8Array(base.byteLength + SECTOR_SIZE + bootImage.byteLength);
   image.set(base);
   writeUint32LE(image, 17 * SECTOR_SIZE + 71, catalogSector);
-  image.set(bootCatalogSector(), catalogSector * SECTOR_SIZE);
+  image.set(bootCatalogSector(bootImageSector), catalogSector * SECTOR_SIZE);
+  image.set(bootImage, bootImageSector * SECTOR_SIZE);
   return image;
 }
 
-function bootCatalogSector(): Uint8Array {
+function bootCatalogSector(bootImageSector: number): Uint8Array {
   const bytes = new Uint8Array(SECTOR_SIZE);
   bytes[0] = 0x01;
   bytes[1] = 0x00;
@@ -241,8 +263,19 @@ function bootCatalogSector(): Uint8Array {
   writeUint16LE(bytes, initial + 2, 0x7c0);
   bytes[initial + 4] = 0;
   writeUint16LE(bytes, initial + 6, 4);
-  writeUint32LE(bytes, initial + 8, 42);
+  writeUint32LE(bytes, initial + 8, bootImageSector);
   return bytes;
+}
+
+function bootImageBytes(): Uint8Array {
+  const bytes = new Uint8Array(512 * 4);
+  bytes.set(encoder.encode("boot image payload\n"));
+  bytes[512 * 4 - 1] = 0xa5;
+  return bytes;
+}
+
+function bootCatalogOffset(image: Uint8Array): number {
+  return (image.byteLength / SECTOR_SIZE - 2) * SECTOR_SIZE;
 }
 
 function bootCatalogChecksumWord(entry: Uint8Array): number {

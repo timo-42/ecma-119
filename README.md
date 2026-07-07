@@ -68,7 +68,7 @@ Primary descriptor file-reference fields remain constrained to ECMA-119 Level 1 
 
 `systemArea` may be supplied as up to 32,768 bytes copied into logical sectors 0 through 15. Shorter values are zero-padded by the writer, omitted values leave the System Area all zeroes, and `parseIsoImage(image).systemArea` exposes the 16-sector byte range.
 
-Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes. When a parsed Boot Record uses the El Torito boot system identifier, `parseIsoImage` reads one boot catalog sector and exposes validation/default-entry metadata under descriptor `bootCatalog`; `parseVolumeDescriptors` remains descriptor-only. Boot image loading and executable boot semantics are left to consuming systems.
+Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes. When a parsed Boot Record uses the El Torito boot system identifier, `parseIsoImage` reads one boot catalog sector and exposes validation/default-entry metadata under descriptor `bootCatalog`; catalog boot entries include raw initial-load `data` bytes when payload loading is enabled. `parseVolumeDescriptors` remains descriptor-only. Executable boot semantics are left to consuming systems.
 
 Use `volumePartition` for a single raw Volume Partition Descriptor or `volumePartitions` for additional partition descriptors. Partition payloads are written as opaque sector-aligned byte ranges and parsed back as descriptor `data` when payload loading is enabled.
 
@@ -86,7 +86,7 @@ Files marked with `associated: true` may share the same path, identifier, and ve
 
 Directory records are written as a single non-interleaved file section as required by ECMA-119. An empty directory path targets the root directory.
 
-`parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
+`parseIsoImage(image)` includes regular file payloads, volume partition payloads, and El Torito boot image payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
 When parsing Extended Attribute Records, raw bytes are preserved on the parsed file or directory entry. Structured `extendedAttributeRecordFields` are populated only when those bytes decode as a valid ECMA-119 Extended Attribute Record; use `validateIsoImage` for diagnostics when raw EAR bytes contain malformed structured fields.
 
@@ -100,7 +100,7 @@ Implemented support is intentionally explicit:
 - primary volume descriptor and one or more descriptor set terminators
 - volume descriptor metadata and file identifier fields
 - optional boot record volume descriptors
-- read-side El Torito boot catalog validation and initial/default entry metadata
+- read-side El Torito boot catalog validation, initial/default entry metadata, and boot image payload loading
 - opaque System Area authoring and parsing
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
@@ -134,7 +134,7 @@ Executable boot semantics, partition filesystem semantics, and Rock Ridge/Joliet
 
 Known gaps in the current package:
 
-- boot image loading and executable boot behavior beyond exposing El Torito boot catalog metadata
+- executable boot behavior beyond exposing El Torito boot catalog metadata and boot image bytes
 - filesystem parsing inside Volume Partition Descriptor payloads; partition data is exposed as opaque bytes
 - Rock Ridge metadata semantics, including POSIX names, permissions, links, and relocation records
 - full Joliet extension semantics; supplementary/enhanced descriptors can author and parse UCS-2-style identifiers, but Joliet-specific behavior is not implemented as a separate profile
