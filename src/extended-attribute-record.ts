@@ -15,6 +15,7 @@ import {
   writeUint16Both,
   writeVolumeDescriptorDateTime,
 } from "./binary.js";
+import { bytesFromInput } from "./byte-input.js";
 import { type ByteInput, type ExtendedAttributeRecord, type ExtendedAttributeRecordInput, SECTOR_SIZE } from "./types.js";
 
 export const EXTENDED_ATTRIBUTE_RECORD_MIN_LENGTH = 250;
@@ -202,11 +203,5 @@ function allZero(bytes: Uint8Array): boolean {
 }
 
 function toBytes(data: ByteInput): Uint8Array {
-  if (typeof data === "string") {
-    return new TextEncoder().encode(data);
-  }
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  return new Uint8Array(data);
+  return bytesFromInput(data);
 }

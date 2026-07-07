@@ -56,6 +56,8 @@ The root package entry intentionally exposes these API groups:
 - constants and flags: sector and standard identifier constants, directory record file flag constants, and Extended Attribute Record constants
 - low-level ECMA-119 helpers: binary/date/string helpers, directory record codecs, Extended Attribute Record codecs, identifier helpers, and path table codecs
 
+Byte input fields accept strings, `ArrayBuffer`, and `ArrayBufferView` values such as `Uint8Array`, sliced typed arrays, and `DataView`. String inputs are encoded as UTF-8 bytes.
+
 `timeZoneOffsetMinutes` is signed minutes east of UTC, must be divisible by 15, supports -720 through 780, and defaults to 0. File, directory, and structured Extended Attribute Record inputs can override the global value for their own ECMA-119 date/time fields.
 
 Primary descriptor file-reference fields remain constrained to ECMA-119 Level 1 file identifiers even when `identifierLevel: 2` is used for authored primary directory records. Publisher, data preparer, and application identifiers that begin with `_` are treated as root-directory file references and must also use Level 1 file identifiers.

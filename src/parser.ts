@@ -1,4 +1,5 @@
 import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readDirectoryDateTime, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
+import { bytesFromImageInput } from "./byte-input.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, isLevelOneFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
@@ -8,6 +9,7 @@ import {
   type IsoFileEntry,
   type IsoFileSection,
   type IsoImage,
+  type IsoImageInput,
   type IsoNode,
   type IsoPathTables,
   type BootVolumeDescriptor,
@@ -39,8 +41,8 @@ type DescriptorZeroRange = {
 
 const MAX_PATH_TABLE_RECORDS = 0xffff;
 
-export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
-  const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
+export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?: boolean } = {}): IsoImage {
+  const image = bytesFromImageInput(imageInput);
   assertSectorAlignedImage(image);
   const descriptors = parseVolumeDescriptors(image);
   assertSupportedDescriptorSequenceProfile(descriptors);
@@ -108,9 +110,9 @@ function assertSectorAlignedImage(image: Uint8Array): void {
   }
 }
 
-export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): ValidationIssue[] {
+export function validateIsoImage(imageInput: IsoImageInput): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
+  const image = bytesFromImageInput(imageInput);
   if (image.byteLength % SECTOR_SIZE !== 0) {
     issues.push({ code: "image.sector_alignment", message: "image length must be a multiple of 2048 bytes" });
   }
@@ -497,8 +499,8 @@ function rawDescriptorRootPathAt(image: Uint8Array, offset: number): string | un
   return undefined;
 }
 
-export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
-  const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
+export function parseVolumeDescriptors(imageInput: IsoImageInput): VolumeDescriptor[] {
+  const image = bytesFromImageInput(imageInput);
   const descriptors: VolumeDescriptor[] = [];
   let sector = SYSTEM_AREA_SECTORS;
 
