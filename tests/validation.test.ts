@@ -1831,6 +1831,84 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects supplementary directory record identifiers longer than 31 bytes during parsing", () => {
+    const directory = "S".repeat(31);
+    const mutatedDirectory = `${directory}S`;
+    const image = createIsoImage([{ path: `${directory}/FILE.TXT`, data: "supp directory identifier length\n" }], {
+      volumeIdentifier: "VALIDATION",
+      identifierLevel: 2,
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual([`${directory}/FILE.TXT`]);
+
+    const supplementary = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("missing supplementary descriptor");
+    }
+    const rootDirectoryOffset = supplementary.rootDirectoryRecord.extent * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, supplementary.rootDirectoryRecord.size, directory);
+    rewriteDirectoryRecordIdentifier(image, dirRecordOffset, mutatedDirectory);
+
+    expect(() => parseIsoImage(image)).toThrow(/supplementary directory record directory identifier length .* must not exceed 31 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.directory_identifier.length",
+          path: `supplementary:./${mutatedDirectory}`,
+          message: `supplementary directory record directory identifier length at supplementary:./${mutatedDirectory} must not exceed 31 bytes`,
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
+  test("rejects enhanced directory record identifiers longer than 207 bytes during parsing", () => {
+    const directory = "E".repeat(31);
+    const mutatedDirectory = "E".repeat(208);
+    const image = createIsoImage([{ path: `${directory}/FILE.TXT`, data: "enhanced directory identifier length\n" }], {
+      volumeIdentifier: "VALIDATION",
+      identifierLevel: 2,
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual([`${directory}/FILE.TXT`]);
+
+    const enhanced = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "enhanced");
+    if (enhanced?.kind !== "enhanced") {
+      throw new Error("missing enhanced descriptor");
+    }
+    const rootDirectoryOffset = enhanced.rootDirectoryRecord.extent * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, enhanced.rootDirectoryRecord.size, directory);
+    rewriteDirectoryRecordIdentifier(image, dirRecordOffset, mutatedDirectory);
+
+    expect(() => parseIsoImage(image)).toThrow(/enhanced directory record directory identifier length .* must not exceed 207 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.directory_identifier.length",
+          path: `enhanced:./${mutatedDirectory}`,
+          message: `enhanced directory record directory identifier length at enhanced:./${mutatedDirectory} must not exceed 207 bytes`,
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports primary descriptor root directory record identifier mismatches", () => {
     const image = baselineImage();
     image[PVD_OFFSET + 156 + 33] = 1;
@@ -5160,6 +5238,22 @@ function copyDirectoryRecordIdentifier(image: Uint8Array, sourceOffset: number, 
     throw new Error("directory record identifiers must have matching lengths");
   }
   image.set(image.subarray(sourceOffset + 33, sourceOffset + 33 + sourceLength), targetOffset + 33);
+}
+
+function rewriteDirectoryRecordIdentifier(image: Uint8Array, offset: number, identifier: string): void {
+  const bytes = new TextEncoder().encode(identifier);
+  const length = directoryRecordLengthForIdentifier(bytes.length);
+  image[offset] = length;
+  image[offset + 32] = bytes.length;
+  image.set(bytes, offset + 33);
+  if ((33 + bytes.length) % 2 !== 0) {
+    image[offset + 33 + bytes.length] = 0;
+  }
+}
+
+function directoryRecordLengthForIdentifier(identifierLength: number): number {
+  const base = 33 + identifierLength;
+  return base + (base % 2 === 0 ? 0 : 1);
 }
 
 function writeDescriptorTextField(image: Uint8Array, offset: number, length: number, value: string): void {
