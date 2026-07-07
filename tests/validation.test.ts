@@ -1635,6 +1635,26 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects missing directory parent records during parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "missing parent parse\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const parentRecordOffset = rootDirectoryOffset + image[rootDirectoryOffset]!;
+    image[parentRecordOffset] = 0;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory parent record is missing at \./i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.parent_record.missing",
+          path: ".",
+          message: "directory parent record is missing at .",
+        }),
+      ]),
+    );
+  });
+
   test("reports reserved file flag bits inside nested directories", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
@@ -2062,6 +2082,25 @@ describe("validateIsoImage hardening", () => {
           code: "directory.self_record.identifier",
           path: ".",
           message: "directory self record at . must have the Directory flag set",
+        }),
+      ]),
+    );
+  });
+
+  test("rejects directory self record identifier mismatches during parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "self identifier parse\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    image[rootDirectoryOffset + 33] = 1;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory self record at \. must use identifier 0/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.self_record.identifier",
+          path: ".",
+          message: "directory self record at . must use identifier 0",
         }),
       ]),
     );
