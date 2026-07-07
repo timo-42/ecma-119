@@ -405,6 +405,7 @@ describe("validateIsoImage hardening", () => {
     image[bigPathTableOffset + childRecordOffset] = 32;
     image[bigPathTableOffset + childRecordOffset + 8 + 31] = "S".charCodeAt(0);
 
+    expect(() => parseIsoImage(image)).toThrow(/supplementary volume descriptor Type L path table record 2 directory identifier length must not exceed 31 bytes/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -438,6 +439,7 @@ describe("validateIsoImage hardening", () => {
     writePathTableRecord(image, bigPathTableOffset + 10, "big", identifier, 1, rootDirectoryExtentAt(image, enhancedDescriptorOffset), 0);
     writeUint32Both(image, enhancedDescriptorOffset + 132, pathTableSize);
 
+    expect(() => parseIsoImage(image)).toThrow(/enhanced volume descriptor Type L path table record 2 directory identifier length must not exceed 207 bytes/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -448,6 +450,153 @@ describe("validateIsoImage hardening", () => {
           code: "enhanced_path_table.big.identifier.length",
           message: "Type M path table record 2 directory identifier length must not exceed 207 bytes",
         }),
+      ]),
+    );
+  });
+
+  test("rejects overlong optional supplementary path table identifiers during parsing", () => {
+    const directory = "S".repeat(31);
+    const baseImage = createIsoImage([{ path: `${directory}/FILE.TXT`, data: "optional supp path table identifier length\n" }], {
+      volumeIdentifier: "VALIDATION",
+      identifierLevel: 2,
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const image = withOptionalPathTableCopy(baseImage, supplementaryDescriptorOffset, "little", (result, optionalPathTableOffset) => {
+      const identifier = new TextEncoder().encode(`${directory}S`);
+      writePathTableRecord(result, optionalPathTableOffset + 10, "little", identifier, 1, rootDirectoryExtentAt(result, supplementaryDescriptorOffset), 0);
+    });
+    expect(parseIsoImage(baseImage).files.map((file) => file.path)).toEqual([`${directory}/FILE.TXT`]);
+
+    expect(() => parseIsoImage(image)).toThrow(/supplementary volume descriptor optional Type L path table record 2 directory identifier length must not exceed 31 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.optional.little.identifier.length",
+          message: "Type L path table record 2 directory identifier length must not exceed 31 bytes",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
+      ]),
+    );
+  });
+
+  test("rejects overlong optional supplementary Type M path table identifiers during parsing", () => {
+    const directory = "S".repeat(31);
+    const baseImage = createIsoImage([{ path: `${directory}/FILE.TXT`, data: "optional supp type m path table identifier length\n" }], {
+      volumeIdentifier: "VALIDATION",
+      identifierLevel: 2,
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const image = withOptionalPathTableCopy(baseImage, supplementaryDescriptorOffset, "big", (result, optionalPathTableOffset) => {
+      const identifier = new TextEncoder().encode(`${directory}S`);
+      writePathTableRecord(result, optionalPathTableOffset + 10, "big", identifier, 1, rootDirectoryExtentAt(result, supplementaryDescriptorOffset), 0);
+    });
+    expect(parseIsoImage(baseImage).files.map((file) => file.path)).toEqual([`${directory}/FILE.TXT`]);
+
+    expect(() => parseIsoImage(image)).toThrow(/supplementary volume descriptor optional Type M path table record 2 directory identifier length must not exceed 31 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "supplementary_path_table.optional.big.identifier.length",
+          message: "Type M path table record 2 directory identifier length must not exceed 31 bytes",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
+      ]),
+    );
+  });
+
+  test("rejects overlong optional enhanced path table identifiers during parsing", () => {
+    const directory = "E".repeat(31);
+    const files = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        path: `${"E".repeat(30)}${index}/FILE.TXT`,
+        data: `optional enhanced path table identifier length ${index}\n`,
+      })),
+      {
+        path: "SHORTDIR/FILE.TXT",
+        data: "optional enhanced path table identifier length short\n",
+      },
+    ];
+    const baseImage = createIsoImage(files, {
+      volumeIdentifier: "VALIDATION",
+      identifierLevel: 2,
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    const image = withOptionalPathTableCopy(baseImage, enhancedDescriptorOffset, "big", (result, optionalPathTableOffset) => {
+      const identifier = new TextEncoder().encode("E".repeat(208));
+      writePathTableRecord(result, optionalPathTableOffset + 10, "big", identifier, 1, rootDirectoryExtentAt(result, enhancedDescriptorOffset), 0);
+    });
+    expect(parseIsoImage(baseImage).files.map((file) => file.path).sort()).toEqual(files.map((file) => file.path).sort());
+
+    expect(() => parseIsoImage(image)).toThrow(/enhanced volume descriptor optional Type M path table record 2 directory identifier length must not exceed 207 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "enhanced_path_table.optional.big.identifier.length",
+          message: "Type M path table record 2 directory identifier length must not exceed 207 bytes",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
+      ]),
+    );
+  });
+
+  test("rejects overlong optional enhanced Type L path table identifiers during parsing", () => {
+    const files = [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        path: `${"E".repeat(30)}${index}/FILE.TXT`,
+        data: `optional enhanced type l path table identifier length ${index}\n`,
+      })),
+      {
+        path: "SHORTDIR/FILE.TXT",
+        data: "optional enhanced type l path table identifier length short\n",
+      },
+    ];
+    const baseImage = createIsoImage(files, {
+      volumeIdentifier: "VALIDATION",
+      identifierLevel: 2,
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    const image = withOptionalPathTableCopy(baseImage, enhancedDescriptorOffset, "little", (result, optionalPathTableOffset) => {
+      const identifier = new TextEncoder().encode("E".repeat(208));
+      writePathTableRecord(result, optionalPathTableOffset + 10, "little", identifier, 1, rootDirectoryExtentAt(result, enhancedDescriptorOffset), 0);
+    });
+    expect(parseIsoImage(baseImage).files.map((file) => file.path).sort()).toEqual(files.map((file) => file.path).sort());
+
+    expect(() => parseIsoImage(image)).toThrow(/enhanced volume descriptor optional Type L path table record 2 directory identifier length must not exceed 207 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "enhanced_path_table.optional.little.identifier.length",
+          message: "Type L path table record 2 directory identifier length must not exceed 207 bytes",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
       ]),
     );
   });
