@@ -22,6 +22,8 @@ import {
   type ValidationIssue,
 } from "./types.js";
 
+type DirectoryIdentifierProfile = "supplementary" | "enhanced";
+
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
   const descriptors = parseVolumeDescriptors(image);
@@ -1422,9 +1424,10 @@ function validateDirectoryHierarchy(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { validatePrimaryLevelOne?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
+  options: { identifierProfile?: DirectoryIdentifierProfile; validatePrimaryLevelOne?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const identifierProfile = options.identifierProfile;
   const validatePrimaryLevelOne = options.validatePrimaryLevelOne ?? false;
   const depth = options.depth ?? 1;
   const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
@@ -1509,6 +1512,9 @@ function validateDirectoryHierarchy(
         pendingMultiExtentKind = "file";
       }
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
+      if (identifierProfile) {
+        issues.push(...validateDirectoryRecordIdentifierProfile(record, recordPath || ".", identifierProfile));
+      }
       issues.push(...validateOrdinaryFileExtendedAttributeFlags(record, recordPath || "."));
       if (!recordIsDirectory && !isMultiExtentContinuationRecord) {
         issues.push(...validateFilePathLength(record, recordPath || ".", filePathLengthPrefix));
@@ -1588,6 +1594,7 @@ function validateDirectoryHierarchy(
     issues.push(...validateDirectoryHierarchy(image, childDirectory, directory, childPath, localVolumeSequenceNumber, volumeSetSize, new Set(visited), {
       depth: depth + 1,
       filePathLengthPrefix: filePathLengthPrefix + record.identifier.length + 1,
+      ...(identifierProfile ? { identifierProfile } : {}),
       validatePrimaryLevelOne,
     }));
   }
@@ -1673,6 +1680,25 @@ function validatePrimaryDirectoryRecordIdentifier(record: DecodedDirectoryRecord
     message: `primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 primary d-characters" : "file identifier contains invalid ECMA-119 primary file identifier"}`,
     path,
   }];
+}
+
+function validateDirectoryRecordIdentifierProfile(record: DecodedDirectoryRecord, path: string, profile: DirectoryIdentifierProfile): ValidationIssue[] {
+  if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+    return [];
+  }
+  const limit = secondaryDirectoryIdentifierLengthLimit(profile);
+  if (record.identifier.length <= limit) {
+    return [];
+  }
+  return [{
+    code: "directory.directory_identifier.length",
+    message: `${profile} directory record directory identifier length at ${path} must not exceed ${limit} bytes`,
+    path,
+  }];
+}
+
+function secondaryDirectoryIdentifierLengthLimit(profile: DirectoryIdentifierProfile): number {
+  return profile === "enhanced" ? 207 : 31;
 }
 
 function validateDotDirectoryRecord(
@@ -1776,7 +1802,9 @@ function validateSupplementaryLikeVolumeDescriptor(
   issues.push(...validateDirectoryEntryMultiExtent(descriptor.rootDirectoryRecord, `${label}:.`));
   issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber));
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
-  issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set()));
+  issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), {
+    identifierProfile: descriptor.kind,
+  }));
   return issues;
 }
 
@@ -2103,6 +2131,7 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
     ...descriptor,
     pathTables: readDescriptorPathTables(image, descriptor),
     rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), {
+      ...(descriptor.kind === "primary" ? {} : { identifierProfile: descriptor.kind }),
       validatePrimaryIdentifiers: descriptor.kind === "primary",
     }),
   };
@@ -2136,7 +2165,7 @@ function readDirectoryTree(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { validatePrimaryIdentifiers?: boolean } = {},
+  options: { identifierProfile?: DirectoryIdentifierProfile; validatePrimaryIdentifiers?: boolean } = {},
 ): IsoDirectoryEntry {
   assertSupportedDirectoryEntry(directory, path || ".", volumeSetSize);
   if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
@@ -2192,6 +2221,9 @@ function readDirectoryTree(
     const cleanName = stripVersion(identifier);
     const recordPath = joinPath(path, cleanName) || ".";
     assertOrdinaryDirectoryRecordIdentifierForParsing(record, recordPath);
+    if (options.identifierProfile) {
+      assertDirectoryRecordIdentifierProfileForParsing(record, recordPath, options.identifierProfile);
+    }
     if (options.validatePrimaryIdentifiers) {
       assertPrimaryDirectoryRecordIdentifierForParsing(record, recordPath);
     }
@@ -2291,6 +2323,16 @@ function assertPrimaryDirectoryRecordIdentifierForParsing(record: DecodedDirecto
   const valid = isDirectory ? isSupportedPrimaryDirectoryIdentifier(record.identifier) : isSupportedPrimaryFileIdentifier(record.identifier);
   if (!valid) {
     throw new Error(`primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 primary d-characters" : "file identifier contains invalid ECMA-119 primary file identifier"} at ${path}`);
+  }
+}
+
+function assertDirectoryRecordIdentifierProfileForParsing(record: DecodedDirectoryRecord, path: string, profile: DirectoryIdentifierProfile): void {
+  if ((record.flags & FILE_FLAG_DIRECTORY) !== FILE_FLAG_DIRECTORY) {
+    return;
+  }
+  const limit = secondaryDirectoryIdentifierLengthLimit(profile);
+  if (record.identifier.length > limit) {
+    throw new Error(`${profile} directory record directory identifier length at ${path} must not exceed ${limit} bytes`);
   }
 }
 
@@ -3526,6 +3568,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "directory.unused_bytes" && message.includes("unused directory bytes after the last record")) {
+      return true;
+    }
+    if (issue.code === "directory.directory_identifier.length" && message.includes("directory record directory identifier length")) {
       return true;
     }
     if (
