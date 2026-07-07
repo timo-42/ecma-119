@@ -69,6 +69,10 @@ const options: CreateIsoOptions = {
 };
 
 const image = createIsoImage([file], options);
+const imageFromObjectOverload = createIsoImage({
+  files: [file],
+  ...options,
+});
 const parsed: IsoImage = parseIsoImage(image);
 const parsedFromView: IsoImage = parseIsoImage(imageInput, { includeData: false });
 const volumeSet: IsoVolumeSet = parseIsoVolumeSet([image, imageInput], { includeData: false });
@@ -95,6 +99,7 @@ void directoryEntry;
 void enhanced;
 void entryPath;
 void fileEntry;
+void imageFromObjectOverload;
 void issues;
 void parsedFromView;
 void partition;

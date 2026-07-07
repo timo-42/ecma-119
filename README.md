@@ -51,6 +51,8 @@ const partition = parsed.descriptors.find((descriptor) => descriptor.kind === "p
 console.log(partition?.data?.subarray(0, 4));
 ```
 
+`createIsoImage(files, options)` and `createIsoImage({ files, ...options })` are equivalent authoring forms.
+
 The root package entry intentionally exposes these API groups:
 
 - image creation: `createIsoImage` and the related input/option types
