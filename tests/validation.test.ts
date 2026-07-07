@@ -765,6 +765,49 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects mandatory path tables without a root first record during parsing", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table root semantics\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
+    image[pathTableOffset + 8] = "X".charCodeAt(0);
+
+    expect(() => parseIsoImage(image)).toThrow(
+      /primary volume descriptor Type L path table first record must be the root directory with parent number 1/i,
+    );
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.little.root",
+          message: "first Type L path table record must be the root directory with parent number 1",
+        }),
+      ]),
+    );
+  });
+
+  test("rejects mandatory path tables with invalid parent numbering during parsing", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table parent semantics\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const pathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childParentDirectoryNumberOffset = pathTableOffset + rootPathTableRecordLength + 6;
+    image[childParentDirectoryNumberOffset] = 0;
+    image[childParentDirectoryNumberOffset + 1] = 2;
+
+    expect(() => parseIsoImage(image)).toThrow(
+      /primary volume descriptor Type M path table record 2 parent number 2 does not reference an earlier directory/i,
+    );
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.big.parent",
+          message: expect.stringMatching(/Type M path table record 2 parent number 2/i),
+        }),
+      ]),
+    );
+  });
+
   test.each([
     {
       kind: "supplementary",
