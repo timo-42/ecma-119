@@ -1,0 +1,33 @@
+{
+  "fixture": "minimal-genisoimage.iso",
+  "sha256": "2a3085bb4ebc3055e0fdab0bed1c8038ae6e0d9b06741f57cd9447ead52dff28",
+  "tool": "genisoimage 1.1.11 (Linux)",
+  "sourcePackage": "Debian genisoimage 9:1.1.11-4",
+  "generatedAt": "2026-07-07T17:31:46Z",
+  "command": "genisoimage -quiet -iso-level 1 -V GENISO_FIXTURE -publisher ECMA119_TEST -appid ECMA119_FIXTURE -o minimal-genisoimage.iso fixture-root",
+  "sourceTree": [
+    {
+      "path": "README.TXT",
+      "mtime": "2024-01-01T00:00:00Z",
+      "content": "hello from genisoimage\n"
+    },
+    {
+      "path": "DIR/NESTED.TXT",
+      "mtime": "2024-01-01T00:00:00Z",
+      "content": "nested external fixture\n"
+    }
+  ],
+  "expectedVolumeIdentifier": "GENISO_FIXTURE",
+  "expectedFiles": [
+    {
+      "path": "DIR/NESTED.TXT",
+      "identifier": "NESTED.TXT;1",
+      "size": 24
+    },
+    {
+      "path": "README.TXT",
+      "identifier": "README.TXT;1",
+      "size": 23
+    }
+  ]
+}
