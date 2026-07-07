@@ -34,6 +34,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   }
   assertSupportedDescriptorProfile(pvd, "primary volume descriptor");
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
+  assertDescriptorRootDirectoryRecordIdentifier(pvd, "primary");
   validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
   for (const descriptor of descriptors) {
     if (descriptor.kind === "boot") {
@@ -46,6 +47,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
       assertSupportedSecondaryEscapeSequences(descriptor);
+      assertDescriptorRootDirectoryRecordIdentifier(descriptor, descriptor.kind);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
     }
   }
@@ -1923,6 +1925,16 @@ function validateDescriptorRootDirectoryRecordIdentifier(
   }];
 }
 
+function assertDescriptorRootDirectoryRecordIdentifier(
+  descriptor: PathTableValidationInput,
+  label: string,
+): void {
+  if (descriptor.raw[156 + 32] === 1 && descriptor.raw[156 + 33] === 0) {
+    return;
+  }
+  throw new Error(`${label} volume descriptor root directory record must use identifier 0`);
+}
+
 function validateDescriptorRootFileReferences(
   image: Uint8Array,
   descriptor: PathTableValidationInput,
@@ -3577,6 +3589,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "descriptor.sequence.order" && issue.message === message) {
+      return true;
+    }
+    if (issue.code.endsWith(".root_directory_record.identifier") && issue.message === message) {
       return true;
     }
     if (
