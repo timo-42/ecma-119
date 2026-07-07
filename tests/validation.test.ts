@@ -1616,6 +1616,25 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects missing directory self records during parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "missing self parse\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    image[rootDirectoryOffset] = 0;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory self record is missing at \./i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.self_record.missing",
+          path: ".",
+          message: "directory self record is missing at .",
+        }),
+      ]),
+    );
+  });
+
   test("reports reserved file flag bits inside nested directories", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
@@ -2029,6 +2048,25 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects directory self records without the Directory flag during parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "self flag parse\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    image[rootDirectoryOffset + 25] &= ~0x02;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory self record at \. must have the Directory flag set/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.self_record.identifier",
+          path: ".",
+          message: "directory self record at . must have the Directory flag set",
+        }),
+      ]),
+    );
+  });
+
   test("reports root directory parent record extent mismatches", () => {
     const image = baselineImage();
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
@@ -2041,6 +2079,29 @@ describe("validateIsoImage hardening", () => {
           code: "directory.parent_record.extent",
           path: ".",
           message: expect.stringMatching(/parent record/i),
+        }),
+      ]),
+    );
+  });
+
+  test("rejects nested directory parent record extent mismatches during parsing", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested parent parse\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
+    const parentRecordOffset = dirDirectoryOffset + image[dirDirectoryOffset]!;
+    writeUint32Both(image, parentRecordOffset + 2, dirExtent);
+
+    expect(() => parseIsoImage(image)).toThrow(/directory parent record at DIR does not match the parent directory extent fields/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.parent_record.extent",
+          path: "DIR",
+          message: "directory parent record at DIR does not match the parent directory extent fields",
         }),
       ]),
     );
