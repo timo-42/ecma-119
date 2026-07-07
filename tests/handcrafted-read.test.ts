@@ -384,13 +384,15 @@ describe("handcrafted ISO reader fixture", () => {
   });
 
   test.each([
-    { kind: "supplementary" as const, descriptorVersion: 1, fileStructureVersion: 1, volumeIdentifier: "SUP_HAND" },
-    { kind: "enhanced" as const, descriptorVersion: 2, fileStructureVersion: 2, volumeIdentifier: "ENH_HAND" },
-  ])("reads a handcrafted $kind descriptor hierarchy and path tables", ({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier }) => {
-    const image = handcraftedSecondaryDescriptorIso({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier });
+    { kind: "supplementary" as const, descriptorVersion: 1, fileStructureVersion: 1, volumeIdentifier: "SUP_HAND", optionalPathTables: "typeM" as const },
+    { kind: "enhanced" as const, descriptorVersion: 2, fileStructureVersion: 2, volumeIdentifier: "ENH_HAND", optionalPathTables: "both" as const },
+  ])("reads a handcrafted $kind descriptor hierarchy and path tables", ({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier, optionalPathTables }) => {
+    const image = handcraftedSecondaryDescriptorIso({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier, optionalPathTables });
     const volumeDescriptors = parseVolumeDescriptors(image);
     const parsed = parseIsoImage(image, { includeData: true });
     const parsedDescriptor = parsed.descriptors.find((descriptor) => descriptor.kind === kind);
+    const expectedOptionalTypeLLocation = optionalPathTables === "both" || optionalPathTables === "typeL" ? 32 : 0;
+    const expectedOptionalTypeMLocation = optionalPathTables === "both" || optionalPathTables === "typeM" ? 33 : 0;
 
     expect(validateIsoImage(image)).toEqual([]);
     expect(volumeDescriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", kind, "terminator"]);
@@ -404,6 +406,8 @@ describe("handcrafted ISO reader fixture", () => {
       pathTableSize: 22,
       typeLPathTableLocation: 23,
       typeMPathTableLocation: 24,
+      optionalTypeLPathTableLocation: expectedOptionalTypeLLocation,
+      optionalTypeMPathTableLocation: expectedOptionalTypeMLocation,
     });
     expect(parsedDescriptor).toMatchObject({
       kind,
@@ -417,7 +421,59 @@ describe("handcrafted ISO reader fixture", () => {
       bibliographicFileIdentifier: "SUPBIB.TXT;1",
       typeLPathTableLocation: 23,
       typeMPathTableLocation: 24,
+      optionalTypeLPathTableLocation: expectedOptionalTypeLLocation,
+      optionalTypeMPathTableLocation: expectedOptionalTypeMLocation,
     });
+    expect(parsedDescriptor?.kind === kind ? parsedDescriptor.pathTables?.typeL : undefined).toEqual([
+      expect.objectContaining({ identifier: Uint8Array.of(0), extent: 25, parentDirectoryNumber: 1 }),
+      expect.objectContaining({ identifier: asciiBytes("ALT"), extent: 26, parentDirectoryNumber: 1 }),
+    ]);
+    expect(parsedDescriptor?.kind === kind ? parsedDescriptor.pathTables?.typeM : undefined).toEqual([
+      expect.objectContaining({ identifier: Uint8Array.of(0), extent: 25, parentDirectoryNumber: 1 }),
+      expect.objectContaining({ identifier: asciiBytes("ALT"), extent: 26, parentDirectoryNumber: 1 }),
+    ]);
+    expect(parsedDescriptor?.kind === kind ? parsedDescriptor.pathTables?.optionalTypeL : undefined).toEqual(
+      expectedOptionalTypeLLocation === 0
+        ? undefined
+        : parsedDescriptor?.kind === kind ? parsedDescriptor.pathTables?.typeL : undefined,
+    );
+    expect(parsedDescriptor?.kind === kind ? parsedDescriptor.pathTables?.optionalTypeM : undefined).toEqual(
+      expectedOptionalTypeMLocation === 0
+        ? undefined
+        : parsedDescriptor?.kind === kind ? parsedDescriptor.pathTables?.typeM : undefined,
+    );
+    for (const optionalPathTable of [
+      {
+        location: expectedOptionalTypeLLocation,
+        endian: "little" as const,
+        code: `${kind}_path_table.optional.little.parent`,
+        parseMessage: /optional Type L path table record 2 parent number 0 does not reference an earlier directory/i,
+        validationMessage: /Type L path table record 2 parent number 0 does not reference an earlier directory/i,
+      },
+      {
+        location: expectedOptionalTypeMLocation,
+        endian: "big" as const,
+        code: `${kind}_path_table.optional.big.parent`,
+        parseMessage: /optional Type M path table record 2 parent number 0 does not reference an earlier directory/i,
+        validationMessage: /Type M path table record 2 parent number 0 does not reference an earlier directory/i,
+      },
+    ]) {
+      if (optionalPathTable.location === 0) {
+        continue;
+      }
+      const invalidOptionalPathTableImage = image.slice();
+      writePathTableParentDirectoryNumber(invalidOptionalPathTableImage, optionalPathTable.location, 10, optionalPathTable.endian, 0);
+
+      expect(() => parseIsoImage(invalidOptionalPathTableImage, { includeData: false })).toThrow(optionalPathTable.parseMessage);
+      expect(validateIsoImage(invalidOptionalPathTableImage)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: optionalPathTable.code,
+            message: expect.stringMatching(optionalPathTable.validationMessage),
+          }),
+        ]),
+      );
+    }
     expect(parsedDescriptor?.kind === kind ? parsedDescriptor.rootDirectoryRecord.extent : undefined).toBe(25);
     expect(parsedDescriptor?.kind === kind ? parsedDescriptor.rootDirectoryRecord.children[0] : undefined).toMatchObject({
       path: "ALT",
@@ -982,6 +1038,7 @@ function handcraftedSecondaryDescriptorIso(input: {
   descriptorVersion: 1 | 2;
   fileStructureVersion: 1 | 2;
   volumeIdentifier: string;
+  optionalPathTables?: "none" | "typeL" | "typeM" | "both";
   volumeSetSize?: number;
   volumeSequenceNumber?: number;
 }): Uint8Array {
@@ -1001,12 +1058,15 @@ function handcraftedSecondaryDescriptorIso(input: {
   const secondaryBibliographicFileData = sector(image, 29);
   const secondaryCopyrightFileData = sector(image, 30);
   const secondaryAbstractFileData = sector(image, 31);
+  const secondaryOptionalPathTableL = sector(image, 32);
+  const secondaryOptionalPathTableM = sector(image, 33);
   const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
   const filePayload = new TextEncoder().encode("hello secondary\n");
   const applicationPayload = new TextEncoder().encode("secondary application reference\n");
   const bibliographicPayload = new TextEncoder().encode("secondary bibliographic reference\n");
   const copyrightPayload = new TextEncoder().encode("secondary copyright reference\n");
   const abstractPayload = new TextEncoder().encode("secondary abstract reference\n");
+  const optionalPathTables = input.optionalPathTables ?? "none";
   const volumeSetSize = input.volumeSetSize ?? 1;
   const volumeSequenceNumber = input.volumeSequenceNumber ?? 1;
 
@@ -1022,6 +1082,14 @@ function handcraftedSecondaryDescriptorIso(input: {
   writePathTableDirectory(secondaryPathTableL, 10, "little", asciiBytes("ALT"), 26, 1);
   writePathTableRoot(secondaryPathTableM, "big", 25);
   writePathTableDirectory(secondaryPathTableM, 10, "big", asciiBytes("ALT"), 26, 1);
+  if (optionalPathTables === "typeL" || optionalPathTables === "both") {
+    writePathTableRoot(secondaryOptionalPathTableL, "little", 25);
+    writePathTableDirectory(secondaryOptionalPathTableL, 10, "little", asciiBytes("ALT"), 26, 1);
+  }
+  if (optionalPathTables === "typeM" || optionalPathTables === "both") {
+    writePathTableRoot(secondaryOptionalPathTableM, "big", 25);
+    writePathTableDirectory(secondaryOptionalPathTableM, 10, "big", asciiBytes("ALT"), 26, 1);
+  }
 
   const primaryRootSelf = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber });
   const primaryRootParent = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber });
@@ -1071,6 +1139,8 @@ function handcraftedSecondaryDescriptorIso(input: {
     pathTableSize: 22,
     typeLPathTableLocation: 23,
     typeMPathTableLocation: 24,
+    optionalTypeLPathTableLocation: optionalPathTables === "typeL" || optionalPathTables === "both" ? 32 : 0,
+    optionalTypeMPathTableLocation: optionalPathTables === "typeM" || optionalPathTables === "both" ? 33 : 0,
     volumeSpaceSize: 34,
     volumeSetSize,
     volumeSequenceNumber,
@@ -1129,6 +1199,8 @@ function writeSecondaryDescriptor(
     pathTableSize: number;
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
+    optionalTypeLPathTableLocation?: number;
+    optionalTypeMPathTableLocation?: number;
     volumeSpaceSize: number;
     volumeSetSize?: number;
     volumeSequenceNumber?: number;
@@ -1152,7 +1224,9 @@ function writeSecondaryDescriptor(
   writeBoth16(bytes, 128, SECTOR_SIZE);
   writeBoth32(bytes, 132, input.pathTableSize);
   writeUint32LE(bytes, 140, input.typeLPathTableLocation);
+  writeUint32LE(bytes, 144, input.optionalTypeLPathTableLocation ?? 0);
   writeUint32BE(bytes, 148, input.typeMPathTableLocation);
+  writeUint32BE(bytes, 152, input.optionalTypeMPathTableLocation ?? 0);
   bytes.set(input.rootDirectoryRecord, 156);
   writeDescriptorTextFields(bytes, input.date, {
     applicationIdentifier: input.applicationIdentifier,
@@ -1243,6 +1317,21 @@ function writePathTableDirectory(bytes: Uint8Array, offset: number, endian: "lit
     writeUint16BE(bytes, offset + 6, parentDirectoryNumber);
   }
   bytes.set(identifier, offset + 8);
+}
+
+function writePathTableParentDirectoryNumber(
+  image: Uint8Array,
+  location: number,
+  recordOffset: number,
+  endian: "little" | "big",
+  parentDirectoryNumber: number,
+): void {
+  const offset = location * SECTOR_SIZE + recordOffset + 6;
+  if (endian === "little") {
+    writeUint16LE(image, offset, parentDirectoryNumber);
+  } else {
+    writeUint16BE(image, offset, parentDirectoryNumber);
+  }
 }
 
 function directoryDate(date: Date): Uint8Array {
