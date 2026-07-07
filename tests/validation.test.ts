@@ -1328,23 +1328,64 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports a directory record that crosses a sector boundary", () => {
-    const image = baselineImage();
-    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
-    setRootDirectorySize(image, SECTOR_SIZE * 2);
-    const crossingRecordOffset = rootDirectoryOffset + SECTOR_SIZE - 10;
-    image[crossingRecordOffset] = 34;
-    image[crossingRecordOffset + 32] = 1;
-    image[crossingRecordOffset + 33] = "X".charCodeAt(0);
+  test("reports root directory records that cross sector boundaries without duplicate parse issues", () => {
+    const image = baselineImage(
+      Array.from({ length: 80 }, (_, index) => ({
+        path: `F${String(index).padStart(3, "0")}.TXT`,
+        data: "root sector boundary\n",
+      })),
+    );
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parseIsoImage(image).files).toHaveLength(80);
 
-    expect(validateIsoImage(image)).toEqual(
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const crossingRecordOffset = findDirectoryRecordOffsetNearSectorEnd(image, rootDirectoryOffset, rootDirectorySizeAt(image, PVD_OFFSET), 255);
+    image[crossingRecordOffset] = 255;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory record crosses a logical sector boundary at \./i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: expect.stringMatching(/director|record/i),
-          message: expect.stringMatching(/sector|boundar|record/i),
+          code: "directory.record_crosses_sector",
+          path: ".",
+          message: "directory record crosses a logical sector boundary at .",
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test("reports nested directory records that cross sector boundaries without duplicate parse issues", () => {
+    const image = baselineImage(
+      Array.from({ length: 80 }, (_, index) => ({
+        path: `DIR/F${String(index).padStart(3, "0")}.TXT`,
+        data: "nested sector boundary\n",
+      })),
+    );
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parseIsoImage(image).files).toHaveLength(80);
+
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, rootDirectorySizeAt(image, PVD_OFFSET), "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirSize = readBothEndianUint32(image, dirRecordOffset + 10);
+    const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
+    const crossingRecordOffset = findDirectoryRecordOffsetNearSectorEnd(image, dirDirectoryOffset, dirSize, 255);
+    image[crossingRecordOffset] = 255;
+
+    expect(() => parseIsoImage(image)).toThrow(/directory record crosses a logical sector boundary at DIR/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_crosses_sector",
+          path: "DIR",
+          message: "directory record crosses a logical sector boundary at DIR",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("writes zero-filled unused directory bytes and reads the image back", () => {
@@ -4664,6 +4705,23 @@ function directoryRecordContentEnd(image: Uint8Array, directoryOffset: number, d
     offset += length;
   }
   return end;
+}
+
+function findDirectoryRecordOffsetNearSectorEnd(image: Uint8Array, directoryOffset: number, directorySize: number, mutatedLength: number): number {
+  let offset = directoryOffset;
+  const end = directoryOffset + directorySize;
+  while (offset < end) {
+    const length = image[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset - directoryOffset + 1) / SECTOR_SIZE) * SECTOR_SIZE + directoryOffset;
+      continue;
+    }
+    if ((offset % SECTOR_SIZE) + mutatedLength > SECTOR_SIZE) {
+      return offset;
+    }
+    offset += length;
+  }
+  throw new Error("missing directory record near sector end");
 }
 
 function descriptorVolumeSpaceSize(image: Uint8Array, descriptorOffset: number): number {
