@@ -590,6 +590,37 @@ describe("volume descriptor sequence parsing", () => {
     expect(primary.applicationUse.subarray(applicationUse.byteLength).every((byte) => byte === 0)).toBe(true);
   });
 
+  test("writes primary volume descriptor file identifier fields with explicit versions", () => {
+    const image = createIsoImage([
+      { path: "COPY.TXT", data: "copyright v2\n", version: 2 },
+      { path: "README", data: "abstract v32767\n", version: 32767 },
+    ], {
+      copyrightFileIdentifier: "COPY.TXT;2",
+      abstractFileIdentifier: "README.;32767",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor).toMatchObject({
+      copyrightFileIdentifier: "COPY.TXT;2",
+      abstractFileIdentifier: "README.;32767",
+    });
+    expect(parsed.files.map((file) => file.identifier)).toEqual(["COPY.TXT;2", "README.;32767"]);
+  });
+
+  test("rejects invalid descriptor file identifier versions", () => {
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "", version: 1 }], {
+      copyrightFileIdentifier: "COPY.TXT;0",
+    })).toThrow(/file version number/i);
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "", version: 1 }], {
+      copyrightFileIdentifier: "COPY.TXT;32768",
+    })).toThrow(/file version number/i);
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "", version: 1 }], {
+      supplementaryVolumeDescriptors: [{ abstractFileIdentifier: "COPY.TXT;01" }],
+    })).toThrow(/file version number/i);
+  });
+
   test("writes, validates, and reads Level 2 primary identifiers", () => {
     const payload = "level two primary identifiers\n";
     const image = createIsoImage([
@@ -797,6 +828,30 @@ describe("volume descriptor sequence parsing", () => {
       volumeSequenceNumber: 1,
     });
     expect(new TextDecoder("ascii").decode(readme?.data)).toBe("enhanced descriptor\n");
+  });
+
+  test("writes secondary descriptor file identifier fields with explicit versions", () => {
+    const image = createIsoImage([
+      { path: "COPY.TXT", data: "primary copy\n", version: 2 },
+      { path: "SUPABS.TXT", data: "supplementary abstract\n", version: 7 },
+    ], {
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        copyrightFileIdentifier: "COPY.TXT;2",
+        abstractFileIdentifier: "SUPABS.TXT;7",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+    const supplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(supplementary).toMatchObject({
+      kind: "supplementary",
+      copyrightFileIdentifier: "COPY.TXT;2",
+      abstractFileIdentifier: "SUPABS.TXT;7",
+    });
+    expect(parsed.files.map((file) => file.identifier)).toEqual(["COPY.TXT;2", "SUPABS.TXT;7"]);
   });
 
   test("validates descriptor unused and reserved zero byte fields", () => {

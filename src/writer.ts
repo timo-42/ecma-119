@@ -11,7 +11,7 @@ import {
 } from "./binary.js";
 import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN, FILE_FLAG_MULTI_EXTENT } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
-import { type IdentifierLevel, normalizeDirectoryPath, normalizeFilePath } from "./identifiers.js";
+import { type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
 import { type BootRecordOptions, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
@@ -992,7 +992,7 @@ function writeAField(bytes: Uint8Array, offset: number, length: number, value: s
 }
 
 function writeFileIdentifierField(bytes: Uint8Array, offset: number, value: string, identifierLevel: IdentifierLevel): void {
-  const identifier = value === "" ? "" : normalizeFilePath(value, identifierLevel).isoIdentifier;
+  const identifier = value === "" ? "" : normalizeFileIdentifierReference(value, identifierLevel);
   writeAsciiPadded(bytes, offset, 37, identifier);
 }
 

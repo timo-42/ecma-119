@@ -7,6 +7,7 @@ import {
   isLevelTwoFileIdentifier,
   isSupportedPrimaryDirectoryIdentifier,
   isSupportedPrimaryFileIdentifier,
+  normalizeFileIdentifierReference,
   normalizeFilePath,
   toLevelOneFileIdentifier,
   toLevelTwoFileIdentifier,
@@ -40,6 +41,15 @@ describe("Level 1 identifier predicates", () => {
     expect(() => toLevelOneFileIdentifier("README.TXT", 0)).toThrow(/file version number/i);
     expect(() => toLevelOneFileIdentifier("README.TXT", 32768)).toThrow(/file version number/i);
   });
+
+  test("normalizes descriptor file references with explicit versions", () => {
+    expect(normalizeFileIdentifierReference("copy.txt;2")).toBe("COPY.TXT;2");
+    expect(normalizeFileIdentifierReference("readme.;32767")).toBe("README.;32767");
+    expect(normalizeFileIdentifierReference("copy.txt")).toBe("COPY.TXT;1");
+    expect(() => normalizeFileIdentifierReference("COPY.TXT;0")).toThrow(/file version number/i);
+    expect(() => normalizeFileIdentifierReference("COPY.TXT;32768")).toThrow(/file version number/i);
+    expect(() => normalizeFileIdentifierReference("COPY.TXT;01")).toThrow(/file version number/i);
+  });
 });
 
 describe("Level 2 identifier predicates", () => {
@@ -68,6 +78,11 @@ describe("Level 2 identifier predicates", () => {
     expect(toLevelTwoFileIdentifier("longfilename1234567890.txt", 42)).toBe("LONGFILENAME1234567890.TXT;42");
     expect(toLevelTwoFileIdentifier("longfilename1234567890", 42)).toBe("LONGFILENAME1234567890.;42");
     expect(() => toLevelTwoFileIdentifier(`${"A".repeat(28)}.TXT`)).toThrow(/30 d-characters/i);
+  });
+
+  test("normalizes Level 2 descriptor file references with explicit versions", () => {
+    expect(normalizeFileIdentifierReference("longfilename1234567890.txt;42", 2)).toBe("LONGFILENAME1234567890.TXT;42");
+    expect(normalizeFileIdentifierReference("longfilename1234567890;42", 2)).toBe("LONGFILENAME1234567890.;42");
   });
 
   test("rejects file paths whose ECMA-119 path length exceeds 255 bytes", () => {

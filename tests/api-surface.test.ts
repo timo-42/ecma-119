@@ -42,6 +42,7 @@ describe("public API surface", () => {
       "normalizeACharacters",
       "normalizeDCharacters",
       "normalizeDirectoryPath",
+      "normalizeFileIdentifierReference",
       "normalizeFilePath",
       "parseIsoImage",
       "parseVolumeDescriptors",
