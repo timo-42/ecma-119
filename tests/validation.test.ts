@@ -1120,7 +1120,9 @@ describe("validateIsoImage hardening", () => {
     writeUint32LE(image, littlePathTableOffset + 2, 0xffff);
     writeUint32BE(image, bigPathTableOffset + 2, 0xffff);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L path table directory record does not match the directory hierarchy extent fields/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.hierarchy.record",
@@ -1128,13 +1130,34 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test("rejects Type M path table records that disagree with the directory hierarchy", () => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "type m hierarchy mismatch\n" }]);
+    const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
+    writeUint32BE(image, bigPathTableOffset + 10 + 2, 0xffff);
+
+    expect(() => parseIsoImage(image)).toThrow(/Type M path table directory record does not match the directory hierarchy extent fields/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "path_table.hierarchy.record",
+          message: expect.stringMatching(/Type M path table.*extent fields/i),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports path table directories missing from the directory hierarchy", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "missing path table\n" }]);
     writeUint32Both(image, PVD_OFFSET + 132, 10);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L path table is missing a directory from the directory hierarchy/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.hierarchy.missing",
@@ -1142,13 +1165,16 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports extra path table directories not present in the directory hierarchy", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "extra path table\n" }]);
     appendPrimaryPathTableRecord(image, "EXT", 1, rootDirectoryExtent(image), 0);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L path table contains an extra directory record not present in the directory hierarchy/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.hierarchy.extra",
@@ -1156,6 +1182,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports duplicate path table directory paths", () => {
@@ -1164,7 +1191,9 @@ describe("validateIsoImage hardening", () => {
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     appendPrimaryPathTableRecord(image, "DIR", 1, readBothEndianUint32(image, dirRecordOffset + 2), image[dirRecordOffset + 1]!);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/path table contains duplicate directory paths/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.hierarchy.duplicate",
@@ -1172,6 +1201,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports optional Type L path table issues when the optional location is present", () => {
