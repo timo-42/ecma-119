@@ -2303,7 +2303,9 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     const recordPath = joinPath(path === "." ? "" : path, stripVersion(identifier)) || ".";
     const extendedAttributeRecord = readExtendedAttributeRecord(image, record);
     const bothEndianIssues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, recordPath);
+    const dateIssues = validateExtendedAttributeRecordDateFields(extendedAttributeRecord, recordPath);
     issues.push(...bothEndianIssues);
+    issues.push(...dateIssues);
     try {
       const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
       if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
@@ -2334,7 +2336,7 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!shouldSuppressExtendedAttributeRecordParse(message, bothEndianIssues, extendedAttributeRecord)) {
+      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues], extendedAttributeRecord)) {
         issues.push({
           code: "extended_attribute_record.parse",
           message,
@@ -2352,6 +2354,7 @@ function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry:
   }
   const extendedAttributeRecord = image.slice(entry.extent * SECTOR_SIZE, (entry.extent + entry.extendedAttributeRecordLength) * SECTOR_SIZE);
   const issues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, path);
+  issues.push(...validateExtendedAttributeRecordDateFields(extendedAttributeRecord, path));
   try {
     const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
     const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
@@ -2401,10 +2404,59 @@ function validateExtendedAttributeRecordBothEndianFields(bytes: Uint8Array, path
   return issues;
 }
 
+const extendedAttributeRecordDateFields = [
+  { start: 10, code: "creation_date", label: "creation date and time", required: true },
+  { start: 27, code: "modification_date", label: "modification date and time", required: true },
+  { start: 44, code: "expiration_date", label: "expiration date and time", required: false },
+  { start: 61, code: "effective_date", label: "effective date and time", required: false },
+] as const;
+
+function validateExtendedAttributeRecordDateFields(bytes: Uint8Array, path: string): ValidationIssue[] {
+  if (bytes.byteLength < 78) {
+    return [];
+  }
+  return extendedAttributeRecordDateFields.flatMap((field) =>
+    validateExtendedAttributeRecordDateField(bytes, field.start, `extended_attribute_record.${field.code}`, `extended attribute record ${field.label} at ${path}`, path, field.required)
+  );
+}
+
+function validateExtendedAttributeRecordDateField(bytes: Uint8Array, offset: number, code: string, label: string, path: string, required: boolean): ValidationIssue[] {
+  const text = readAscii(bytes, offset, 16);
+  if (/^0{16}$/u.test(text)) {
+    if (required) {
+      return [{ code, message: `${label} must be specified`, path }];
+    }
+    if (bytes[offset + 16] !== 0) {
+      return [{ code, message: `${label} unspecified value must use zero GMT offset`, path }];
+    }
+    return [];
+  }
+  if (!/^[0-9]{16}$/u.test(text)) {
+    return [{ code, message: `${label} must contain 16 decimal digits followed by a signed GMT offset byte`, path }];
+  }
+  try {
+    readVolumeDescriptorDateTime(bytes, offset);
+    return [];
+  } catch (error) {
+    return [{
+      code,
+      message: `${label} is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      path,
+    }];
+  }
+}
+
 function shouldSuppressExtendedAttributeRecordParse(message: string, issues: ValidationIssue[], bytes: Uint8Array): boolean {
-  return issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith(".endian_mismatch"))
+  const hasBothEndianIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith(".endian_mismatch"));
+  const hasDateIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith("_date"));
+  return (hasBothEndianIssue
     && message.includes("both-endian")
-    && bytes[180] === 1;
+    && bytes[180] === 1)
+    || (hasDateIssue && isExtendedAttributeRecordDateParseMessage(message));
+}
+
+function isExtendedAttributeRecordDateParseMessage(message: string): boolean {
+  return /\b(date|month|day|hour|minute|second|hundredths|offset)\b/i.test(message);
 }
 
 function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttributeRecordLength: number, length: number, path: string): void {
