@@ -3146,17 +3146,17 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports external descriptor root volume sequence numbers without duplicate parse issues", () => {
+  test("reports descriptor root volume sequence numbers outside the volume set without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root sequence\n" }]);
     writeUint16Both(image, PVD_OFFSET + 156 + 28, 2);
 
-    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 2/i);
+    expect(() => parseIsoImage(image)).toThrow(/volume sequence number 2 outside volume set size 1/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "directory.volume_sequence_unsupported",
+          code: "directory.volume_sequence_number.bounds",
           path: ".",
-          message: expect.stringMatching(/external volume sequence number 2/i),
+          message: "directory record at . references volume sequence number 2 outside volume set size 1",
         }),
       ]),
     );
@@ -3192,19 +3192,19 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports external child directory record volume sequence numbers without duplicate parse issues", () => {
+  test("reports child directory record volume sequence numbers outside the volume set without duplicate parse issues", () => {
     const image = baselineImage([{ path: "README.TXT", data: "child sequence\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
     writeUint16Both(image, fileRecordOffset + 28, 2);
 
-    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 2/i);
+    expect(() => parseIsoImage(image)).toThrow(/volume sequence number 2 outside volume set size 1/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "directory.volume_sequence_unsupported",
+          code: "directory.volume_sequence_number.bounds",
           path: "README.TXT",
-          message: expect.stringMatching(/external volume sequence number 2/i),
+          message: "directory record at README.TXT references volume sequence number 2 outside volume set size 1",
         }),
       ]),
     );
@@ -3228,17 +3228,18 @@ describe("validateIsoImage hardening", () => {
     writeUint32Both(image, fileRecordOffset + 2, image.byteLength / SECTOR_SIZE);
     writeUint16Both(image, fileRecordOffset + 28, 1);
 
-    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 1/i);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files.find((entry) => entry.path === "README.TXT");
     const issues = validateIsoImage(image);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.volume_sequence_unsupported",
-          path: "README.TXT",
-          message: expect.stringMatching(/external volume sequence number 1/i),
-        }),
-      ]),
-    );
+
+    expect(file).toMatchObject({
+      path: "README.TXT",
+      identifier: "README.TXT;1",
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(file?.data).toBeUndefined();
+    expect(issues).toEqual([]);
     expect(issues).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3272,18 +3273,27 @@ describe("validateIsoImage hardening", () => {
     image[dirRecordOffset + 1] = 1;
     writeUint32Both(image, dirRecordOffset + 2, readmeExtent);
     writeUint16Both(image, dirRecordOffset + 28, 1);
+    const littleDirPathTableRecordOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE + 10;
+    const bigDirPathTableRecordOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE + 10;
+    image[littleDirPathTableRecordOffset + 1] = 1;
+    image[bigDirPathTableRecordOffset + 1] = 1;
+    writeUint32LE(image, littleDirPathTableRecordOffset + 2, readmeExtent);
+    writeUint32BE(image, bigDirPathTableRecordOffset + 2, readmeExtent);
 
-    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 1/i);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const externalDirectory = parsed.root.children.find((node) => "children" in node && node.path === "DIR");
     const issues = validateIsoImage(image);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.volume_sequence_unsupported",
-          path: "DIR",
-          message: expect.stringMatching(/external volume sequence number 1/i),
-        }),
-      ]),
-    );
+
+    expect(externalDirectory).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+      extent: readmeExtent,
+      extendedAttributeRecordLength: 1,
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+    expect(issues).toEqual([]);
     expect(issues).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "directory.record_malformed" }),
@@ -3322,17 +3332,19 @@ describe("validateIsoImage hardening", () => {
     writeUint32Both(image, PVD_OFFSET + 156 + 2, readmeExtent);
     writeUint16Both(image, PVD_OFFSET + 156 + 28, 1);
 
-    expect(() => parseIsoImage(image)).toThrow(/external volume sequence number 1/i);
+    const parsed = parseIsoImage(image, { includeData: true });
     const issues = validateIsoImage(image);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "directory.volume_sequence_unsupported",
-          path: ".",
-          message: expect.stringMatching(/external volume sequence number 1/i),
-        }),
-      ]),
-    );
+
+    expect(parsed.root).toMatchObject({
+      path: "",
+      extent: readmeExtent,
+      extendedAttributeRecordLength: 1,
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+    expect(parsed.files).toEqual([]);
+    expect(issues).toEqual([]);
     expect(issues).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "path_table.hierarchy.record" }),
@@ -3358,6 +3370,35 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({ code: "image.parse" }),
       ]),
     );
+  });
+
+  test("keeps external path table directories whose extent matches a local directory", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootExtent = rootDirectoryExtent(image);
+    const rootDirectoryOffset = rootExtent * SECTOR_SIZE;
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
+    writeUint32Both(image, dirRecordOffset + 2, rootExtent);
+    writeUint16Both(image, dirRecordOffset + 28, 1);
+    const littleDirPathTableRecordOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE + 10;
+    const bigDirPathTableRecordOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE + 10;
+    writeUint32LE(image, littleDirPathTableRecordOffset + 2, rootExtent);
+    writeUint32BE(image, bigDirPathTableRecordOffset + 2, rootExtent);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const externalDirectory = parsed.root.children.find((node) => "children" in node && node.path === "DIR");
+
+    expect(externalDirectory).toMatchObject({
+      path: "DIR",
+      extent: rootExtent,
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+    expect(validateIsoImage(image)).toEqual([]);
   });
 
   test("reports zero child directory record volume sequence numbers as range issues", () => {
@@ -4603,8 +4644,8 @@ describe("validateIsoImage hardening", () => {
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       expectedPath: "supplementary:.",
       sequenceNumber: 2,
-      message: /external volume sequence number 2/i,
-      expectedMessage: /directory record at supplementary:\. references unsupported external volume sequence number 2/i,
+      message: /volume sequence number 2 outside volume set size 1/i,
+      expectedMessage: "directory record at supplementary:. references volume sequence number 2 outside volume set size 1",
     },
     {
       kind: "enhanced",
@@ -4619,8 +4660,8 @@ describe("validateIsoImage hardening", () => {
       options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
       expectedPath: "enhanced:.",
       sequenceNumber: 2,
-      message: /external volume sequence number 2/i,
-      expectedMessage: /directory record at enhanced:\. references unsupported external volume sequence number 2/i,
+      message: /volume sequence number 2 outside volume set size 1/i,
+      expectedMessage: "directory record at enhanced:. references volume sequence number 2 outside volume set size 1",
     },
   ])("reports $kind descriptor root volume sequence number $sequenceNumber issues", ({
     options,
@@ -4641,7 +4682,7 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: sequenceNumber === 0 ? "directory.volume_sequence_number.range" : "directory.volume_sequence_unsupported",
+          code: sequenceNumber === 0 ? "directory.volume_sequence_number.range" : "directory.volume_sequence_number.bounds",
           path: expectedPath,
           message: typeof expectedMessage === "string" ? expectedMessage : expect.stringMatching(expectedMessage),
         }),
