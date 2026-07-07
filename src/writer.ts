@@ -59,7 +59,12 @@ type DirectoryNode = {
   systemUse?: Uint8Array;
 };
 
+type BuildTreeState = {
+  directoryCount: number;
+};
+
 const MAX_FILE_SECTION_SIZE = 0xffffffff;
+const MAX_PATH_TABLE_DIRECTORIES = 0xffff;
 
 type PreparedVolumePartition = {
   options: VolumePartitionOptions;
@@ -99,6 +104,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const root = buildTree(files, options.directories ?? [], now, timeZoneOffsetMinutes, identifierLevel);
   validateDescriptorFileReferences(options, root, identifierLevel);
   const directories = collectDirectories(root);
+  assertPathTableDirectoryCapacity(directories.length);
   const pathRecords: PathTableRecord[] = directories.map((directory) => ({
     identifier: directory === root ? Uint8Array.of(0) : asciiBytes(directory.isoIdentifier),
     extent: 0,
@@ -284,6 +290,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
 }
 
 function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now: Date, defaultTimeZoneOffsetMinutes: number, identifierLevel: IdentifierLevel): DirectoryNode {
+  const state: BuildTreeState = { directoryCount: 1 };
   const root: DirectoryNode = {
     kind: "directory",
     name: "",
@@ -332,6 +339,8 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
         flags: FILE_FLAG_DIRECTORY,
         pathTableIndex: 0,
       };
+      state.directoryCount += 1;
+      assertPathTableDirectoryCapacity(state.directoryCount);
       directory.children.set(directoryChildKey(part), child);
       directory = child;
     }
@@ -385,7 +394,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       throw new Error("directory records must not be recorded in interleaved mode");
     }
     const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
-    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path, identifierLevel).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
+    const directory = ensureDirectory(root, normalizeDirectoryPath(input.path, identifierLevel).parts, input.date ?? now, directoryTimeZoneOffsetMinutes, state);
     directory.date = input.date ?? directory.date;
     directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
     directory.fileUnitSize = 0;
@@ -418,7 +427,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   return root;
 }
 
-function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZoneOffsetMinutes: number): DirectoryNode {
+function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZoneOffsetMinutes: number, state: BuildTreeState): DirectoryNode {
   let directory = root;
   for (const part of parts) {
     const existing = directory.children.get(directoryChildKey(part));
@@ -448,6 +457,8 @@ function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZ
       flags: FILE_FLAG_DIRECTORY,
       pathTableIndex: 0,
     };
+    state.directoryCount += 1;
+    assertPathTableDirectoryCapacity(state.directoryCount);
     directory.children.set(directoryChildKey(part), child);
     directory = child;
   }
@@ -464,12 +475,8 @@ function fileChildKey(identifier: string, flags: number): string {
 }
 
 function hasFileChildWithIdentifier(directory: DirectoryNode, identifier: string): boolean {
-  for (const child of directory.children.values()) {
-    if (child.kind === "file" && child.isoIdentifier === identifier) {
-      return true;
-    }
-  }
-  return false;
+  return directory.children.has(fileChildKey(identifier, 0))
+    || directory.children.has(fileChildKey(identifier, FILE_FLAG_ASSOCIATED));
 }
 
 function fileSectionsFor(data: Uint8Array, multiExtent: IsoInputFile["multiExtent"], interleave: IsoInputFile["interleave"]): FileSectionNode[] {
@@ -608,6 +615,12 @@ function collectDirectories(root: DirectoryNode): DirectoryNode[] {
     }
   }
   return directories;
+}
+
+function assertPathTableDirectoryCapacity(count: number): void {
+  if (count > MAX_PATH_TABLE_DIRECTORIES) {
+    throw new RangeError(`ECMA-119 path tables support at most ${MAX_PATH_TABLE_DIRECTORIES} directories including the root directory; received ${count}`);
+  }
 }
 
 function collectFiles(root: DirectoryNode): FileNode[] {

@@ -464,6 +464,16 @@ describe("volume descriptor sequence parsing", () => {
     expect(file?.data).toEqual(payload);
   });
 
+  test("rejects path table directory counts that exceed the ECMA-119 number space", () => {
+    const directories = Array.from({ length: 0xffff }, (_, index) => ({
+      path: `D${index.toString().padStart(5, "0")}`,
+    }));
+
+    expect(() => createIsoImage([], { directories })).toThrow(
+      /ECMA-119 path tables support at most 65535 directories including the root directory; received 65536/i,
+    );
+  });
+
   test("rejects invalid interleaved file authoring options", () => {
     const file = { path: "BAD.BIN", data: "interleaved" };
     expect(() => createIsoImage([{ ...file, interleave: { fileUnitSize: 0, interleaveGapSize: 0 } }])).toThrow(/fileUnitSize/i);
