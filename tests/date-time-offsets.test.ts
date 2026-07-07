@@ -190,7 +190,9 @@ describe("ECMA-119 date/time zone offsets", () => {
     });
     writeVolumeDateText(image, PVD_OFFSET + 813, "2024130100000000");
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/month/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.creation_date",
@@ -202,6 +204,26 @@ describe("ECMA-119 date/time zone offsets", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test("rejects primary volume descriptor date fields with embedded non-digits during parsing", () => {
+    const image = createIsoImage([{ path: "DATE.TXT", data: "bad pvd date digits\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    writeVolumeDateText(image, PVD_OFFSET + 813, "20241X0100000000");
+
+    expect(() => parseIsoImage(image)).toThrow(/16 decimal digits/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.creation_date",
+          message: "primary volume creation date and time must contain 16 decimal digits followed by a signed GMT offset byte",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports unspecified primary volume descriptor date fields with nonzero offsets", () => {
@@ -211,7 +233,9 @@ describe("ECMA-119 date/time zone offsets", () => {
     });
     image[PVD_OFFSET + 847 + 16] = 1;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/unspecified volume descriptor date\/time must use zero GMT offset/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.expiration_date",
@@ -219,6 +243,7 @@ describe("ECMA-119 date/time zone offsets", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test.each([
@@ -227,14 +252,16 @@ describe("ECMA-119 date/time zone offsets", () => {
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       code: "supplementary.modification_date",
       message: /supplementary volume modification date and time is invalid: day/i,
+      parseMessage: /day is not valid for the supplied month/i,
     },
     {
       kind: "enhanced",
       options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
       code: "enhanced.effective_date",
       message: /enhanced volume effective date and time is invalid: hour/i,
+      parseMessage: /hour must be an integer from 0 to 23/i,
     },
-  ])("reports invalid $kind volume descriptor date fields", ({ options, code, message }) => {
+  ])("reports invalid $kind volume descriptor date fields", ({ options, code, message, parseMessage }) => {
     const image = createIsoImage([{ path: "DATE.TXT", data: "bad secondary date\n" }], {
       createdAt: new Date("2024-01-01T00:00:00Z"),
       ...options,
@@ -243,7 +270,9 @@ describe("ECMA-119 date/time zone offsets", () => {
     const invalidDate = code === "supplementary.modification_date" ? "2024023100000000" : "2024010124000000";
     writeVolumeDateText(image, SUPPLEMENTARY_OFFSET + dateOffset, invalidDate);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(parseMessage);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code,
@@ -251,6 +280,7 @@ describe("ECMA-119 date/time zone offsets", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports invalid descriptor root directory record dates", () => {

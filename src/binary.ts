@@ -351,7 +351,13 @@ export function readVolumeDescriptorDateTime(bytes: Uint8Array, offset = 0): Vol
   ensureLength(bytes, offset, 17);
   const text = readAscii(bytes, offset, 16);
   if (/^0{16}$/u.test(text)) {
+    if (bytes[offset + 16] !== 0) {
+      throw new RangeError("unspecified volume descriptor date/time must use zero GMT offset");
+    }
     return null;
+  }
+  if (!/^[0-9]{16}$/u.test(text)) {
+    throw new RangeError("volume descriptor date/time must contain 16 decimal digits");
   }
   const value = {
     year: Number.parseInt(text.slice(0, 4), 10),
