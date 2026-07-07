@@ -2917,15 +2917,27 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports supplementary optional path tables that differ from the mandatory copy and hierarchy", () => {
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      codePrefix: "supplementary_path_table",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      codePrefix: "enhanced_path_table",
+    },
+  ])("reports $kind optional path tables that differ from the mandatory copy and hierarchy", ({ options, codePrefix }) => {
+    const baseImage = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary optional path table\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(validateIsoImage(withOptionalPathTableCopy(baseImage, 17 * SECTOR_SIZE, "big", () => {}))).toEqual([]);
+
     const image = withOptionalPathTableCopy(
-      createIsoImage([{ path: "DIR/FILE.TXT", data: "supp optional path table\n" }], {
-        volumeIdentifier: "VALIDATION",
-        supplementaryVolumeDescriptors: [{
-          volumeIdentifier: "SUPP",
-        }],
-        createdAt: new Date("2024-01-01T00:00:00Z"),
-      }),
+      baseImage,
       17 * SECTOR_SIZE,
       "big",
       (result, optionalPathTableOffset) => {
@@ -2936,11 +2948,11 @@ describe("validateIsoImage hardening", () => {
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "supplementary_path_table.optional.big.mismatch",
+          code: `${codePrefix}.optional.big.mismatch`,
           message: expect.stringMatching(/optional Type M path table record 2 does not match/i),
         }),
         expect.objectContaining({
-          code: "supplementary_path_table.optional.big.hierarchy.record",
+          code: `${codePrefix}.optional.big.hierarchy.record`,
           message: expect.stringMatching(/optional Type M path table directory record does not match/i),
         }),
       ]),
