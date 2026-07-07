@@ -29,7 +29,12 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
     throw new Error("missing primary volume descriptor");
   }
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
-  validatePrimaryDescriptorReferences(image, pvd);
+  validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
+  for (const descriptor of descriptors) {
+    if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+      validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
+    }
+  }
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber);
   const includeData = options.includeData ?? true;
   const populatedDescriptors = descriptors.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
@@ -493,26 +498,26 @@ function parsePrimaryVolumeDescriptor(image: Uint8Array, offset: number, sector:
   return pvd;
 }
 
-function validatePrimaryDescriptorReferences(image: Uint8Array, pvd: PrimaryVolumeDescriptor): void {
-  validatePathTableReferenceForParsing(image, pvd, "little", pvd.typeLPathTableLocation, "primary volume descriptor Type L path table");
-  validatePathTableReferenceForParsing(image, pvd, "big", pvd.typeMPathTableLocation, "primary volume descriptor Type M path table");
-  if (pvd.optionalTypeLPathTableLocation !== 0) {
-    validatePathTableReferenceForParsing(image, pvd, "little", pvd.optionalTypeLPathTableLocation, "primary volume descriptor optional Type L path table");
+function validateDescriptorPathTableReferences(image: Uint8Array, descriptor: PathTableValidationInput, label: string): void {
+  validatePathTableReferenceForParsing(image, descriptor, "little", descriptor.typeLPathTableLocation, `${label} Type L path table`);
+  validatePathTableReferenceForParsing(image, descriptor, "big", descriptor.typeMPathTableLocation, `${label} Type M path table`);
+  if (descriptor.optionalTypeLPathTableLocation !== 0) {
+    validatePathTableReferenceForParsing(image, descriptor, "little", descriptor.optionalTypeLPathTableLocation, `${label} optional Type L path table`);
   }
-  if (pvd.optionalTypeMPathTableLocation !== 0) {
-    validatePathTableReferenceForParsing(image, pvd, "big", pvd.optionalTypeMPathTableLocation, "primary volume descriptor optional Type M path table");
+  if (descriptor.optionalTypeMPathTableLocation !== 0) {
+    validatePathTableReferenceForParsing(image, descriptor, "big", descriptor.optionalTypeMPathTableLocation, `${label} optional Type M path table`);
   }
 }
 
 function validatePathTableReferenceForParsing(
   image: Uint8Array,
-  pvd: PrimaryVolumeDescriptor,
+  descriptor: PathTableValidationInput,
   endian: "little" | "big",
   location: number,
   label: string,
 ): void {
   const pathTableStart = location * SECTOR_SIZE;
-  const pathTableEnd = pathTableStart + pvd.pathTableSize;
+  const pathTableEnd = pathTableStart + descriptor.pathTableSize;
   if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
     throw new Error(`${label} extent is out of bounds`);
   }
