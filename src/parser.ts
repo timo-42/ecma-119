@@ -132,6 +132,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
     } else {
       issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
       issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber, pvd.volumeSetSize, new Set(), {
+        hierarchyDepthLabel: "primary",
         validatePrimaryLevelOne: true,
       }));
       for (const descriptor of descriptors) {
@@ -1554,20 +1555,21 @@ function validateDirectoryHierarchy(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { identifierProfile?: DirectoryIdentifierProfile; validatePrimaryLevelOne?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
+  options: { identifierProfile?: DirectoryIdentifierProfile; hierarchyDepthLabel?: "primary" | "supplementary"; validatePrimaryLevelOne?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const identifierProfile = options.identifierProfile;
+  const hierarchyDepthLabel = options.hierarchyDepthLabel;
   const validatePrimaryLevelOne = options.validatePrimaryLevelOne ?? false;
   const depth = options.depth ?? 1;
   const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
   if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return issues;
   }
-  if (validatePrimaryLevelOne && depth > 8) {
+  if (hierarchyDepthLabel && depth > 8) {
     issues.push({
       code: "directory.hierarchy_depth",
-      message: "primary directory hierarchy depth must not exceed 8 levels",
+      message: `${hierarchyDepthLabel} directory hierarchy depth must not exceed 8 levels`,
       path,
     });
   }
@@ -1724,6 +1726,7 @@ function validateDirectoryHierarchy(
     issues.push(...validateDirectoryHierarchy(image, childDirectory, directory, childPath, localVolumeSequenceNumber, volumeSetSize, new Set(visited), {
       depth: depth + 1,
       filePathLengthPrefix: filePathLengthPrefix + record.identifier.length + 1,
+      ...(hierarchyDepthLabel ? { hierarchyDepthLabel } : {}),
       ...(identifierProfile ? { identifierProfile } : {}),
       validatePrimaryLevelOne,
     }));
@@ -1920,6 +1923,7 @@ function validateSupplementaryLikeVolumeDescriptor(
   issues.push(...validatePathTableReferences(image, descriptor, `${label}_path_table`));
   issues.push(...validateDirectoryHierarchy(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, `${label}:.`, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), {
     identifierProfile: descriptor.kind,
+    ...(descriptor.kind === "supplementary" ? { hierarchyDepthLabel: "supplementary" } : {}),
   }));
   return issues;
 }
@@ -2338,7 +2342,7 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
       ...(descriptor.kind === "primary" ? {} : { identifierProfile: descriptor.kind }),
       enforceFilePathLength: true,
       validatePrimaryIdentifiers: descriptor.kind === "primary",
-      validatePrimaryHierarchyDepth: descriptor.kind === "primary",
+      ...(descriptor.kind === "primary" || descriptor.kind === "supplementary" ? { hierarchyDepthLabel: descriptor.kind } : {}),
     }),
   };
 }
@@ -2371,7 +2375,7 @@ function readDirectoryTree(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { identifierProfile?: DirectoryIdentifierProfile; validatePrimaryIdentifiers?: boolean; validatePrimaryHierarchyDepth?: boolean; enforceFilePathLength?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
+  options: { identifierProfile?: DirectoryIdentifierProfile; hierarchyDepthLabel?: "primary" | "supplementary"; validatePrimaryIdentifiers?: boolean; enforceFilePathLength?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
 ): IsoDirectoryEntry {
   const depth = options.depth ?? 1;
   const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
@@ -2379,8 +2383,8 @@ function readDirectoryTree(
   if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return markExternalDirectory(directory);
   }
-  if (options.validatePrimaryHierarchyDepth) {
-    assertPrimaryHierarchyDepthForParsing(depth, path || ".");
+  if (options.hierarchyDepthLabel) {
+    assertHierarchyDepthForParsing(depth, path || ".", options.hierarchyDepthLabel);
   }
   assertDirectoryDataLengthForParsing(directory, path || ".");
   assertDirectoryInBounds(image, directory, path || ".");
@@ -2439,8 +2443,8 @@ function readDirectoryTree(
     assertDirectoryRecordOrderForParsing(previousOrdinaryRecord, record, recordPath, previousOrdinaryPath, path || ".");
     previousOrdinaryRecord = record;
     previousOrdinaryPath = recordPath;
-    if (options.validatePrimaryHierarchyDepth && isDirectory && record.volumeSequenceNumber === localVolumeSequenceNumber) {
-      assertPrimaryHierarchyDepthForParsing(depth + 1, recordPath);
+    if (options.hierarchyDepthLabel && isDirectory && record.volumeSequenceNumber === localVolumeSequenceNumber) {
+      assertHierarchyDepthForParsing(depth + 1, recordPath, options.hierarchyDepthLabel);
     }
     if (options.identifierProfile) {
       assertDirectoryRecordIdentifierProfileForParsing(record, recordPath, options.identifierProfile);
@@ -2577,9 +2581,9 @@ function assertPrimaryDirectoryRecordIdentifierForParsing(record: DecodedDirecto
   }
 }
 
-function assertPrimaryHierarchyDepthForParsing(depth: number, path: string): void {
+function assertHierarchyDepthForParsing(depth: number, path: string, label: "primary" | "supplementary"): void {
   if (depth > 8) {
-    throw new Error(`primary directory hierarchy depth at ${path} must not exceed 8 levels`);
+    throw new Error(`${label} directory hierarchy depth at ${path} must not exceed 8 levels`);
   }
 }
 
@@ -3905,7 +3909,7 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     if (issue.code === "directory.directory_identifier.length" && message.includes("directory record directory identifier length")) {
       return true;
     }
-    if (issue.code === "directory.hierarchy_depth" && message.includes("primary directory hierarchy depth")) {
+    if (issue.code === "directory.hierarchy_depth" && message.includes("directory hierarchy depth")) {
       return true;
     }
     if (issue.code === "directory.file_path_length" && message.includes("file path length")) {
