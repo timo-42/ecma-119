@@ -1390,6 +1390,122 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("writes structured extended attribute record both-endian fields and reads the image back", () => {
+    const image = baselineImage([{
+      path: "EAR.TXT",
+      data: "structured ear endian\n",
+      extendedAttributeRecord: {
+        ownerIdentification: 7,
+        groupIdentification: 7,
+        recordFormat: 1,
+        recordAttributes: 0,
+        recordLength: 12,
+        applicationUse: new TextEncoder().encode("app"),
+      },
+    }]);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(file).toMatchObject({
+      path: "EAR.TXT",
+      extendedAttributeRecordLength: 1,
+    });
+    expect(file?.extendedAttributeRecordFields).toMatchObject({
+      ownerIdentification: 7,
+      groupIdentification: 7,
+      recordLength: 12,
+    });
+  });
+
+  test.each([
+    { fieldOffset: 0, code: "extended_attribute_record.owner_identification.endian_mismatch", label: "owner identification" },
+    { fieldOffset: 4, code: "extended_attribute_record.group_identification.endian_mismatch", label: "group identification" },
+    { fieldOffset: 80, code: "extended_attribute_record.record_length.endian_mismatch", label: "record length" },
+    { fieldOffset: 246, code: "extended_attribute_record.application_use_length.endian_mismatch", label: "application use length" },
+  ])("reports extended attribute record both-endian mismatches for $label", ({ fieldOffset, code, label }) => {
+    const image = baselineImage([{
+      path: "EAR.TXT",
+      data: "ear endian mismatch\n",
+      extendedAttributeRecord: {
+        ownerIdentification: 7,
+        groupIdentification: 7,
+        recordFormat: 1,
+        recordAttributes: 0,
+        recordLength: 12,
+        applicationUse: new TextEncoder().encode("app"),
+      },
+    }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "EAR.TXT;1");
+    const fileExtent = readBothEndianUint32(image, fileRecordOffset + 2);
+    image[fileExtent * SECTOR_SIZE + fieldOffset + 3] ^= 0xff;
+    const issues = validateIsoImage(image);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          path: "EAR.TXT",
+          message: expect.stringContaining(`extended attribute record ${label} at EAR.TXT must store matching little- and big-endian values`),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "EAR.TXT",
+          message: expect.stringMatching(/both-endian uint16 mismatch/i),
+        }),
+      ]),
+    );
+  });
+
+  test("reports multiple extended attribute record both-endian mismatches without duplicate parse noise", () => {
+    const image = baselineImage([{
+      path: "EAR.TXT",
+      data: "multiple ear endian mismatch\n",
+      extendedAttributeRecord: {
+        ownerIdentification: 7,
+        groupIdentification: 7,
+        recordFormat: 1,
+        recordAttributes: 0,
+        recordLength: 12,
+        applicationUse: new TextEncoder().encode("app"),
+      },
+    }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "EAR.TXT;1");
+    const fileExtent = readBothEndianUint32(image, fileRecordOffset + 2);
+    const earOffset = fileExtent * SECTOR_SIZE;
+    image[earOffset + 0 + 3] ^= 0xff;
+    image[earOffset + 4 + 3] ^= 0xff;
+    const issues = validateIsoImage(image);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.owner_identification.endian_mismatch",
+          path: "EAR.TXT",
+        }),
+        expect.objectContaining({
+          code: "extended_attribute_record.group_identification.endian_mismatch",
+          path: "EAR.TXT",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "EAR.TXT",
+          message: expect.stringMatching(/both-endian uint16 mismatch/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports malformed primary descriptor root extended attribute records", () => {
     const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
       systemIdentifier: "VALIDATION",
