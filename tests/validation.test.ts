@@ -2193,6 +2193,8 @@ describe("validateIsoImage hardening", () => {
 
   test("reports nested directory data lengths that are not logical block multiples", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "nested alignment\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
@@ -2200,6 +2202,7 @@ describe("validateIsoImage hardening", () => {
     writeUint32Both(image, dirRecordOffset + 10, SECTOR_SIZE - 1);
     writeUint32Both(image, dirDirectoryOffset + 10, SECTOR_SIZE - 1);
 
+    expect(() => parseIsoImage(image)).toThrow(/directory data length at DIR must be a positive multiple/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2239,11 +2242,14 @@ describe("validateIsoImage hardening", () => {
 
   test("reports descriptor root directory data lengths that are not logical block multiples", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root alignment\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
     writeUint32Both(image, PVD_OFFSET + 156 + 10, SECTOR_SIZE - 1);
     writeUint32Both(image, rootDirectoryOffset + 10, SECTOR_SIZE - 1);
     writeUint32Both(image, rootDirectoryOffset + image[rootDirectoryOffset]! + 10, SECTOR_SIZE - 1);
 
+    expect(() => parseIsoImage(image)).toThrow(/directory data length at \. must be a positive multiple/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
