@@ -15,6 +15,7 @@ describe("public API surface", () => {
       "decodeExtendedAttributeRecord",
       "decodeFileIdentifier",
       "decodePathTable",
+      "decodeUcs2FileIdentifier",
       "decodeVolumeDate",
       "directoryRecordLength",
       "encodeDirectoryDate",

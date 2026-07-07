@@ -2229,6 +2229,66 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("decodes UCS-2 supplementary directory and file identifiers", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "supplementary ucs2\n" }], {
+      volumeIdentifier: "VALIDATION",
+      supplementaryVolumeDescriptors: [{
+        volumeIdentifier: "SUPP",
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    const rootDirectoryOffset = rootDirectoryExtentAt(image, supplementaryDescriptorOffset) * SECTOR_SIZE;
+    const rootDirectorySize = rootDirectorySizeAt(image, supplementaryDescriptorOffset);
+    const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, rootDirectorySize, "DIR");
+    const dirExtent = readBothEndianUint32(image, dirRecordOffset + 2);
+    const dirDirectoryOffset = dirExtent * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, dirDirectoryOffset, SECTOR_SIZE, "FILE.TXT;1");
+    const ucs2DirectoryIdentifier = ucs2be("Å");
+    const ucs2FileIdentifier = ucs2be("É.T;1");
+
+    rewriteDirectoryRecordIdentifierBytes(image, dirRecordOffset, ucs2DirectoryIdentifier);
+    rewriteDirectoryRecordIdentifierBytes(image, fileRecordOffset, ucs2FileIdentifier);
+
+    const pathTableSize = 20;
+    const littlePathTableOffset = readUint32LE(image, supplementaryDescriptorOffset + 140) * SECTOR_SIZE;
+    const bigPathTableOffset = readUint32BE(image, supplementaryDescriptorOffset + 148) * SECTOR_SIZE;
+    writeUint32Both(image, supplementaryDescriptorOffset + 132, pathTableSize);
+    writePathTableRecord(image, littlePathTableOffset + 10, "little", ucs2DirectoryIdentifier, 1, dirExtent, 0);
+    writePathTableRecord(image, bigPathTableOffset + 10, "big", ucs2DirectoryIdentifier, 1, dirExtent, 0);
+    image.fill(0, littlePathTableOffset + pathTableSize, littlePathTableOffset + 22);
+    image.fill(0, bigPathTableOffset + pathTableSize, bigPathTableOffset + 22);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const supplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("missing supplementary descriptor");
+    }
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+    expect(supplementary.rootDirectoryRecord.children).toHaveLength(1);
+    expect(supplementary.rootDirectoryRecord.children[0]).toMatchObject({
+      path: "Å",
+      identifier: "Å",
+    });
+    const decodedDirectory = supplementary.rootDirectoryRecord.children[0];
+    if (!("children" in decodedDirectory)) {
+      throw new Error("expected decoded supplementary directory");
+    }
+    const decodedFile = decodedDirectory.children[0];
+    if (!decodedFile || "children" in decodedFile) {
+      throw new Error("expected decoded supplementary file");
+    }
+    expect(decodedFile).toMatchObject({
+      path: "Å/É.T",
+      identifier: "É.T;1",
+      size: "supplementary ucs2\n".length,
+    });
+    expect(new TextDecoder("ascii").decode(decodedFile.data)).toBe("supplementary ucs2\n");
+  });
+
   test("rejects supplementary directory record identifiers longer than 31 bytes during parsing", () => {
     const directory = "S".repeat(31);
     const mutatedDirectory = `${directory}S`;
@@ -5762,6 +5822,10 @@ function copyDirectoryRecordIdentifier(image: Uint8Array, sourceOffset: number, 
 
 function rewriteDirectoryRecordIdentifier(image: Uint8Array, offset: number, identifier: string): void {
   const bytes = new TextEncoder().encode(identifier);
+  rewriteDirectoryRecordIdentifierBytes(image, offset, bytes);
+}
+
+function rewriteDirectoryRecordIdentifierBytes(image: Uint8Array, offset: number, bytes: Uint8Array): void {
   const length = directoryRecordLengthForIdentifier(bytes.length);
   image[offset] = length;
   image[offset + 32] = bytes.length;
@@ -5769,6 +5833,16 @@ function rewriteDirectoryRecordIdentifier(image: Uint8Array, offset: number, ide
   if ((33 + bytes.length) % 2 !== 0) {
     image[offset + 33 + bytes.length] = 0;
   }
+}
+
+function ucs2be(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length * 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    bytes[index * 2] = code >>> 8;
+    bytes[index * 2 + 1] = code & 0xff;
+  }
+  return bytes;
 }
 
 function directoryRecordLengthForIdentifier(identifierLength: number): number {

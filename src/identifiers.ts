@@ -163,6 +163,23 @@ export function decodeFileIdentifier(identifier: Uint8Array): string {
   return new TextDecoder("ascii").decode(identifier);
 }
 
+export function decodeUcs2FileIdentifier(identifier: Uint8Array): string {
+  if (identifier.length === 1 && identifier[0] === 0) {
+    return ".";
+  }
+  if (identifier.length === 1 && identifier[0] === 1) {
+    return "..";
+  }
+  if (identifier.byteLength % 2 !== 0) {
+    throw new Error("UCS-2 file identifier byte length must be even");
+  }
+  let value = "";
+  for (let offset = 0; offset < identifier.byteLength; offset += 2) {
+    value += String.fromCharCode((identifier[offset]! << 8) | identifier[offset + 1]!);
+  }
+  return value;
+}
+
 export function stripVersion(identifier: string): string {
   return identifier.replace(/\.?;[0-9]+$/u, "");
 }
