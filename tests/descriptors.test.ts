@@ -1455,6 +1455,13 @@ function makeSupplementaryDescriptor(version: 1 | 2): Uint8Array {
   writeAscii(descriptor, 8, 32, "TEST_SYSTEM");
   writeAscii(descriptor, 40, 32, version === 1 ? "SUPPLEMENTARY" : "ENHANCED");
   descriptor.set(new TextEncoder().encode("%/@"), 88);
+  descriptor.set(encodeDirectoryRecord({
+    extent: 0,
+    dataLength: SECTOR_SIZE,
+    flags: 0x02,
+    identifier: Uint8Array.of(0),
+    date: new Date("2024-01-01T00:00:00Z"),
+  }), 156);
   return descriptor;
 }
 

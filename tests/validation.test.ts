@@ -1541,9 +1541,12 @@ describe("validateIsoImage hardening", () => {
       ...options,
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
     const descriptorOffset = 17 * SECTOR_SIZE;
     image[descriptorOffset + 156] = 0;
 
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`missing directory record at ${path.replace(".", "\\.")}`, "i"));
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
