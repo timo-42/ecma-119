@@ -2060,6 +2060,10 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   if (descriptor.kind !== "primary" && descriptor.kind !== "supplementary" && descriptor.kind !== "enhanced") {
     return descriptor;
   }
+  assertDirectoryDataLengthForParsing(
+    descriptor.rootDirectoryRecord,
+    descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`,
+  );
   if (descriptor.rootDirectoryRecord.size === 0) {
     return descriptor;
   }
@@ -2076,6 +2080,7 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
 
 function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, parent: IsoDirectoryEntry, path: string, includeData: boolean, localVolumeSequenceNumber: number, visited: Set<number>): IsoDirectoryEntry {
   assertSupportedDirectoryEntry(directory, path || ".", localVolumeSequenceNumber);
+  assertDirectoryDataLengthForParsing(directory, path || ".");
   assertDirectoryInBounds(image, directory, path || ".");
   if (visited.has(directory.extent)) {
     throw new Error(`invalid directory cycle detected at ${path || "."}`);
@@ -2185,6 +2190,12 @@ function readDirectoryTree(image: Uint8Array, directory: IsoDirectoryEntry, pare
     }
   }
   return entry;
+}
+
+function assertDirectoryDataLengthForParsing(directory: Pick<IsoDirectoryEntry, "size">, path: string): void {
+  if (directory.size <= 0 || directory.size % SECTOR_SIZE !== 0) {
+    throw new Error(`directory data length at ${path} must be a positive multiple of the logical block size`);
+  }
 }
 
 function assertDotDirectoryRecordForParsing(
