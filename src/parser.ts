@@ -647,11 +647,15 @@ function assertDescriptorPathTableHierarchy(
   }
 
   const mandatory = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.typeLPathTableLocation, "little");
+  const mandatoryBig = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.typeMPathTableLocation, "big");
+  const mirrorIssues = validatePathTableMirror(mandatory, mandatoryBig, codePrefix);
+  if (mirrorIssues.length > 0) {
+    throw new Error(mirrorIssues[0]!.message);
+  }
   const issues = validatePathTableAgainstHierarchy(mandatory, expected, codePrefix, "Type L");
   if (issues.length > 0) {
     throw new Error(issues[0]!.message);
   }
-  const mandatoryBig = decodeDescriptorPathTableForHierarchy(image, descriptor, descriptor.typeMPathTableLocation, "big");
   const bigIssues = validatePathTableAgainstHierarchy(mandatoryBig, expected, codePrefix, "Type M");
   if (bigIssues.length > 0) {
     throw new Error(bigIssues[0]!.message);
@@ -3923,6 +3927,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       (issue.code.startsWith("path_table.") || issue.code.includes("_path_table."))
       && issue.code.includes(".order.")
       && message.includes("path table records must be ordered")
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "path_table.mirror.mismatch" || issue.code.endsWith("_path_table.mirror.mismatch"))
+      && message.includes("Type L and Type M path table")
     ) {
       return true;
     }

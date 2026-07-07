@@ -959,7 +959,9 @@ describe("validateIsoImage hardening", () => {
     const rootPathTableRecordLength = 10;
     writeUint32BE(image, pathTableOffset + rootPathTableRecordLength + 2, 0xffff);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L and Type M path table record 2 do not match/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.mirror.mismatch",
@@ -967,6 +969,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports malformed path table record layout", () => {
@@ -1219,7 +1222,7 @@ describe("validateIsoImage hardening", () => {
     const bigPathTableOffset = readUint32BE(image, PVD_OFFSET + 148) * SECTOR_SIZE;
     writeUint32BE(image, bigPathTableOffset + 10 + 2, 0xffff);
 
-    expect(() => parseIsoImage(image)).toThrow(/Type M path table directory record does not match the directory hierarchy extent fields/i);
+    expect(() => parseIsoImage(image)).toThrow(/Type L and Type M path table record 2 do not match/i);
     const issues = validateIsoImage(image);
     expect(issues).toEqual(
       expect.arrayContaining([
