@@ -2922,26 +2922,30 @@ describe("validateIsoImage hardening", () => {
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
       identifierByte: 1,
+      path: "supplementary:.",
     },
     {
       kind: "enhanced",
       options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
       codePrefix: "enhanced",
       identifierByte: 1,
+      path: "enhanced:.",
     },
     {
       kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
       identifierByte: ".".charCodeAt(0),
+      path: "supplementary:.",
     },
     {
       kind: "enhanced",
       options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
       codePrefix: "enhanced",
       identifierByte: ".".charCodeAt(0),
+      path: "enhanced:.",
     },
-  ])("reports $kind descriptor root directory record identifier byte $identifierByte mismatches", ({ options, codePrefix, identifierByte }) => {
+  ])("reports $kind descriptor root directory record identifier byte $identifierByte mismatches", ({ options, codePrefix, identifierByte, path }) => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary root identifier\n" }], {
       volumeIdentifier: "VALIDATION",
       ...options,
@@ -2954,7 +2958,7 @@ describe("validateIsoImage hardening", () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.root_directory_record.identifier`,
-          path: ".",
+          path,
           message: `${codePrefix} volume descriptor root directory record must use identifier 0`,
         }),
       ]),
