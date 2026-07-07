@@ -710,6 +710,9 @@ function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], descri
     if (index !== 0 && record.identifier.length > directoryIdentifierLengthLimit) {
       throw new Error(`${label} record ${index + 1} directory identifier length must not exceed ${directoryIdentifierLengthLimit} bytes`);
     }
+    if (descriptor.kind === "primary" && index !== 0 && !isSupportedPrimaryDirectoryIdentifier(record.identifier)) {
+      throw new Error(`${label} record ${index + 1} directory identifier contains invalid ECMA-119 primary d-characters`);
+    }
   }
 }
 
@@ -3902,6 +3905,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code.includes("_path_table.") && issue.code.endsWith(".identifier.length") && message.includes("path table record")) {
+      return true;
+    }
+    if (issue.code.startsWith("path_table.") && issue.code.endsWith(".identifier.characters") && message.includes("path table record")) {
       return true;
     }
     if (

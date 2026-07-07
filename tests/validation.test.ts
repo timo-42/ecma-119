@@ -1157,7 +1157,9 @@ describe("validateIsoImage hardening", () => {
     image[littlePathTableOffset + childIdentifierOffset] = "#".charCodeAt(0);
     image[bigPathTableOffset + childIdentifierOffset] = "#".charCodeAt(0);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/primary volume descriptor Type L path table record 2 directory identifier contains invalid ECMA-119 primary d-characters/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.little.identifier.characters",
@@ -1169,6 +1171,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
 
     const tooLong = baselineImage([{ path: "DIR/FILE.TXT", data: "path table length\n" }]);
     appendPrimaryPathTableRecord(tooLong, "D".repeat(32), 1, rootDirectoryExtent(tooLong), 0);
