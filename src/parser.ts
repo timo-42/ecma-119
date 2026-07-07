@@ -30,6 +30,12 @@ type DescriptorCharacterField = {
   code: string;
   label: string;
 };
+type DescriptorZeroRange = {
+  start: number;
+  end: number;
+  code: "reserved" | "unused";
+  label: string;
+};
 
 export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { includeData?: boolean } = {}): IsoImage {
   const image = imageInput instanceof Uint8Array ? imageInput : new Uint8Array(imageInput);
@@ -41,6 +47,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   }
   assertSupportedDescriptorProfile(pvd, "primary volume descriptor");
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
+  assertZeroDescriptorRanges(pvd, primaryVolumeDescriptorZeroRanges());
   assertDescriptorCharacterFields(pvd, primaryVolumeDescriptorCharacterFields());
   assertDescriptorRootDirectoryRecordIdentifier(pvd, "primary");
   validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
@@ -48,16 +55,20 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
     if (descriptor.kind === "boot") {
       assertSupportedBootVolumeDescriptor(descriptor);
     } else if (descriptor.kind === "partition") {
+      assertZeroDescriptorRanges(descriptor, partitionDescriptorZeroRanges());
       assertSupportedPartitionVolumeDescriptor(image, descriptor, pvd);
     } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
+      assertZeroDescriptorRanges(descriptor, secondaryVolumeDescriptorZeroRanges());
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
       assertSupportedSecondaryEscapeSequences(descriptor);
       assertDescriptorCharacterFields(descriptor, commonVolumeDescriptorCharacterFields());
       assertDescriptorRootDirectoryRecordIdentifier(descriptor, descriptor.kind);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
+    } else if (descriptor.kind === "terminator") {
+      assertVolumeDescriptorSetTerminatorReservedBytes(descriptor);
     }
   }
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSetSize);
@@ -695,13 +706,7 @@ function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], descri
 
 function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  issues.push(...validateZeroDescriptorRanges(pvd, "pvd", [
-    { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
-    { start: 72, end: 80, code: "unused", label: "unused field at BP 73 to 80" },
-    { start: 88, end: 120, code: "unused", label: "unused field at BP 89 to 120" },
-    { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
-    { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
-  ]));
+  issues.push(...validateZeroDescriptorRanges(pvd, "pvd", primaryVolumeDescriptorZeroRanges()));
   issues.push(...validateDescriptorCharacterFields(pvd, "pvd", primaryVolumeDescriptorCharacterFields()));
   issues.push(...validateDescriptorRootFileReferences(image, pvd, "pvd"));
   issues.push(...validateDescriptorRootDirectoryRecordIdentifier(pvd, "pvd", "primary"));
@@ -1850,11 +1855,7 @@ function validateSupplementaryLikeVolumeDescriptor(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const label = descriptor.kind === "supplementary" ? "supplementary" : "enhanced";
-  issues.push(...validateZeroDescriptorRanges(descriptor, label, [
-    { start: 72, end: 80, code: "unused", label: "unused field at BP 73 to 80" },
-    { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
-    { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
-  ]));
+  issues.push(...validateZeroDescriptorRanges(descriptor, label, secondaryVolumeDescriptorZeroRanges()));
   if ((descriptor.volumeFlags & 0xfe) !== 0) {
     issues.push({ code: `${label}.volume_flags`, message: `${label} volume descriptor flags bits 1 through 7 must be zero` });
   }
@@ -1896,9 +1897,7 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
     if (descriptor.kind !== "partition") {
       continue;
     }
-    issues.push(...validateZeroDescriptorRanges(descriptor, "partition", [
-      { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
-    ]));
+    issues.push(...validateZeroDescriptorRanges(descriptor, "partition", partitionDescriptorZeroRanges()));
     issues.push(...validateDescriptorCharacterFields(descriptor, "partition", [
       { start: 8, length: 32, kind: "a", code: "system_identifier.characters", label: "system identifier" },
       { start: 40, length: 32, kind: "d", code: "volume_partition_identifier.characters", label: "volume partition identifier" },
@@ -1926,7 +1925,7 @@ function validateVolumePartitionDescriptors(image: Uint8Array, descriptors: Volu
 function validateZeroDescriptorRanges(
   descriptor: VolumeDescriptor,
   codePrefix: string,
-  ranges: { start: number; end: number; code: "reserved" | "unused"; label: string }[],
+  ranges: DescriptorZeroRange[],
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   for (const range of ranges) {
@@ -1938,6 +1937,56 @@ function validateZeroDescriptorRanges(
     }
   }
   return issues;
+}
+
+function assertZeroDescriptorRanges(descriptor: VolumeDescriptor, ranges: DescriptorZeroRange[]): void {
+  const issues = validateZeroDescriptorRanges(descriptor, descriptorZeroRangeCodePrefix(descriptor), ranges);
+  if (issues.length > 0) {
+    throw new Error(issues[0]!.message);
+  }
+}
+
+function descriptorZeroRangeCodePrefix(descriptor: VolumeDescriptor): string {
+  switch (descriptor.kind) {
+    case "primary":
+      return "pvd";
+    case "supplementary":
+    case "enhanced":
+    case "partition":
+      return descriptor.kind;
+    default:
+      return "descriptor";
+  }
+}
+
+function primaryVolumeDescriptorZeroRanges(): DescriptorZeroRange[] {
+  return [
+    { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
+    { start: 72, end: 80, code: "unused", label: "unused field at BP 73 to 80" },
+    { start: 88, end: 120, code: "unused", label: "unused field at BP 89 to 120" },
+    { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
+    { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
+  ];
+}
+
+function secondaryVolumeDescriptorZeroRanges(): DescriptorZeroRange[] {
+  return [
+    { start: 72, end: 80, code: "unused", label: "unused field at BP 73 to 80" },
+    { start: 882, end: 883, code: "unused", label: "unused field at BP 883" },
+    { start: 1395, end: SECTOR_SIZE, code: "reserved", label: "reserved field at BP 1396 to 2048" },
+  ];
+}
+
+function partitionDescriptorZeroRanges(): DescriptorZeroRange[] {
+  return [
+    { start: 7, end: 8, code: "unused", label: "unused field at BP 8" },
+  ];
+}
+
+function assertVolumeDescriptorSetTerminatorReservedBytes(descriptor: VolumeDescriptor): void {
+  if (descriptor.kind === "terminator" && !allZero(descriptor.raw.subarray(7))) {
+    throw new Error(`volume descriptor set terminator reserved bytes must be zero at sector ${descriptor.sector}`);
+  }
 }
 
 function validateDescriptorCharacterFields(
@@ -3688,6 +3737,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     }
     if (
       (issue.code === "pvd.volume_space_size" || issue.code === "pvd.volume_space_size.lower_bound")
+      && issue.message === message
+    ) {
+      return true;
+    }
+    if (
+      (issue.code.endsWith(".unused") || issue.code.endsWith(".reserved") || issue.code === "descriptor.terminator_reserved")
       && issue.message === message
     ) {
       return true;

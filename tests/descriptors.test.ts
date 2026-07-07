@@ -972,7 +972,10 @@ describe("volume descriptor sequence parsing", () => {
 
     for (const mutation of mutations) {
       const mutated = imageWithDescriptorByte(image, mutation.sector, mutation.offset, 0xff);
-      expect(validateIsoImage(mutated)).toEqual(
+      expect(parseVolumeDescriptors(mutated).some((descriptor) => descriptor.sector === mutation.sector)).toBe(true);
+      expect(() => parseIsoImage(mutated)).toThrow(new RegExp(`${mutation.message.source}.*must be zero|must be zero.*${mutation.message.source}`, "i"));
+      const issues = validateIsoImage(mutated);
+      expect(issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             code: mutation.code,
@@ -980,6 +983,7 @@ describe("volume descriptor sequence parsing", () => {
           }),
         ]),
       );
+      expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
     }
   });
 
@@ -1362,6 +1366,8 @@ describe("volume descriptor sequence parsing", () => {
     });
     const mutated = imageWithDescriptorByte(image, 18, 7, 0xff);
 
+    expect(parseVolumeDescriptors(mutated).filter((descriptor) => descriptor.kind === "terminator")).toHaveLength(2);
+    expect(() => parseIsoImage(mutated)).toThrow(/volume descriptor set terminator reserved bytes must be zero at sector 18/i);
     expect(validateIsoImage(mutated)).toEqual([
       expect.objectContaining({
         code: "descriptor.terminator_reserved",
