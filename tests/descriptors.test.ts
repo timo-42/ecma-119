@@ -731,6 +731,42 @@ describe("volume descriptor sequence parsing", () => {
     );
   });
 
+  test("writes enhanced optional path table copies", () => {
+    const image = createIsoImage([{
+      path: "DIR/README.TXT",
+      data: "enhanced optional path tables\n",
+    }], {
+      volumeIdentifier: "PRIMARY",
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+        optionalPathTables: true,
+      }],
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const enhanced = parsed.descriptors.find((descriptor) => descriptor.kind === "enhanced");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    if (enhanced?.kind !== "enhanced") {
+      throw new Error("expected enhanced descriptor");
+    }
+    expect(enhanced.optionalTypeLPathTableLocation).not.toBe(0);
+    expect(enhanced.optionalTypeMPathTableLocation).not.toBe(0);
+    expect(enhanced.optionalTypeLPathTableLocation).not.toBe(enhanced.typeLPathTableLocation);
+    expect(enhanced.optionalTypeMPathTableLocation).not.toBe(enhanced.typeMPathTableLocation);
+    expect(pathTableBytes(image, enhanced.optionalTypeLPathTableLocation, enhanced.pathTableSize)).toEqual(
+      pathTableBytes(image, enhanced.typeLPathTableLocation, enhanced.pathTableSize),
+    );
+    expect(pathTableBytes(image, enhanced.optionalTypeMPathTableLocation, enhanced.pathTableSize)).toEqual(
+      pathTableBytes(image, enhanced.typeMPathTableLocation, enhanced.pathTableSize),
+    );
+    const enhancedDir = enhanced.rootDirectoryRecord.children.find((node) => "children" in node && node.path === "DIR");
+    expect(enhancedDir && "children" in enhancedDir ? enhancedDir.children.find((node) => node.path === "DIR/README.TXT") : undefined).toMatchObject({
+      path: "DIR/README.TXT",
+      size: "enhanced optional path tables\n".length,
+    });
+  });
+
   test("writes enhanced volume descriptors with separate path tables and directory hierarchy", () => {
     const image = createIsoImage([
       {
