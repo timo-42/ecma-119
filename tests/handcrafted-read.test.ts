@@ -145,8 +145,8 @@ describe("handcrafted ISO reader fixture", () => {
     const partition = parsed.descriptors.find((descriptor) => descriptor.kind === "partition");
 
     expect(validateIsoImage(image)).toEqual([]);
-    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "partition", "terminator"]);
-    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "partition", "terminator"]);
+    expect(descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "partition", "boot", "terminator"]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "partition", "boot", "terminator"]);
     expect(descriptors.find((descriptor) => descriptor.kind === "boot")).toMatchObject({
       kind: "boot",
       bootSystemIdentifier: "HAND BOOT SYSTEM",
@@ -285,8 +285,8 @@ function handcraftedIso(options: { fileFlags?: number; fileIdentifier?: string; 
 function handcraftedBootPartitionIso(): Uint8Array {
   const image = new Uint8Array(25 * SECTOR_SIZE);
   const pvd = sector(image, 16);
-  const boot = sector(image, 17);
-  const partition = sector(image, 18);
+  const partition = sector(image, 17);
+  const boot = sector(image, 18);
   const terminator = sector(image, 19);
   const pathTableL = sector(image, 20);
   const pathTableM = sector(image, 21);

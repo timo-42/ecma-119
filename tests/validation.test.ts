@@ -107,9 +107,9 @@ describe("validateIsoImage hardening", () => {
   });
 
   test.each([
-    { sector: 17, code: "boot.version", message: "boot record descriptor at sector 17 must use version 1" },
-    { sector: 18, code: "secondary.version", message: "supplementary or enhanced volume descriptor at sector 18 must use version 1 or 2" },
-    { sector: 20, code: "partition.version", message: "volume partition descriptor at sector 20 must use version 1" },
+    { sector: 20, code: "boot.version", message: "boot record descriptor at sector 20 must use version 1" },
+    { sector: 17, code: "secondary.version", message: "supplementary or enhanced volume descriptor at sector 17 must use version 1 or 2" },
+    { sector: 19, code: "partition.version", message: "volume partition descriptor at sector 19 must use version 1" },
     { sector: 21, code: "terminator.version", message: "volume descriptor set terminator descriptor at sector 21 must use version 1" },
   ])("reports invalid descriptor version bytes for $code", ({ sector, code, message }) => {
     const image = createIsoImage([{ path: "README.TXT", data: "descriptor versions\n" }], {
@@ -179,21 +179,61 @@ describe("validateIsoImage hardening", () => {
 
   test("accepts multiple boot record descriptors", () => {
     const image = createIsoImage([{ path: "README.TXT", data: "duplicate boot descriptor\n" }], {
-      bootRecord: {
-        bootSystemIdentifier: "BOOT",
-      },
+      bootRecords: [
+        { bootSystemIdentifier: "BOOT 1" },
+        { bootSystemIdentifier: "BOOT 2" },
+      ],
       volumePartition: {
         volumePartitionIdentifier: "PARTITION",
         data: "partition\n",
       },
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
-    const bootDescriptorOffset = 17 * SECTOR_SIZE;
-    const partitionDescriptorOffset = 18 * SECTOR_SIZE;
-    image.set(image.subarray(bootDescriptorOffset, bootDescriptorOffset + SECTOR_SIZE), partitionDescriptorOffset);
 
-    expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "boot", "boot", "terminator"]);
+    expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "partition", "boot", "boot", "terminator"]);
     expect(validateIsoImage(image)).toEqual([]);
+  });
+
+  test("reports descriptors that appear outside ECMA-119 sequence order", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "descriptor order\n" }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      volumePartition: {
+        volumePartitionIdentifier: "PARTITION",
+        data: "partition\n",
+      },
+      bootRecord: { bootSystemIdentifier: "BOOT" },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryDescriptor = image.slice(17 * SECTOR_SIZE, 18 * SECTOR_SIZE);
+    const bootDescriptor = image.slice(20 * SECTOR_SIZE, 21 * SECTOR_SIZE);
+    image.set(bootDescriptor, 17 * SECTOR_SIZE);
+    image.set(supplementaryDescriptor, 20 * SECTOR_SIZE);
+
+    expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual([
+      "primary",
+      "boot",
+      "enhanced",
+      "partition",
+      "supplementary",
+      "terminator",
+    ]);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "descriptor.sequence.order",
+          message: "volume descriptor enhanced at sector 18 appears outside ECMA-119 descriptor sequence order",
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence.order",
+          message: "volume descriptor partition at sector 19 appears outside ECMA-119 descriptor sequence order",
+        }),
+        expect.objectContaining({
+          code: "descriptor.sequence.order",
+          message: "volume descriptor supplementary at sector 20 appears outside ECMA-119 descriptor sequence order",
+        }),
+      ]),
+    );
   });
 
   test("accepts the deepest valid primary directory hierarchy with write-read validation", () => {

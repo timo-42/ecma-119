@@ -203,10 +203,10 @@ maybeDescribe("generated ECMA-119 fixture image", () => {
 
     expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual([
       "primary",
-      "boot",
       "supplementary",
       "enhanced",
       "partition",
+      "boot",
       "terminator",
     ]);
     expect(parsed.descriptors.find((descriptor) => descriptor.kind === "boot")).toMatchObject({

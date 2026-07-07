@@ -252,9 +252,6 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     optionalTypeMPathTableSector,
     root,
   }), sectorOffset(descriptorSector++));
-  for (const bootRecord of bootRecords) {
-    image.set(encodeBootVolumeDescriptor(bootRecord), sectorOffset(descriptorSector++));
-  }
   for (const descriptor of secondaryDescriptors) {
     image.set(encodeSupplementaryLikeVolumeDescriptor({
       options: descriptor.options,
@@ -274,6 +271,9 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   }
   for (const partition of preparedPartitions) {
     image.set(encodeVolumePartitionDescriptor(partition.options, partition.location, partition.size), sectorOffset(descriptorSector++));
+  }
+  for (const bootRecord of bootRecords) {
+    image.set(encodeBootVolumeDescriptor(bootRecord), sectorOffset(descriptorSector++));
   }
   for (let index = 0; index < terminatorCount; index += 1) {
     image.set(encodeTerminator(), sectorOffset(descriptorSector++));
