@@ -1564,6 +1564,31 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports invalid primary descriptor root extended attribute bounds before parsing", () => {
+    const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    }));
+    image[PVD_OFFSET + 156 + 1] = 255;
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.bounds",
+          path: ".",
+          message: "extended attribute record for . has invalid extent bounds",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports malformed primary descriptor root extended attribute record dates", () => {
     const image = withDescriptorRootExtendedAttributeRecord(baselineImage(), PVD_OFFSET, encodeExtendedAttributeRecord({
       systemIdentifier: "VALIDATION",
