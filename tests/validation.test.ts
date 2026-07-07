@@ -1163,13 +1163,33 @@ describe("validateIsoImage hardening", () => {
 
   test("reports unsupported primary file structure versions", () => {
     const image = baselineImage([{ path: "README.TXT", data: "file structure version\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
     image[PVD_OFFSET + 881] = 2;
 
+    expect(() => parseIsoImage(image)).toThrow(/primary volume descriptor file structure version must be 1/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.file_structure_version",
           message: "primary volume descriptor file structure version must be 1",
+        }),
+      ]),
+    );
+  });
+
+  test("rejects unsupported primary logical block sizes during parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "logical block size\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    writeUint16Both(image, PVD_OFFSET + 128, 1024);
+
+    expect(() => parseIsoImage(image)).toThrow(/primary volume descriptor logical block size must be 2048/i);
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.logical_block_size",
+          message: "logical block size must be 2048 for the supported profile",
         }),
       ]),
     );
@@ -3290,8 +3310,11 @@ describe("validateIsoImage hardening", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     const supplementaryDescriptorOffset = 17 * SECTOR_SIZE;
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     image[supplementaryDescriptorOffset + 881] = 2;
 
+    expect(() => parseIsoImage(image)).toThrow(/supplementary volume descriptor file structure version must be 1/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3311,13 +3334,54 @@ describe("validateIsoImage hardening", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
     image[enhancedDescriptorOffset + 881] = 1;
 
+    expect(() => parseIsoImage(image)).toThrow(/enhanced volume descriptor file structure version must be 2/i);
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "enhanced.file_structure_version",
           message: "enhanced volume descriptor file structure version must be 2",
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "supplementary.logical_block_size",
+      parseMessage: "supplementary volume descriptor logical block size must be 2048 for the supported profile",
+      message: "supplementary logical block size must be 2048 for the supported profile",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "enhanced.logical_block_size",
+      parseMessage: "enhanced volume descriptor logical block size must be 2048 for the supported profile",
+      message: "enhanced logical block size must be 2048 for the supported profile",
+    },
+  ])("rejects unsupported $kind logical block sizes during parsing", ({ options, descriptorOffset, code, parseMessage, message }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "secondary logical block size\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    writeUint16Both(image, descriptorOffset + 128, 1024);
+
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(parseMessage, "i"));
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          message,
         }),
       ]),
     );
