@@ -3,6 +3,8 @@ import {
   dateTimeToDate,
   dateToVolumeDescriptorDateTime,
   normalizeACharacters,
+  isAString,
+  readAscii,
   readAsciiTrimmed,
   readUint16BE,
   readUint16Both,
@@ -90,9 +92,13 @@ export function decodeExtendedAttributeRecord(bytes: Uint8Array): ExtendedAttrib
   const recordAttributes = bytes[79]!;
   const recordLength = readUint16Both(bytes, 80);
   const version = bytes[180]!;
+  const systemIdentifier = readAsciiTrimmed(bytes, 84, 32);
   validateOwnerGroup(ownerIdentification, groupIdentification);
   validatePermissions(permissions);
   validateDecodedRecordLayout(recordFormat, recordAttributes, recordLength);
+  if (!isAString(readAscii(bytes, 84, 32))) {
+    throw new Error("extended attribute record system identifier contains invalid ECMA-119 a-characters");
+  }
   if (version !== 1) {
     throw new Error("extended attribute record version must be 1");
   }
@@ -112,7 +118,7 @@ export function decodeExtendedAttributeRecord(bytes: Uint8Array): ExtendedAttrib
     recordFormat,
     recordAttributes,
     recordLength,
-    systemIdentifier: readAsciiTrimmed(bytes, 84, 32),
+    systemIdentifier,
     systemUse: bytes.slice(116, 180),
     version,
     applicationUse: bytes.slice(250, 250 + applicationUseLength),

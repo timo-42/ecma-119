@@ -2506,8 +2506,10 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     const extendedAttributeRecord = readExtendedAttributeRecord(image, record);
     const bothEndianIssues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, recordPath);
     const dateIssues = validateExtendedAttributeRecordDateFields(extendedAttributeRecord, recordPath);
+    const characterIssues = validateExtendedAttributeRecordCharacterFields(extendedAttributeRecord, recordPath);
     issues.push(...bothEndianIssues);
     issues.push(...dateIssues);
+    issues.push(...characterIssues);
     try {
       const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
       if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
@@ -2538,7 +2540,7 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues], extendedAttributeRecord)) {
+      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues, ...characterIssues], extendedAttributeRecord)) {
         issues.push({
           code: "extended_attribute_record.parse",
           message,
@@ -2561,6 +2563,7 @@ function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry:
   const extendedAttributeRecord = image.slice(entry.extent * SECTOR_SIZE, (entry.extent + entry.extendedAttributeRecordLength) * SECTOR_SIZE);
   const issues = validateExtendedAttributeRecordBothEndianFields(extendedAttributeRecord, path);
   issues.push(...validateExtendedAttributeRecordDateFields(extendedAttributeRecord, path));
+  issues.push(...validateExtendedAttributeRecordCharacterFields(extendedAttributeRecord, path));
   try {
     const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
     const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
@@ -2646,6 +2649,21 @@ function validateExtendedAttributeRecordDateFields(bytes: Uint8Array, path: stri
   );
 }
 
+function validateExtendedAttributeRecordCharacterFields(bytes: Uint8Array, path: string): ValidationIssue[] {
+  if (bytes.byteLength < 116) {
+    return [];
+  }
+  const systemIdentifier = readAscii(bytes, 84, 32);
+  if (isAString(systemIdentifier)) {
+    return [];
+  }
+  return [{
+    code: "extended_attribute_record.system_identifier.characters",
+    message: `extended attribute record system identifier at ${path} contains invalid ECMA-119 a-characters`,
+    path,
+  }];
+}
+
 function validateExtendedAttributeRecordDateField(bytes: Uint8Array, offset: number, code: string, label: string, path: string, required: boolean): ValidationIssue[] {
   const text = readAscii(bytes, offset, 16);
   if (/^0{16}$/u.test(text)) {
@@ -2675,10 +2693,12 @@ function validateExtendedAttributeRecordDateField(bytes: Uint8Array, offset: num
 function shouldSuppressExtendedAttributeRecordParse(message: string, issues: ValidationIssue[], bytes: Uint8Array): boolean {
   const hasBothEndianIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith(".endian_mismatch"));
   const hasDateIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith("_date"));
+  const hasCharacterIssue = issues.some((issue) => issue.code === "extended_attribute_record.system_identifier.characters");
   return (hasBothEndianIssue
     && message.includes("both-endian")
     && bytes[180] === 1)
-    || (hasDateIssue && isExtendedAttributeRecordDateParseMessage(message));
+    || (hasDateIssue && isExtendedAttributeRecordDateParseMessage(message))
+    || (hasCharacterIssue && message.includes("system identifier contains invalid ECMA-119 a-characters"));
 }
 
 function isExtendedAttributeRecordDateParseMessage(message: string): boolean {
