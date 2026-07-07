@@ -2064,9 +2064,6 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
     descriptor.rootDirectoryRecord,
     descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`,
   );
-  if (descriptor.rootDirectoryRecord.size === 0) {
-    return descriptor;
-  }
   assertSupportedDirectoryEntry(
     descriptor.rootDirectoryRecord,
     descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`,
