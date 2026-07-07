@@ -12,6 +12,8 @@ export type NormalizedDirectoryPath = {
   parts: string[];
 };
 
+const MAX_FILE_PATH_LENGTH = 255;
+
 export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel = 1, version = 1): NormalizedPath {
   const cleaned = path.replace(/\\/gu, "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) {
@@ -36,6 +38,10 @@ export function normalizeFilePath(path: string, identifierLevel: IdentifierLevel
 
   const fileName = rawParts.at(-1)!;
   const isoIdentifier = identifierLevel === 1 ? toLevelOneFileIdentifier(fileName, version) : toLevelTwoFileIdentifier(fileName, version);
+  const filePathLength = directoryParts.reduce((sum, part) => sum + part.length, 0) + directoryParts.length + isoIdentifier.length;
+  if (filePathLength > MAX_FILE_PATH_LENGTH) {
+    throw new Error(`ECMA-119 file path length must not exceed ${MAX_FILE_PATH_LENGTH} bytes: ${path}`);
+  }
   return { parts: [...directoryParts, isoIdentifier], fileName, isoIdentifier };
 }
 

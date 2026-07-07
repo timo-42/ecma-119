@@ -530,6 +530,29 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports file paths whose ECMA-119 path length exceeds 255 bytes", () => {
+    const directories = [...Array.from({ length: 6 }, () => "D".repeat(31)), "E".repeat(30)];
+    const validFileIdentifier = `${"F".repeat(26)}.TXT;1`;
+    const invalidFileIdentifier = `${"F".repeat(27)}.TXT;1`;
+    const image = createIsoImage([{ path: [...directories, `${"F".repeat(26)}.TXT`].join("/"), data: "path length mutation\n" }], {
+      identifierLevel: 2,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const fileRecordOffset = findDirectoryRecordOffsetByPath(image, [...directories, validFileIdentifier]);
+    image[fileRecordOffset + 32] = invalidFileIdentifier.length;
+    image.set(new TextEncoder().encode(invalidFileIdentifier), fileRecordOffset + 33);
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_path_length",
+          path: [...directories, `${"F".repeat(27)}.TXT`].join("/"),
+          message: expect.stringMatching(/file path length.*255 bytes/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports directory records that are out of ECMA-119 file identifier order", () => {
     const image = baselineImage([
       { path: "A.TXT", data: "a\n" },
