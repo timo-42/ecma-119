@@ -1766,7 +1766,7 @@ function validateDirectoryHierarchy(
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
     }
     if (recordIsDirectory) {
-      issues.push(...validateDirectoryRecordSectionLayout(record, recordPath || path, { allowMultiExtent: true }));
+      issues.push(...validateDirectoryRecordSectionLayout(record, recordPath || path, { allowInterleaving: true, allowMultiExtent: true }));
     } else if (record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
       issues.push({
         code: "directory.interleaving_invalid",
@@ -2562,7 +2562,7 @@ function readDirectoryTree(
 
     const index = recordIndex++;
     if (index < 2) {
-      assertSupportedDirectoryRecord(record, path || ".", volumeSetSize);
+      assertSupportedDirectoryRecord(record, path || ".", volumeSetSize, { allowInterleaving: true, allowMultiExtent: true });
       assertDotDirectoryRecordForParsing(record, index, directory, parent, path || ".");
       continue;
     }
@@ -2594,7 +2594,7 @@ function readDirectoryTree(
       recordIndex += chain.records.length - 1;
       const firstRecord = chain.records[0]!;
       for (const section of chain.records) {
-        assertSupportedDirectoryRecord(section, recordPath || ".", volumeSetSize, { allowMultiExtent: true });
+        assertSupportedDirectoryRecord(section, recordPath || ".", volumeSetSize, { allowInterleaving: true, allowMultiExtent: true });
       }
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromSectionChain(chain.records, childPath, decodeIdentifier);
@@ -3749,8 +3749,12 @@ function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string, v
   if (entry.fileUnitSize === 0 && entry.interleaveGapSize !== 0) {
     throw new Error(`directory record at ${path} has invalid interleaved file section fields`);
   }
-  if (entry.fileUnitSize !== 0) {
-    throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
+  if (
+    entry.fileUnitSize !== 0
+    && entry.extendedAttributeRecordLength !== 0
+    && entry.extendedAttributeRecordLength !== entry.fileUnitSize
+  ) {
+    throw new Error(`interleaved directory record at ${path} has extended attribute record length ${entry.extendedAttributeRecordLength}; expected file unit size ${entry.fileUnitSize}`);
   }
   if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0 && !entry.sections) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
@@ -3961,13 +3965,13 @@ function validateVolumeSetConsistency(
 }
 
 function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: string): ValidationIssue[] {
-  return validateDirectoryRecordSectionLayout(entry, path);
+  return validateDirectoryRecordSectionLayout(entry, path, { allowInterleaving: true });
 }
 
 function validateDirectoryRecordSectionLayout(
   entry: Pick<IsoDirectoryEntry | DecodedDirectoryRecord, "fileUnitSize" | "interleaveGapSize" | "flags">,
   path: string,
-  options: { allowMultiExtent?: boolean } = {},
+  options: { allowInterleaving?: boolean; allowMultiExtent?: boolean } = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (entry.fileUnitSize === 0 && entry.interleaveGapSize === 0 && (entry.flags & FILE_FLAG_MULTI_EXTENT) === 0) {
@@ -3979,7 +3983,7 @@ function validateDirectoryRecordSectionLayout(
       message: `directory record at ${path} has invalid interleaved file section fields`,
       path,
     });
-  } else if (entry.fileUnitSize !== 0) {
+  } else if (entry.fileUnitSize !== 0 && !options.allowInterleaving) {
     issues.push({
       code: "directory.interleaving_unsupported",
       message: `directory record at ${path} uses unsupported interleaved file section fields`,
