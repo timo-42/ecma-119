@@ -85,6 +85,8 @@ type PreparedSecondaryDescriptor = {
   pathTableBytesL: Uint8Array;
   pathTableBytesM: Uint8Array;
   pathTableSectors: number;
+  pathDirectories: DirectoryNode[];
+  pathTableNumbers: Map<DirectoryNode, number>;
   typeLPathTableSector: number;
   typeMPathTableSector: number;
   optionalTypeLPathTableSector: number;
@@ -176,7 +178,7 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     pathRecords[index]!.extent = directory.extent;
   }
   for (const descriptor of secondaryDescriptors) {
-    for (const [index, directory] of directories.entries()) {
+    for (const [index, directory] of descriptor.pathDirectories.entries()) {
       descriptor.pathRecords[index]!.extent = descriptor.directoryExtents.get(directory)!;
     }
     descriptor.pathTableBytesL = encodePathTable(descriptor.pathRecords, "little");
@@ -648,7 +650,7 @@ function directoryDataLength(directory: DirectoryNode, layout?: PreparedSecondar
   let offset = 0;
   offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory, Uint8Array.of(0)));
   offset = nextRecordOffset(offset, directoryRecordLengthForDirectory(directory.parent ?? directory, Uint8Array.of(1)));
-  for (const child of [...directory.children.values()].sort(compareNode)) {
+  for (const child of sortedDirectoryChildren(directory, layout)) {
     const recordLength = directoryRecordLengthForNode(child, identifierBytesForNode(child, layout));
     const recordCount = child.kind === "file" ? child.sections.length : 1;
     for (let index = 0; index < recordCount; index += 1) {
@@ -663,7 +665,7 @@ function encodeDirectoryExtent(directory: DirectoryNode, volumeSequenceNumber: n
   let offset = 0;
   offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory, Uint8Array.of(0), volumeSequenceNumber, layout));
   offset = appendRecord(bytes, offset, directoryRecordForDirectory(directory.parent ?? directory, Uint8Array.of(1), volumeSequenceNumber, layout));
-  for (const child of [...directory.children.values()].sort(compareNode)) {
+  for (const child of sortedDirectoryChildren(directory, layout)) {
     const identifier = identifierBytesForNode(child, layout);
     let record: Uint8Array;
     if (child.kind === "directory") {
@@ -745,6 +747,10 @@ function directoryDataLengthFor(directory: DirectoryNode, layout?: PreparedSecon
 
 function identifierBytesForNode(node: DirectoryNode | FileNode, layout?: PreparedSecondaryDescriptor): Uint8Array {
   return identifierBytesForIsoIdentifier(node.isoIdentifier, layout?.identifierEncoding ?? "primary");
+}
+
+function sortedDirectoryChildren(directory: DirectoryNode, layout?: PreparedSecondaryDescriptor): Array<DirectoryNode | FileNode> {
+  return [...directory.children.values()].sort((left, right) => compareNodeForLayout(left, right, layout));
 }
 
 function appendRecord(bytes: Uint8Array, offset: number, record: Uint8Array): number {
@@ -942,11 +948,12 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
     const optionalPathTables = normalizeOptionalPathTables(descriptor.options.optionalPathTables ?? options.optionalPathTables);
     const identifierEncoding = normalizeSecondaryIdentifierEncoding(descriptor.kind, descriptor.options);
     validateSecondaryIdentifierLengths(descriptor.kind, directories, identifierEncoding);
-    const pathRecords: PathTableRecord[] = directories.map((directory) => ({
+    const { pathDirectories, pathTableNumbers } = collectSecondaryPathTableDirectories(directories[0]!, identifierEncoding);
+    const pathRecords: PathTableRecord[] = pathDirectories.map((directory) => ({
       identifier: directory.parent ? identifierBytesForPathTable(directory, identifierEncoding) : Uint8Array.of(0),
       extent: 0,
       extendedAttributeRecordLength: directory.extendedAttributeRecordLength,
-      parentDirectoryNumber: directory.parent ? directory.parent.pathTableIndex : 1,
+      parentDirectoryNumber: directory.parent ? pathTableNumbers.get(directory.parent)! : 1,
     }));
     const pathTableBytesL = encodePathTable(pathRecords, "little");
     const pathTableBytesM = encodePathTable(pathRecords, "big");
@@ -959,6 +966,8 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
       pathTableBytesL,
       pathTableBytesM,
       pathTableSectors: sectorsForBytes(pathTableBytesL.length),
+      pathDirectories,
+      pathTableNumbers,
       typeLPathTableSector: 0,
       typeMPathTableSector: 0,
       optionalTypeLPathTableSector: 0,
@@ -985,6 +994,21 @@ function normalizeSecondaryIdentifierEncoding(kind: PreparedSecondaryDescriptor[
 
 function identifierBytesForPathTable(directory: DirectoryNode, encoding: SecondaryIdentifierEncoding): Uint8Array {
   return identifierBytesForIsoIdentifier(directory.isoIdentifier, encoding);
+}
+
+function collectSecondaryPathTableDirectories(root: DirectoryNode, encoding: SecondaryIdentifierEncoding): { pathDirectories: DirectoryNode[]; pathTableNumbers: Map<DirectoryNode, number> } {
+  const pathDirectories: DirectoryNode[] = [root];
+  const pathTableNumbers = new Map<DirectoryNode, number>([[root, 1]]);
+  for (let index = 0; index < pathDirectories.length; index += 1) {
+    const directory = pathDirectories[index]!;
+    for (const child of [...directory.children.values()]
+      .filter((node): node is DirectoryNode => node.kind === "directory")
+      .sort((left, right) => comparePathTableDirectoryNodeForEncoding(left, right, encoding))) {
+      pathTableNumbers.set(child, pathDirectories.length + 1);
+      pathDirectories.push(child);
+    }
+  }
+  return { pathDirectories, pathTableNumbers };
 }
 
 function identifierBytesForIsoIdentifier(identifier: string, encoding: SecondaryIdentifierEncoding): Uint8Array {
@@ -1309,8 +1333,24 @@ function compareNode(left: DirectoryNode | FileNode, right: DirectoryNode | File
   );
 }
 
+function compareNodeForLayout(left: DirectoryNode | FileNode, right: DirectoryNode | FileNode, layout?: PreparedSecondaryDescriptor): number {
+  if (!layout) {
+    return compareNode(left, right);
+  }
+  return compareDirectoryRecordOrder(
+    identifierBytesForNode(left, layout),
+    left.flags,
+    identifierBytesForNode(right, layout),
+    right.flags,
+  );
+}
+
 function comparePathTableDirectoryNode(left: DirectoryNode, right: DirectoryNode): number {
   return comparePathTableIdentifierBytes(asciiBytes(left.isoIdentifier), asciiBytes(right.isoIdentifier));
+}
+
+function comparePathTableDirectoryNodeForEncoding(left: DirectoryNode, right: DirectoryNode, encoding: SecondaryIdentifierEncoding): number {
+  return comparePathTableIdentifierBytes(identifierBytesForPathTable(left, encoding), identifierBytesForPathTable(right, encoding));
 }
 
 function compareDirectoryRecordOrder(leftIdentifier: Uint8Array, leftFlags: number, rightIdentifier: Uint8Array, rightFlags: number): number {

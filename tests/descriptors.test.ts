@@ -683,6 +683,33 @@ describe("volume descriptor sequence parsing", () => {
     })).toThrow(/supplementary directory identifier ABCDEFGHIJKLMNOP encodes to 32 bytes; maximum is 31/i);
   });
 
+  test("orders supplementary UCS-2BE path tables and directory records by emitted identifier bytes", () => {
+    const image = createIsoImage([
+      { path: "A/ONE.TXT", data: "one\n" },
+      { path: "AA/TWO.TXT", data: "two\n" },
+    ], {
+      supplementaryVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        identifierEncoding: "ucs2-be",
+      }],
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const supplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("expected supplementary descriptor");
+    }
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(supplementary.pathTables?.typeL.map((record) => record.identifier)).toEqual([
+      Uint8Array.of(0),
+      ucs2be("AA"),
+      ucs2be("A"),
+    ]);
+    expect(supplementary.rootDirectoryRecord.children.map((node) => node.identifier)).toEqual(["AA", "A"]);
+    expect(parsed.files.map((file) => file.path)).toEqual(["A/ONE.TXT", "AA/TWO.TXT"]);
+  });
+
   test("allows enhanced UCS-2BE directory identifiers within the enhanced profile limit", () => {
     const directory = "D".repeat(31);
     const image = createIsoImage([{
