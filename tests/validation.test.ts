@@ -2089,12 +2089,19 @@ describe("validateIsoImage hardening", () => {
     const image = baselineImage();
     image[PVD_OFFSET + 156 + 33] = 1;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/primary volume descriptor root directory record must use identifier 0/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "pvd.root_directory_record.identifier",
           message: expect.stringMatching(/root directory record/i),
         }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
       ]),
     );
   });
@@ -4278,13 +4285,20 @@ describe("validateIsoImage hardening", () => {
     const descriptorOffset = 17 * SECTOR_SIZE;
     image[descriptorOffset + 156 + 33] = identifierByte;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(`${codePrefix} volume descriptor root directory record must use identifier 0`, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: `${codePrefix}.root_directory_record.identifier`,
           path,
           message: `${codePrefix} volume descriptor root directory record must use identifier 0`,
         }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "image.parse" }),
       ]),
     );
   });
