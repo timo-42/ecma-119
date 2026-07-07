@@ -1,4 +1,5 @@
-import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readDirectoryDateTime, readUint16Both, readUint32Both, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
+import { decodeVolumeDate, isAString, isDString, readAscii, readAsciiTrimmed, readDirectoryDateTime, readUint16Both, readUint32Both, readUint32LE, readVolumeDescriptorDateTime, sectorOffset } from "./binary.js";
+import { EL_TORITO_BOOT_SYSTEM_IDENTIFIER, parseElToritoBootCatalog, validateElToritoBootCatalog } from "./boot-catalog.js";
 import { bytesFromImageInput } from "./byte-input.js";
 import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_MULTI_EXTENT, type DecodedDirectoryRecord } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
@@ -72,6 +73,7 @@ export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?
   for (const descriptor of descriptors) {
     if (descriptor.kind === "boot") {
       assertSupportedBootVolumeDescriptor(descriptor);
+      assertSupportedBootCatalog(image, descriptor);
     } else if (descriptor.kind === "partition") {
       assertZeroDescriptorRanges(descriptor, partitionDescriptorZeroRanges());
       assertSupportedPartitionVolumeDescriptor(image, descriptor, pvd);
@@ -93,7 +95,8 @@ export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?
   }
   assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSetSize);
   const includeData = options.includeData ?? true;
-  const populatedDescriptors = descriptors.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
+  const descriptorsWithBootCatalogs = descriptors.map((descriptor) => populateBootCatalog(image, descriptor));
+  const populatedDescriptors = descriptorsWithBootCatalogs.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
   for (const descriptor of populatedDescriptors) {
     if (descriptor.kind === "primary") {
       assertDescriptorPathTableHierarchy(image, descriptor, "path_table");
@@ -189,7 +192,7 @@ export function validateIsoImage(imageInput: IsoImageInput): ValidationIssue[] {
     issues.push(...validateDescriptorSequenceProfile(descriptors));
     for (const descriptor of descriptors) {
       if (descriptor.kind === "boot") {
-        issues.push(...validateBootVolumeDescriptor(descriptor));
+        issues.push(...validateBootVolumeDescriptor(image, descriptor));
       }
     }
     const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
@@ -824,11 +827,15 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   return issues;
 }
 
-function validateBootVolumeDescriptor(descriptor: BootVolumeDescriptor): ValidationIssue[] {
-  return validateDescriptorCharacterFields(descriptor, "boot", [
+function validateBootVolumeDescriptor(image: Uint8Array, descriptor: BootVolumeDescriptor): ValidationIssue[] {
+  const issues = validateDescriptorCharacterFields(descriptor, "boot", [
     { start: 7, length: 32, kind: "a", code: "system_identifier.characters", label: "boot system identifier" },
     { start: 39, length: 32, kind: "a", code: "identifier.characters", label: "boot identifier" },
   ]);
+  if (isElToritoBootDescriptor(descriptor)) {
+    issues.push(...validateElToritoBootCatalog(image, bootCatalogLocation(descriptor)));
+  }
+  return issues;
 }
 
 function validateRawDescriptorDateFields(image: Uint8Array): ValidationIssue[] {
@@ -2468,6 +2475,16 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
   };
 }
 
+function populateBootCatalog(image: Uint8Array, descriptor: VolumeDescriptor): VolumeDescriptor {
+  if (descriptor.kind !== "boot" || !isElToritoBootDescriptor(descriptor)) {
+    return descriptor;
+  }
+  return {
+    ...descriptor,
+    bootCatalog: parseElToritoBootCatalog(image, bootCatalogLocation(descriptor)),
+  };
+}
+
 function directoryTreeOptionsForDescriptor(descriptor: PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): DirectoryTreeReadOptions {
   return {
     decodeIdentifier: identifierDecoderForDescriptor(descriptor),
@@ -3811,6 +3828,21 @@ function assertSupportedBootVolumeDescriptor(descriptor: BootVolumeDescriptor): 
   if (!isAString(readAscii(descriptor.raw, 39, 32))) {
     throw new Error("boot identifier contains invalid ECMA-119 a-characters");
   }
+}
+
+function assertSupportedBootCatalog(image: Uint8Array, descriptor: BootVolumeDescriptor): void {
+  if (!isElToritoBootDescriptor(descriptor)) {
+    return;
+  }
+  parseElToritoBootCatalog(image, bootCatalogLocation(descriptor));
+}
+
+function isElToritoBootDescriptor(descriptor: BootVolumeDescriptor): boolean {
+  return descriptor.bootSystemIdentifier === EL_TORITO_BOOT_SYSTEM_IDENTIFIER;
+}
+
+function bootCatalogLocation(descriptor: BootVolumeDescriptor): number {
+  return readUint32LE(descriptor.raw, 71);
 }
 
 function assertSupportedPartitionVolumeDescriptor(image: Uint8Array, descriptor: VolumePartitionDescriptor, pvd: PrimaryVolumeDescriptor): void {

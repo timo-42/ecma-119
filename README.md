@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 4th edition / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees and optional UCS-2BE identifier authoring, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, writer-generated single-section non-interleaved directories, read-side compatible multi-extent/interleaved directory records, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
+This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees and optional UCS-2BE identifier authoring, structured boot and partition descriptors with opaque use/payload bytes, El Torito boot catalog metadata parsing, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, writer-generated single-section non-interleaved directories, read-side compatible multi-extent/interleaved directory records, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
 
 The implementation targets ECMA-119 4th edition, June 2019. Tests exercise generated write-then-read ISO images, handcrafted in-memory reader images that are not produced by the writer, and checked-in ISO byte fixtures produced by an independent external tool.
 
@@ -68,7 +68,7 @@ Primary descriptor file-reference fields remain constrained to ECMA-119 Level 1 
 
 `systemArea` may be supplied as up to 32,768 bytes copied into logical sectors 0 through 15. Shorter values are zero-padded by the writer, omitted values leave the System Area all zeroes, and `parseIsoImage(image).systemArea` exposes the 16-sector byte range.
 
-Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes, but executable boot semantics are left to consuming systems.
+Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additional Boot Record descriptors. The package preserves Boot Record descriptor fields and opaque Boot System Use bytes. When a parsed Boot Record uses the El Torito boot system identifier, `parseIsoImage` reads one boot catalog sector and exposes validation/default-entry metadata under descriptor `bootCatalog`; `parseVolumeDescriptors` remains descriptor-only. Boot image loading and executable boot semantics are left to consuming systems.
 
 Use `volumePartition` for a single raw Volume Partition Descriptor or `volumePartitions` for additional partition descriptors. Partition payloads are written as opaque sector-aligned byte ranges and parsed back as descriptor `data` when payload loading is enabled.
 
@@ -100,6 +100,7 @@ Implemented support is intentionally explicit:
 - primary volume descriptor and one or more descriptor set terminators
 - volume descriptor metadata and file identifier fields
 - optional boot record volume descriptors
+- read-side El Torito boot catalog validation and initial/default entry metadata
 - opaque System Area authoring and parsing
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
@@ -133,7 +134,7 @@ Executable boot semantics, partition filesystem semantics, and Rock Ridge/Joliet
 
 Known gaps in the current package:
 
-- boot catalog parsing, boot image loading, and executable boot behavior beyond preserving Boot Record descriptor bytes
+- boot image loading and executable boot behavior beyond exposing El Torito boot catalog metadata
 - filesystem parsing inside Volume Partition Descriptor payloads; partition data is exposed as opaque bytes
 - Rock Ridge metadata semantics, including POSIX names, permissions, links, and relocation records
 - full Joliet extension semantics; supplementary/enhanced descriptors can author and parse UCS-2-style identifiers, but Joliet-specific behavior is not implemented as a separate profile

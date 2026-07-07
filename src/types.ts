@@ -217,6 +217,69 @@ export type BootVolumeDescriptor = BaseVolumeDescriptor & {
   bootSystemIdentifier: string;
   bootIdentifier: string;
   bootSystemUse: Uint8Array;
+  bootCatalog?: IsoBootCatalog;
+};
+
+export type IsoBootCatalog = {
+  location: number;
+  raw: Uint8Array;
+  validationEntry: IsoBootCatalogValidationEntry;
+  initialEntry: IsoBootCatalogBootEntry;
+  entries: IsoBootCatalogEntry[];
+};
+
+export type IsoBootCatalogEntry =
+  | IsoBootCatalogValidationEntry
+  | IsoBootCatalogBootEntry
+  | IsoBootCatalogSectionHeaderEntry
+  | IsoBootCatalogExtensionEntry
+  | IsoBootCatalogUnknownEntry;
+
+export type IsoBootCatalogValidationEntry = {
+  kind: "validation";
+  headerId: number;
+  platformId: number;
+  manufacturer: string;
+  checksum: number;
+  key55: number;
+  keyAA: number;
+  raw: Uint8Array;
+};
+
+export type IsoBootCatalogBootEntry = {
+  kind: "initial" | "section";
+  bootIndicator: number;
+  bootable: boolean;
+  mediaType: number;
+  loadSegment: number;
+  systemType: number;
+  sectorCount: number;
+  loadRba: number;
+  raw: Uint8Array;
+};
+
+export type IsoBootCatalogSectionHeaderEntry = {
+  kind: "section-header";
+  headerIndicator: number;
+  moreHeadersFollow: boolean;
+  platformId: number;
+  sectionEntryCount: number;
+  identifier: string;
+  raw: Uint8Array;
+};
+
+export type IsoBootCatalogExtensionEntry = {
+  kind: "extension";
+  extensionIndicator: number;
+  extensionFollows: boolean;
+  selectionCriteria: Uint8Array;
+  raw: Uint8Array;
+};
+
+export type IsoBootCatalogUnknownEntry = {
+  kind: "unknown";
+  indicator: number;
+  raw: Uint8Array;
 };
 
 export type IsoPathTables = {
