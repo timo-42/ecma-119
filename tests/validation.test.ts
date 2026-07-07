@@ -2234,8 +2234,15 @@ describe("validateIsoImage hardening", () => {
     const rootDirectoryOffset = supplementary.rootDirectoryRecord.extent * SECTOR_SIZE;
     const dirRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "DIR");
     image[dirRecordOffset + 33] = "#".charCodeAt(0);
+    image[supplementary.typeLPathTableLocation * SECTOR_SIZE + 18] = "#".charCodeAt(0);
+    image[supplementary.typeMPathTableLocation * SECTOR_SIZE + 18] = "#".charCodeAt(0);
 
     const issues = validateIsoImage(image);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const parsedSupplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    const supplementaryChild = parsedSupplementary?.kind === "supplementary"
+      ? parsedSupplementary.rootDirectoryRecord.children[0]
+      : undefined;
 
     expect(issues).not.toEqual(
       expect.arrayContaining([
@@ -2244,6 +2251,11 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(parsed.files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+    expect(supplementaryChild).toMatchObject({
+      path: "#IR",
+      identifier: "#IR",
+    });
   });
 
   test("decodes UCS-2 supplementary directory and file identifiers", () => {
