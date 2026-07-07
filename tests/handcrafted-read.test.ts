@@ -150,6 +150,50 @@ describe("handcrafted ISO reader fixture", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("hello nested\n");
   });
 
+  test("reads unresolved external-volume records from an image not produced by createIsoImage", () => {
+    const systemUse = Uint8Array.of(0x45, 0x58, 0x54, 0x01);
+    const image = handcraftedExternalVolumeIso(systemUse);
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files.find((entry) => entry.identifier === "EXT.TXT;1");
+    const directory = parsed.root.children.find((entry) => "children" in entry && entry.identifier === "EXTDIR");
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor).toMatchObject({
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      pathTableSize: 24,
+    });
+    expect(file).toMatchObject({
+      path: "EXT.TXT",
+      identifier: "EXT.TXT;1",
+      extent: 99,
+      size: 12,
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(file?.data).toBeUndefined();
+    expect(file?.systemUse).toEqual(systemUse);
+    expect(directory).toMatchObject({
+      path: "EXTDIR",
+      identifier: "EXTDIR",
+      extent: 98,
+      size: SECTOR_SIZE,
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+    expect(parsed.primaryVolumeDescriptor.pathTables).toMatchObject({
+      typeL: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), extent: 20, parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: asciiBytes("EXTDIR"), extent: 98, parentDirectoryNumber: 1 }),
+      ],
+      typeM: [
+        expect.objectContaining({ identifier: Uint8Array.of(0), extent: 20, parentDirectoryNumber: 1 }),
+        expect.objectContaining({ identifier: asciiBytes("EXTDIR"), extent: 98, parentDirectoryNumber: 1 }),
+      ],
+    });
+  });
+
   test("reads boot and partition descriptors from an image not produced by createIsoImage", () => {
     const image = handcraftedBootPartitionIso();
     const descriptors = parseVolumeDescriptors(image);
@@ -538,6 +582,63 @@ function handcraftedNestedIso(): Uint8Array {
   return image;
 }
 
+function handcraftedExternalVolumeIso(systemUse: Uint8Array): Uint8Array {
+  const image = new Uint8Array(22 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const pathTableL = sector(image, 18);
+  const pathTableM = sector(image, 19);
+  const rootDirectory = sector(image, 20);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+
+  writePathTableRoot(pathTableL, "little", 20);
+  writePathTableDirectory(pathTableL, 10, "little", asciiBytes("EXTDIR"), 98, 1);
+  writePathTableRoot(pathTableM, "big", 20);
+  writePathTableDirectory(pathTableM, 10, "big", asciiBytes("EXTDIR"), 98, 1);
+
+  const self = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber: 2 });
+  const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: 2 });
+  const externalFile = directoryRecord({
+    extent: 99,
+    size: 12,
+    flags: 0,
+    identifier: asciiBytes("EXT.TXT;1"),
+    date,
+    volumeSequenceNumber: 1,
+    systemUse,
+  });
+  const externalDirectory = directoryRecord({
+    extent: 98,
+    size: SECTOR_SIZE,
+    flags: 0x02,
+    identifier: asciiBytes("EXTDIR"),
+    date,
+    volumeSequenceNumber: 1,
+  });
+  rootDirectory.set(self, 0);
+  rootDirectory.set(parent, self.byteLength);
+  rootDirectory.set(externalFile, self.byteLength + parent.byteLength);
+  rootDirectory.set(externalDirectory, self.byteLength + parent.byteLength + externalFile.byteLength);
+
+  writePrimaryDescriptor(pvd, {
+    volumeIdentifier: "EXTERNAL",
+    rootDirectoryRecord: self,
+    pathTableSize: 24,
+    typeLPathTableLocation: 18,
+    typeMPathTableLocation: 19,
+    volumeSpaceSize: 22,
+    volumeSetSize: 2,
+    volumeSequenceNumber: 2,
+    date,
+  });
+
+  const terminator = sector(image, 17);
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
 function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enhanced"; descriptorVersion: 1 | 2; fileStructureVersion: 1 | 2; volumeIdentifier: string }): Uint8Array {
   const image = new Uint8Array(34 * SECTOR_SIZE);
   const pvd = sector(image, 16);
@@ -645,6 +746,8 @@ function writePrimaryDescriptor(
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
     volumeSpaceSize: number;
+    volumeSetSize?: number;
+    volumeSequenceNumber?: number;
     date: Date;
   },
 ): void {
@@ -654,8 +757,8 @@ function writePrimaryDescriptor(
   writeAscii(bytes, 8, 32, "HANDMADE_SYSTEM", 0x20);
   writeAscii(bytes, 40, 32, input.volumeIdentifier, 0x20);
   writeBoth32(bytes, 80, input.volumeSpaceSize);
-  writeBoth16(bytes, 120, 1);
-  writeBoth16(bytes, 124, 1);
+  writeBoth16(bytes, 120, input.volumeSetSize ?? 1);
+  writeBoth16(bytes, 124, input.volumeSequenceNumber ?? 1);
   writeBoth16(bytes, 128, SECTOR_SIZE);
   writeBoth32(bytes, 132, input.pathTableSize);
   writeUint32LE(bytes, 140, input.typeLPathTableLocation);
@@ -742,9 +845,12 @@ function directoryRecord(input: {
   date: Date;
   fileUnitSize?: number;
   interleaveGapSize?: number;
+  volumeSequenceNumber?: number;
+  systemUse?: Uint8Array;
 }): Uint8Array {
   const baseLength = 33 + input.identifier.byteLength;
-  const length = baseLength + (baseLength % 2 === 0 ? 0 : 1);
+  const systemUse = input.systemUse ?? new Uint8Array();
+  const length = baseLength + (baseLength % 2 === 0 ? 0 : 1) + systemUse.byteLength;
   const bytes = new Uint8Array(length);
   bytes[0] = length;
   writeBoth32(bytes, 2, input.extent);
@@ -753,9 +859,10 @@ function directoryRecord(input: {
   bytes[25] = input.flags;
   bytes[26] = input.fileUnitSize ?? 0;
   bytes[27] = input.interleaveGapSize ?? 0;
-  writeBoth16(bytes, 28, 1);
+  writeBoth16(bytes, 28, input.volumeSequenceNumber ?? 1);
   bytes[32] = input.identifier.byteLength;
   bytes.set(input.identifier, 33);
+  bytes.set(systemUse, baseLength + (baseLength % 2 === 0 ? 0 : 1));
   return bytes;
 }
 

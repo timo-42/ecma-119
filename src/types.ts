@@ -159,6 +159,7 @@ export type IsoFileEntry = {
   fileUnitSize: number;
   interleaveGapSize: number;
   volumeSequenceNumber: number;
+  external?: boolean;
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordFields?: ExtendedAttributeRecord;
   data?: Uint8Array;
@@ -174,6 +175,7 @@ export type IsoFileSection = {
   fileUnitSize: number;
   interleaveGapSize: number;
   volumeSequenceNumber: number;
+  external?: boolean;
 };
 
 export type IsoDirectoryEntry = {
@@ -187,6 +189,7 @@ export type IsoDirectoryEntry = {
   fileUnitSize: number;
   interleaveGapSize: number;
   volumeSequenceNumber: number;
+  external?: boolean;
   children: IsoNode[];
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordFields?: ExtendedAttributeRecord;

@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets single-volume ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents including read-side multi-extent file sections, path tables, Level 1 primary identifier authoring by default, and optional Level 2 primary identifiers.
+This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents including read-side multi-extent file sections, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, and unresolved read-side metadata for external records within a volume set.
 
 ## Install
 
@@ -64,7 +64,7 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 
 `terminatorCount` defaults to 1 and may be set from 1 through 255 to emit one or more Volume Descriptor Set Terminators.
 
-`volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number.
+`volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number. When parsing, directory and file records whose volume sequence number is within the descriptor volume set but differs from the local volume are returned as unresolved external entries with `external: true`; their metadata is preserved, but file payloads and external directory children are not loaded from the local image.
 
 File input `version` defaults to 1 and may be set from 1 through 32767 to write a non-default ECMA-119 file version number. The parser preserves the full identifier, such as `README.TXT;2`, while `path` omits the version suffix.
 
@@ -92,6 +92,7 @@ Implemented support is intentionally explicit:
 - Type L and Type M path tables
 - optional Type L and Type M path table copies when requested by the writer
 - local volume set member metadata and same-volume directory records
+- read-side unresolved external-volume directory and file record metadata within the declared volume set
 - validation that descriptor file-reference fields resolve to files described in the root directory
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - file version number authoring from 1 through 32767
@@ -110,4 +111,4 @@ Implemented support is intentionally explicit:
 - read-side coalescing and low-level encoding of compatible multi-extent directory records
 - byte-level parser for generated and compatible ECMA-119 images
 
-Executable boot semantics, partition filesystem semantics, cross-volume file resolution across multiple images, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, and raw volume partition descriptors/payloads are supported as descriptor/data structures only.
+Executable boot semantics, partition filesystem semantics, cross-volume payload resolution across multiple images, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, raw volume partition descriptors/payloads, and external-volume records are supported as descriptor/data structures only.
