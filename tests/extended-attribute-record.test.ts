@@ -63,6 +63,15 @@ describe("extended attribute records", () => {
     expect(decoded.escapeSequences).toEqual(escapeSequences);
   });
 
+  test("rejects invalid extended attribute record system identifier characters", () => {
+    const bytes = encodeExtendedAttributeRecord({
+      systemIdentifier: "VALIDATION",
+    });
+    bytes[84] = "a".charCodeAt(0);
+
+    expect(() => decodeExtendedAttributeRecord(bytes)).toThrow(/system identifier contains invalid ECMA-119 a-characters/i);
+  });
+
   test("writes structured extended attribute records and parses fields back from the ISO", () => {
     const data = asciiBytes("structured ear data\n");
     const createdAt = new Date(Date.UTC(2024, 4, 6, 7, 8, 9, 100));
