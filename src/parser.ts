@@ -157,6 +157,10 @@ function assertSupportedDescriptorSequenceProfile(descriptors: VolumeDescriptor[
   if (unknown) {
     throw new Error(`volume descriptor type ${unknown.type} at sector ${unknown.sector} is outside the supported profile`);
   }
+  const orderIssue = validateDescriptorSequenceOrder(descriptors)[0];
+  if (orderIssue) {
+    throw new Error(orderIssue.message);
+  }
 }
 
 function validateDescriptorSequenceOrder(descriptors: VolumeDescriptor[]): ValidationIssue[] {
@@ -3570,6 +3574,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       (issue.code === "descriptor.primary_duplicate" || issue.code === "descriptor.unknown")
       && issue.message === message
     ) {
+      return true;
+    }
+    if (issue.code === "descriptor.sequence.order" && issue.message === message) {
       return true;
     }
     if (

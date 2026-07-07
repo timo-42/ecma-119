@@ -236,7 +236,9 @@ describe("validateIsoImage hardening", () => {
       "supplementary",
       "terminator",
     ]);
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/volume descriptor enhanced at sector 18 appears outside ECMA-119 descriptor sequence order/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "descriptor.sequence.order",
@@ -249,6 +251,13 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "descriptor.sequence.order",
           message: "volume descriptor supplementary at sector 20 appears outside ECMA-119 descriptor sequence order",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
         }),
       ]),
     );
