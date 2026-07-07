@@ -1058,14 +1058,18 @@ describe("volume descriptor sequence parsing", () => {
       { sector: 16, offset: 702, code: "pvd.copyright_file_identifier.characters", message: /copyright file identifier/i },
       { sector: 16, offset: 739, code: "pvd.abstract_file_identifier.characters", message: /abstract file identifier/i },
       { sector: 16, offset: 776, code: "pvd.bibliographic_file_identifier.characters", message: /bibliographic file identifier/i },
-      { sector: 18, offset: 7, code: "boot.system_identifier.characters", message: /boot system identifier/i },
-      { sector: 18, offset: 39, code: "boot.identifier.characters", message: /boot identifier/i },
-      { sector: 17, offset: 8, code: "partition.system_identifier.characters", message: /system identifier/i },
-      { sector: 17, offset: 40, code: "partition.volume_partition_identifier.characters", message: /volume partition identifier/i },
+      { sector: 18, offset: 7, code: "boot.system_identifier.characters", message: /boot system identifier/i, descriptorKind: "boot", parseMessage: /boot system identifier contains invalid ECMA-119 a-characters/i },
+      { sector: 18, offset: 39, code: "boot.identifier.characters", message: /boot identifier/i, descriptorKind: "boot", parseMessage: /boot identifier contains invalid ECMA-119 a-characters/i },
+      { sector: 17, offset: 8, code: "partition.system_identifier.characters", message: /system identifier/i, descriptorKind: "partition", parseMessage: /volume partition descriptor system identifier contains invalid ECMA-119 a-characters/i },
+      { sector: 17, offset: 40, code: "partition.volume_partition_identifier.characters", message: /volume partition identifier/i, descriptorKind: "partition", parseMessage: /volume partition descriptor volume partition identifier contains invalid ECMA-119 d-characters/i },
     ];
 
     for (const mutation of mutations) {
       const mutated = imageWithDescriptorByte(image, mutation.sector, mutation.offset, 0x23);
+      if (mutation.parseMessage) {
+        expect(parseVolumeDescriptors(mutated).some((descriptor) => descriptor.kind === mutation.descriptorKind)).toBe(true);
+        expect(() => parseIsoImage(mutated)).toThrow(mutation.parseMessage);
+      }
       expect(validateIsoImage(mutated)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
