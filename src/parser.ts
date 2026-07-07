@@ -28,10 +28,12 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   if (!pvd) {
     throw new Error("missing primary volume descriptor");
   }
+  assertSupportedDescriptorProfile(pvd, "primary volume descriptor");
   assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
   validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
   for (const descriptor of descriptors) {
     if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+      assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
     }
   }
@@ -2889,6 +2891,16 @@ function assertVolumeDescriptorMetadata(descriptor: PathTableValidationInput, la
   }
   if (descriptor.volumeSequenceNumber > descriptor.volumeSetSize) {
     throw new Error(`${label} volume sequence number must be less than or equal to volume set size`);
+  }
+}
+
+function assertSupportedDescriptorProfile(descriptor: PathTableValidationInput, label: string): void {
+  if (descriptor.logicalBlockSize !== SECTOR_SIZE) {
+    throw new Error(`${label} logical block size must be 2048 for the supported profile`);
+  }
+  const expectedFileStructureVersion = descriptor.kind === "enhanced" ? 2 : 1;
+  if (descriptor.fileStructureVersion !== expectedFileStructureVersion) {
+    throw new Error(`${label} file structure version must be ${expectedFileStructureVersion}`);
   }
 }
 
