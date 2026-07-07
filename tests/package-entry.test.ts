@@ -157,4 +157,12 @@ describe("package entry", () => {
       expect(readFileSync(declaration, "utf8")).not.toMatch(/\bBuffer\b/u);
     }
   }, 20_000);
+
+  test("built package root exposes documented TypeScript types", () => {
+    buildPackage();
+    execFileSync("npx", ["tsc", "-p", "tests/type-fixtures/tsconfig.json"], {
+      cwd: root,
+      stdio: "pipe",
+    });
+  }, 20_000);
 });
