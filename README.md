@@ -2,7 +2,7 @@
 
 TypeScript utilities for reading and writing ECMA-119 / ISO 9660 CD-ROM volume images.
 
-This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, optional raw boot and partition descriptors, non-interleaved file extents including read-side multi-extent file sections, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, and unresolved read-side metadata for external records within a volume set.
+This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, single-section non-interleaved directories, and unresolved read-side metadata for external records within a volume set.
 
 ## Install
 
