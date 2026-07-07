@@ -1436,7 +1436,14 @@ function expectedPathTableRecords(image: Uint8Array, root: IsoDirectoryEntry): C
       ) {
         continue;
       }
-      const child = directoryEntryFromRecord(record, "", []);
+      const child = (record.flags & FILE_FLAG_MULTI_EXTENT) !== 0
+        ? (() => {
+            const chain = readDirectorySectionChain(directoryBytes, offset, record, "");
+            offset = chain.nextOffset;
+            recordIndex += chain.records.length - 1;
+            return directoryEntryFromSectionChain(chain.records, "");
+          })()
+        : directoryEntryFromRecord(record, "", []);
       childDirectories.push({ directory: child, identifier: record.identifier });
     }
     childDirectories.sort((left, right) => comparePathTableIdentifierBytes(left.identifier, right.identifier));
@@ -1759,7 +1766,7 @@ function validateDirectoryHierarchy(
       issues.push(...validatePrimaryDirectoryRecordIdentifier(record, recordPath || "."));
     }
     if (recordIsDirectory) {
-      issues.push(...validateDirectoryRecordSectionLayout(record, recordPath || path));
+      issues.push(...validateDirectoryRecordSectionLayout(record, recordPath || path, { allowMultiExtent: true }));
     } else if (record.fileUnitSize === 0 && record.interleaveGapSize !== 0) {
       issues.push({
         code: "directory.interleaving_invalid",
@@ -1793,12 +1800,31 @@ function validateDirectoryHierarchy(
       || !recordIsDirectory
       || isMultiExtentContinuationRecord
       || record.volumeSequenceNumber !== localVolumeSequenceNumber
-      || (record.flags & FILE_FLAG_MULTI_EXTENT) !== 0
     ) {
       continue;
     }
     const childPath = recordPath || ".";
-    const childDirectory = directoryEntryFromRecord(record, childPath, []);
+    let childDirectory: IsoDirectoryEntry;
+    if ((record.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+      try {
+        const chain = readDirectorySectionChain(directoryBytes, offset, record, childPath);
+        childDirectory = directoryEntryFromSectionChain(chain.records, childPath, decodeFileIdentifier);
+        offset = chain.nextOffset;
+        recordIndex += chain.records.length - 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        issues.push({
+          code: message.includes("missing its final directory section")
+            ? "directory.multi_extent_final_missing"
+            : "directory.multi_extent_sequence",
+          message,
+          path: childPath,
+        });
+        continue;
+      }
+    } else {
+      childDirectory = directoryEntryFromRecord(record, childPath, []);
+    }
     issues.push(...validateDirectoryHierarchy(image, childDirectory, directory, childPath, localVolumeSequenceNumber, volumeSetSize, new Set(visited), {
       depth: depth + 1,
       filePathLengthPrefix: filePathLengthPrefix + record.identifier.length + 1,
@@ -2563,19 +2589,25 @@ function readDirectoryTree(
     }
 
     if (isDirectory) {
-      assertSupportedDirectoryRecord(record, recordPath || ".", volumeSetSize);
+      const chain = readDirectorySectionChain(bytes, offset, record, recordPath);
+      offset = chain.nextOffset;
+      recordIndex += chain.records.length - 1;
+      const firstRecord = chain.records[0]!;
+      for (const section of chain.records) {
+        assertSupportedDirectoryRecord(section, recordPath || ".", volumeSetSize, { allowMultiExtent: true });
+      }
       const childPath = joinPath(path, identifier);
-      const child = directoryEntryFromRecord(record, childPath, [], decodeIdentifier);
-      if (record.volumeSequenceNumber !== localVolumeSequenceNumber) {
+      const child = directoryEntryFromSectionChain(chain.records, childPath, decodeIdentifier);
+      if (firstRecord.volumeSequenceNumber !== localVolumeSequenceNumber) {
         children.push(markExternalDirectory(child));
         continue;
       }
-      assertFileSectionInBounds(image, record, recordPath);
-      if (record.extendedAttributeRecordLength > 0) {
-        child.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
+      assertDirectoryInBounds(image, child, recordPath);
+      if (firstRecord.extendedAttributeRecordLength > 0) {
+        child.extendedAttributeRecord = readExtendedAttributeRecord(image, firstRecord);
         const fields = decodeOptionalExtendedAttributeRecord(child.extendedAttributeRecord);
         if (fields) {
-          assertExtendedAttributeRecordFileFlagsMatch(record, fields, recordPath);
+          assertExtendedAttributeRecordFileFlagsMatch(firstRecord, fields, recordPath);
           child.extendedAttributeRecordFields = fields;
         }
       }
@@ -2825,6 +2857,37 @@ function readFileSectionChain(
   return { records, nextOffset };
 }
 
+function readDirectorySectionChain(
+  directoryBytes: Uint8Array,
+  offset: number,
+  firstRecord: DecodedDirectoryRecord,
+  path: string,
+): { records: DecodedDirectoryRecord[]; nextOffset: number } {
+  const records = [firstRecord];
+  let nextOffset = offset;
+  let previous = firstRecord;
+
+  while ((previous.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+    nextOffset = nextDirectoryRecordOffset(directoryBytes, nextOffset);
+    if (nextOffset >= directoryBytes.byteLength) {
+      throw new Error(`multi-extent directory record at ${path || "."} is missing its final directory section`);
+    }
+    const length = directoryBytes[nextOffset]!;
+    if ((nextOffset % SECTOR_SIZE) + length > SECTOR_SIZE) {
+      throw new Error(`directory record crosses a logical sector boundary at ${path || "."}`);
+    }
+    const next = decodeDirectoryRecord(directoryBytes, nextOffset, directoryBytes.byteLength);
+    if (!isMultiExtentContinuation(previous, next)) {
+      throw new Error(`multi-extent directory record at ${path || "."} is not followed by a matching directory section`);
+    }
+    records.push(next);
+    nextOffset += next.length;
+    previous = next;
+  }
+
+  return { records, nextOffset };
+}
+
 function nextDirectoryRecordOffset(directoryBytes: Uint8Array, offset: number): number {
   let nextOffset = offset;
   while (nextOffset < directoryBytes.byteLength && directoryBytes[nextOffset] === 0) {
@@ -2834,8 +2897,7 @@ function nextDirectoryRecordOffset(directoryBytes: Uint8Array, offset: number): 
 }
 
 function isMultiExtentContinuation(previous: DecodedDirectoryRecord, current: DecodedDirectoryRecord): boolean {
-  return (previous.flags & FILE_FLAG_DIRECTORY) === 0
-    && (current.flags & FILE_FLAG_DIRECTORY) === 0
+  return (previous.flags & FILE_FLAG_DIRECTORY) === (current.flags & FILE_FLAG_DIRECTORY)
     && bytesEqual(previous.identifier, current.identifier)
     && (previous.flags & ~FILE_FLAG_MULTI_EXTENT) === (current.flags & ~FILE_FLAG_MULTI_EXTENT)
     && previous.fileUnitSize === current.fileUnitSize
@@ -2863,6 +2925,17 @@ function fileEntryFromSectionChain(records: DecodedDirectoryRecord[], path: stri
     file.sections = sections;
   }
   return file;
+}
+
+function directoryEntryFromSectionChain(records: DecodedDirectoryRecord[], path: string, decodeIdentifier: IdentifierDecoder = decodeFileIdentifier): IsoDirectoryEntry {
+  const first = records[0]!;
+  const sections = records.map(fileSectionFromRecord);
+  const directory = directoryEntryFromRecord(first, path, [], decodeIdentifier);
+  directory.size = sections.reduce((sum, section) => sum + section.size, 0);
+  if (records.length > 1) {
+    directory.sections = sections;
+  }
+  return directory;
 }
 
 function markExternalDirectory(directory: IsoDirectoryEntry): IsoDirectoryEntry {
@@ -3679,7 +3752,7 @@ function assertSupportedDirectoryEntry(entry: IsoDirectoryEntry, path: string, v
   if (entry.fileUnitSize !== 0) {
     throw new Error(`directory record at ${path} uses unsupported interleaved file section fields`);
   }
-  if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+  if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0 && !entry.sections) {
     throw new Error(`directory record at ${path} uses unsupported multi-extent file sections`);
   }
   assertSupportedVolumeSequence(entry.volumeSequenceNumber, path, volumeSetSize);
@@ -3894,6 +3967,7 @@ function validateDirectoryEntryInterleaving(entry: IsoDirectoryEntry, path: stri
 function validateDirectoryRecordSectionLayout(
   entry: Pick<IsoDirectoryEntry | DecodedDirectoryRecord, "fileUnitSize" | "interleaveGapSize" | "flags">,
   path: string,
+  options: { allowMultiExtent?: boolean } = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (entry.fileUnitSize === 0 && entry.interleaveGapSize === 0 && (entry.flags & FILE_FLAG_MULTI_EXTENT) === 0) {
@@ -3912,7 +3986,7 @@ function validateDirectoryRecordSectionLayout(
       path,
     });
   }
-  if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0) {
+  if ((entry.flags & FILE_FLAG_MULTI_EXTENT) !== 0 && !options.allowMultiExtent) {
     issues.push({
       code: "directory.multi_extent_unsupported",
       message: `directory record at ${path} uses unsupported multi-extent file sections`,
