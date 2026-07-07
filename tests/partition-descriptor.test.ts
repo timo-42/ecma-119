@@ -133,6 +133,7 @@ describe("volume partition descriptor writing", () => {
   });
 
   test("writes multiple partition descriptors with distinct payload extents", () => {
+    const firstPayload = encoder.encode("first partition\n");
     const image = createIsoImage(
       [{ path: "README.TXT", data: "regular\n" }],
       {
@@ -140,7 +141,7 @@ describe("volume partition descriptor writing", () => {
           {
             systemIdentifier: "SYSTEM",
             volumePartitionIdentifier: "PART_A",
-            data: encoder.encode("first partition\n"),
+            data: firstPayload,
           },
           {
             systemIdentifier: "SYSTEM",
@@ -164,9 +165,18 @@ describe("volume partition descriptor writing", () => {
 
     const secondOffset = partitions[1]!.volumePartitionLocation * SECTOR_SIZE;
     const secondBytes = image.subarray(secondOffset, secondOffset + partitions[1]!.volumePartitionSize * SECTOR_SIZE);
+    const parsedPartitions = parseIsoImage(image, { includeData: true }).descriptors.filter(
+      (descriptor): descriptor is VolumePartitionDescriptor => descriptor.kind === "partition",
+    );
+
     expect(validateIsoImage(image)).toEqual([]);
     expect(secondBytes.every((byte) => byte === 0)).toBe(true);
     expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(parsedPartitions).toHaveLength(2);
+    expect(parsedPartitions[0]?.data?.subarray(0, firstPayload.byteLength)).toEqual(firstPayload);
+    expect(parsedPartitions[0]?.data?.subarray(firstPayload.byteLength).every((byte) => byte === 0)).toBe(true);
+    expect(parsedPartitions[1]?.data?.byteLength).toBe(2 * SECTOR_SIZE);
+    expect(parsedPartitions[1]?.data?.every((byte) => byte === 0)).toBe(true);
   });
 
   test("validates partition payload sizing and system use bounds", () => {
