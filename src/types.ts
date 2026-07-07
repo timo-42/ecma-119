@@ -35,7 +35,6 @@ export type IsoInputDirectory = {
   date?: Date;
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;
-  associated?: boolean;
   extendedAttributeRecord?: ByteInput | ExtendedAttributeRecordInput;
   systemUse?: ByteInput;
 };

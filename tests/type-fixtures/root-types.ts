@@ -47,6 +47,12 @@ const directory: IsoInputDirectory = {
   systemUse: byteInput,
 };
 
+const associatedDirectory: IsoInputDirectory = {
+  path: "ASSOC_DIR",
+  // @ts-expect-error directory inputs do not support the Associated File bit
+  associated: true,
+};
+
 const options: CreateIsoOptions = {
   directories: [directory],
   systemArea: byteInput,
@@ -104,5 +110,6 @@ void issues;
 void parsedFromView;
 void partition;
 void primary;
+void associatedDirectory;
 void supplementary;
 void volumeSet;
