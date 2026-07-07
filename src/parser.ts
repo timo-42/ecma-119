@@ -61,6 +61,7 @@ export function validateIsoImage(imageInput: Uint8Array | ArrayBuffer): Validati
   issues.push(...validateRawDescriptorHeaders(image));
   issues.push(...validateRawDescriptorBothEndianFields(image));
   issues.push(...validateRawDescriptorRootDirectoryRecordBothEndianFields(image));
+  issues.push(...validateRawDescriptorRootDirectoryRecordLayout(image));
   issues.push(...validateRawDescriptorDateFields(image));
   let descriptors: VolumeDescriptor[] = [];
   let descriptorSequenceFailed = false;
@@ -361,6 +362,47 @@ function validateRawDescriptorRootDirectoryRecordBothEndianFields(image: Uint8Ar
       return issues;
     }
     sector += 1;
+  }
+  return issues;
+}
+
+function validateRawDescriptorRootDirectoryRecordLayout(image: Uint8Array): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  let sector = SYSTEM_AREA_SECTORS;
+  while (sectorOffset(sector + 1) <= image.byteLength) {
+    const offset = sectorOffset(sector);
+    if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
+      return issues;
+    }
+    const descriptorRootPath = rawDescriptorRootPathAt(image, offset);
+    if (descriptorRootPath) {
+      issues.push(...validateRawDescriptorRootDirectoryRecordAt(image, offset + 156, descriptorRootPath));
+    }
+    if (isVolumeDescriptorSetTerminatorAt(image, offset)) {
+      return issues;
+    }
+    sector += 1;
+  }
+  return issues;
+}
+
+function validateRawDescriptorRootDirectoryRecordAt(image: Uint8Array, recordOffset: number, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const bothEndianIssues = validateRawDirectoryRecordBothEndianFields(image, recordOffset, path);
+  const dateIssues = validateRawDirectoryRecordDateField(image, recordOffset, "directory.record_date", `directory record date/time at ${path}`, path);
+  try {
+    decodeDirectoryRecord(image, recordOffset, recordOffset + 34);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `directory record is malformed at ${path}`;
+    const isTargetedBothEndianError = bothEndianIssues.length > 0 && message.includes("both-endian");
+    if (!isTargetedBothEndianError && (dateIssues.length === 0 || !isDirectoryRecordDateTimeError(message))) {
+      const isPaddingError = message.includes("padding byte");
+      issues.push({
+        code: isPaddingError ? "directory.record_padding" : "directory.record_malformed",
+        message,
+        path,
+      });
+    }
   }
   return issues;
 }
