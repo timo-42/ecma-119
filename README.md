@@ -85,6 +85,7 @@ Implemented support is intentionally explicit:
 - opaque System Area authoring and parsing
 - optional supplementary volume descriptors with separate mirrored path tables and directory hierarchy
 - optional enhanced volume descriptors with separate mirrored path tables and directory hierarchy
+- per-descriptor metadata and date/time overrides for supplementary and enhanced volume descriptors
 - optional raw volume partition descriptor and payload
 - Type L and Type M path tables
 - optional Type L and Type M path table copies when requested by the writer

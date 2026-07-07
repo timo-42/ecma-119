@@ -123,6 +123,11 @@ export type SupplementaryVolumeDescriptorOptions = {
   bibliographicFileIdentifier?: string;
   volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
   optionalPathTables?: OptionalPathTableCopies;
+  timeZoneOffsetMinutes?: number;
+  createdAt?: Date;
+  modifiedAt?: Date;
+  effectiveAt?: Date;
+  expiresAt?: Date | null;
 };
 
 export type EnhancedVolumeDescriptorOptions = SupplementaryVolumeDescriptorOptions;
