@@ -1275,6 +1275,12 @@ describe("volume descriptor sequence parsing", () => {
     })).toThrow(/escape sequences/i);
 
     expect(() => createIsoImage([], {
+      supplementaryVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x41, 0x42, 0x43),
+      }],
+    })).toThrow(/escape sequences.*unsupported value/i);
+
+    expect(() => createIsoImage([], {
       enhancedVolumeDescriptors: [{
         volumeFlags: 2,
       }],
@@ -1285,6 +1291,12 @@ describe("volume descriptor sequence parsing", () => {
         escapeSequences: new Uint8Array(33),
       }],
     })).toThrow(/escape sequences/i);
+
+    expect(() => createIsoImage([], {
+      enhancedVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x41, 0x42, 0x43),
+      }],
+    })).toThrow(/escape sequences.*unsupported value/i);
 
     expect(() => createIsoImage([], {
       copyrightFileIdentifier: "TOOLONGNAME.TXT",

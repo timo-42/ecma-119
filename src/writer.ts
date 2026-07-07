@@ -813,6 +813,9 @@ function encodeSupplementaryLikeVolumeDescriptor(input: {
   if (escapeSequences.byteLength > 32) {
     throw new Error("escape sequences field exceeds 32 bytes");
   }
+  if (escapeSequences.byteLength > 0 && !isSupportedSecondaryEscapeSequence(input.layout.kind, escapeSequences)) {
+    throw new Error(`${input.layout.kind} volume descriptor escape sequences contain an unsupported value`);
+  }
   bytes.set(escapeSequences, 88);
   writeUint16Both(bytes, 120, input.volumeSet.volumeSetSize);
   writeUint16Both(bytes, 124, input.volumeSet.volumeSequenceNumber);
@@ -1093,6 +1096,36 @@ function checkedVolumeFlags(value: number): number {
     throw new Error("secondary volume descriptor flags bits 1 through 7 must be zero");
   }
   return flags;
+}
+
+function isSupportedSecondaryEscapeSequence(kind: "supplementary" | "enhanced", bytes: Uint8Array): boolean {
+  if (allZero(bytes)) {
+    return true;
+  }
+  if (bytes[0] === 0) {
+    return false;
+  }
+  const sequenceEnd = bytes.indexOf(0);
+  const sequence = sequenceEnd === -1 ? bytes : bytes.subarray(0, sequenceEnd);
+  if (sequenceEnd !== -1 && !allZero(bytes.subarray(sequenceEnd))) {
+    return false;
+  }
+  if (kind === "enhanced") {
+    return bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x45));
+  }
+  return [
+    Uint8Array.of(0x25, 0x2f, 0x40),
+    Uint8Array.of(0x25, 0x2f, 0x43),
+    Uint8Array.of(0x25, 0x2f, 0x45),
+  ].some((supported) => bytesEqual(sequence, supported));
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
+function allZero(bytes: Uint8Array): boolean {
+  return bytes.every((byte) => byte === 0);
 }
 
 function inputFileFlags(input: Pick<IsoInputFile, "hidden" | "associated">): number {
