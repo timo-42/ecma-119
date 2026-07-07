@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { parseIsoImage, parseVolumeDescriptors, validateIsoImage } from "../src/index";
+import { parseIsoImage, parseIsoVolumeSet, parseVolumeDescriptors, validateIsoImage } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 describe("handcrafted ISO reader fixture", () => {
@@ -192,6 +192,52 @@ describe("handcrafted ISO reader fixture", () => {
         expect.objectContaining({ identifier: asciiBytes("EXTDIR"), extent: 98, parentDirectoryNumber: 1 }),
       ],
     });
+  });
+
+  test("resolves external regular file data from supplied volume set members", () => {
+    const data = asciiBytes("externaldata");
+    const volumeOne = handcraftedExternalPayloadVolumeIso(data);
+    const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    const unresolved = parseIsoImage(volumeTwo, { includeData: true }).files.find((entry) => entry.identifier === "EXT.TXT;1");
+
+    const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true });
+    const resolved = volumeSet.images[1]?.files.find((entry) => entry.identifier === "EXT.TXT;1");
+
+    expect(validateIsoImage(volumeOne)).toEqual([]);
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(unresolved).toMatchObject({ external: true, volumeSequenceNumber: 1 });
+    expect(unresolved?.data).toBeUndefined();
+    expect(resolved).toMatchObject({
+      path: "EXT.TXT",
+      identifier: "EXT.TXT;1",
+      size: data.byteLength,
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(resolved?.data).toEqual(data);
+    expect(volumeSet.files.find((entry) => entry.identifier === "EXT.TXT;1")?.data).toEqual(data);
+  });
+
+  test("rejects external regular file data outside the referenced volume member", () => {
+    const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
+    const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+    const externalFileRecord = findDirectoryRecordOffset(volumeTwo, 20 * SECTOR_SIZE, SECTOR_SIZE, "EXT.TXT;1");
+    writeBoth32(volumeTwo, externalFileRecord + 2, 100);
+
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(() => parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true })).toThrow(/invalid extent bounds for EXT\.TXT/i);
+  });
+
+  test("rejects inconsistent supplied volume set members", () => {
+    const volumeOne = handcraftedExternalPayloadVolumeIso(asciiBytes("externaldata"));
+    const volumeTwo = handcraftedExternalVolumeIso(Uint8Array.of(0x45, 0x58, 0x54, 0x01));
+
+    expect(() => parseIsoVolumeSet([volumeTwo], { includeData: false })).toThrow(
+      /volume set member 2 declares volume set size 2; expected 1/i,
+    );
+    expect(() => parseIsoVolumeSet([volumeOne, volumeOne], { includeData: false })).toThrow(
+      /duplicate volume set member sequence number 1/i,
+    );
   });
 
   test("reads boot and partition descriptors from an image not produced by createIsoImage", () => {
@@ -639,6 +685,43 @@ function handcraftedExternalVolumeIso(systemUse: Uint8Array): Uint8Array {
   return image;
 }
 
+function handcraftedExternalPayloadVolumeIso(data: Uint8Array): Uint8Array {
+  const image = new Uint8Array(100 * SECTOR_SIZE);
+  const pvd = sector(image, 16);
+  const pathTableL = sector(image, 18);
+  const pathTableM = sector(image, 19);
+  const rootDirectory = sector(image, 20);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+
+  writePathTableRoot(pathTableL, "little", 20);
+  writePathTableRoot(pathTableM, "big", 20);
+
+  const self = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber: 1 });
+  const parent = directoryRecord({ extent: 20, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: 1 });
+  rootDirectory.set(self, 0);
+  rootDirectory.set(parent, self.byteLength);
+  image.set(data, 99 * SECTOR_SIZE);
+
+  writePrimaryDescriptor(pvd, {
+    volumeIdentifier: "EXTVOL1",
+    rootDirectoryRecord: self,
+    pathTableSize: 10,
+    typeLPathTableLocation: 18,
+    typeMPathTableLocation: 19,
+    volumeSpaceSize: 100,
+    volumeSetSize: 2,
+    volumeSequenceNumber: 1,
+    date,
+  });
+
+  const terminator = sector(image, 17);
+  terminator[0] = 255;
+  writeAscii(terminator, 1, 5, "CD001", 0);
+  terminator[6] = 1;
+
+  return image;
+}
+
 function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enhanced"; descriptorVersion: 1 | 2; fileStructureVersion: 1 | 2; volumeIdentifier: string }): Uint8Array {
   const image = new Uint8Array(34 * SECTOR_SIZE);
   const pvd = sector(image, 16);
@@ -929,6 +1012,26 @@ function writeAscii(bytes: Uint8Array, offset: number, length: number, value: st
 
 function asciiBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
+}
+
+function findDirectoryRecordOffset(image: Uint8Array, directoryOffset: number, directorySize: number, identifier: string): number {
+  const expected = asciiBytes(identifier);
+  let offset = directoryOffset;
+  const end = directoryOffset + directorySize;
+  while (offset < end) {
+    const length = image[offset]!;
+    if (length === 0) {
+      offset = Math.ceil((offset - directoryOffset + 1) / SECTOR_SIZE) * SECTOR_SIZE + directoryOffset;
+      continue;
+    }
+    const identifierLength = image[offset + 32]!;
+    const actual = image.subarray(offset + 33, offset + 33 + identifierLength);
+    if (actual.byteLength === expected.byteLength && actual.every((byte, index) => byte === expected[index])) {
+      return offset;
+    }
+    offset += length;
+  }
+  throw new Error(`missing directory record ${identifier}`);
 }
 
 function writeBoth16(bytes: Uint8Array, offset: number, value: number): void {

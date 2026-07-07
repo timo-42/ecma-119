@@ -362,6 +362,11 @@ export type IsoImage = {
   root: IsoDirectoryEntry;
 };
 
+export type IsoVolumeSet = {
+  images: IsoImage[];
+  files: IsoFileEntry[];
+};
+
 export type ValidationIssue = {
   code: string;
   message: string;
