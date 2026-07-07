@@ -623,8 +623,22 @@ describe("extended attribute records", () => {
       },
     }]);
     const record = findRootFileRecord(image, "RECORD.TXT;1");
+    const parsed = parseIsoImage(image, { includeData: true });
+    const file = parsed.files[0];
 
     expect(record[25]! & 0x08).toBe(0x08);
+    expect(file).toMatchObject({
+      path: "RECORD.TXT",
+      identifier: "RECORD.TXT;1",
+      flags: 0x08,
+      size: 1,
+      extendedAttributeRecordLength: 1,
+    });
+    expect(file?.data).toEqual(asciiBytes("x"));
+    expect(file?.extendedAttributeRecordFields).toMatchObject({
+      recordFormat: 1,
+      recordLength: 80,
+    });
     expect(validateIsoImage(image)).toEqual([]);
   });
 
