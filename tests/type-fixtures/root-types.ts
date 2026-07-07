@@ -46,11 +46,16 @@ const file: IsoInputFile = {
 
 const directory: IsoInputDirectory = {
   path: "DIR",
-  multiExtent: { sectionSize: 2048 },
   interleave: { fileUnitSize: 1, interleaveGapSize: 0 },
   hidden: true,
   extendedAttributeRecord: byteInput,
   systemUse: byteInput,
+};
+
+const multiExtentDirectory: IsoInputDirectory = {
+  path: "MULTI_DIR",
+  // @ts-expect-error directory inputs do not support multi-extent authoring
+  multiExtent: { sectionSize: 2048 },
 };
 
 const associatedDirectory: IsoInputDirectory = {
@@ -153,5 +158,6 @@ void parsedFromView;
 void partition;
 void primary;
 void associatedDirectory;
+void multiExtentDirectory;
 void supplementary;
 void volumeSet;
