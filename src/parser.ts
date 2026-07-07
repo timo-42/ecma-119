@@ -563,11 +563,31 @@ function validatePathTableReferenceForParsing(
   if (pathTableStart < 0 || pathTableEnd > image.byteLength) {
     throw new Error(`${label} extent is out of bounds`);
   }
+  let pathTable: PathTableRecord[];
   try {
-    decodePathTable(image.subarray(pathTableStart, pathTableEnd), endian);
+    pathTable = decodePathTable(image.subarray(pathTableStart, pathTableEnd), endian);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${label} is invalid: ${message}`);
+  }
+  validateDecodedPathTableForParsing(pathTable, label);
+}
+
+function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], label: string): void {
+  if (pathTable.length === 0) {
+    throw new Error(`${label} must contain the root directory record`);
+  }
+  const root = pathTable[0]!;
+  if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
+    throw new Error(`${label} first record must be the root directory with parent number 1`);
+  }
+  for (const [index, record] of pathTable.entries()) {
+    const invalidParent = index === 0
+      ? record.parentDirectoryNumber !== 1
+      : record.parentDirectoryNumber < 1 || record.parentDirectoryNumber >= index + 1;
+    if (invalidParent) {
+      throw new Error(`${label} record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`);
+    }
   }
 }
 
