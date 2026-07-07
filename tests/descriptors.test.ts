@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, encodeDirectoryRecord, parseIsoImage, parseVolumeDescriptors, readUint32BE, readUint32LE, validateIsoImage, writeUint32Both } from "../src/index";
+import { createIsoImage, encodeDirectoryRecord, parseIsoImage, parseIsoVolumeSet, parseVolumeDescriptors, readUint32BE, readUint32LE, validateIsoImage, writeUint32Both } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 import {
   PVD_SECTOR,
@@ -212,6 +212,125 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([], { volumeSequenceNumber: 1.5 })).toThrow(/volumeSequenceNumber/i);
     expect(() => createIsoImage([], { volumeSequenceNumber: 0x10000 })).toThrow(/volumeSequenceNumber/i);
     expect(() => createIsoImage([], { volumeSetSize: 2, volumeSequenceNumber: 3 })).toThrow(/less than or equal to volumeSetSize/i);
+    expect(() => createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalFiles: [{ path: "EXT.TXT", targetVolumeSequenceNumber: 0, targetExtent: 1, size: 1 }],
+    })).toThrow(/targetVolumeSequenceNumber/i);
+    expect(() => createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalFiles: [{ path: "EXT.TXT", targetVolumeSequenceNumber: 3, targetExtent: 1, size: 1 }],
+    })).toThrow(/targetVolumeSequenceNumber.*volumeSetSize/i);
+    expect(() => createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalFiles: [{ path: "EXT.TXT", targetVolumeSequenceNumber: 2, targetExtent: 1, size: 1 }],
+    })).toThrow(/different volume sequence number/i);
+    expect(() => createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalFiles: [{ path: "EXT.TXT", targetVolumeSequenceNumber: 1, targetExtent: -1, size: 1 }],
+    })).toThrow(/targetExtent/i);
+    expect(() => createIsoImage([{ path: "DIR/LOCAL.TXT", data: "local\n" }], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalFiles: [{ path: "DIR/EXT.TXT", targetVolumeSequenceNumber: 1, targetExtent: 1, size: 1 }],
+      externalDirectories: [{ path: "DIR", targetVolumeSequenceNumber: 1, targetExtent: 2, size: SECTOR_SIZE }],
+    })).toThrow(/duplicate directory path/i);
+    expect(() => createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalDirectories: [{ path: "EXTDIR", targetVolumeSequenceNumber: 1, targetExtent: 1, size: 1 }],
+    })).toThrow(/external directory size/i);
+    expect(() => createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      externalDirectories: [{ path: "EXTDIR", targetVolumeSequenceNumber: 1, targetExtent: 1, size: SECTOR_SIZE }],
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
+    })).toThrow(/externalDirectories cannot be used with supplementary or enhanced volume descriptors/i);
+  });
+
+  test("writes, validates, and resolves external volume set file and directory records", () => {
+    const volumeOne = createIsoImage([
+      { path: "REMOTE.TXT", data: "remote file\n" },
+      { path: "EXTDIR/CHILD.TXT", data: "remote child\n" },
+    ], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 1,
+      volumeSetIdentifier: "EXT_SET",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsedOne = parseIsoImage(volumeOne, { includeData: false });
+    const remoteFile = parsedOne.files.find((file) => file.path === "REMOTE.TXT");
+    const remoteDirectory = parsedOne.root.children.find((node) => "children" in node && node.path === "EXTDIR");
+    if (!remoteFile || !remoteDirectory || !("children" in remoteDirectory)) {
+      throw new Error("missing remote volume records");
+    }
+
+    const volumeTwo = createIsoImage([], {
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+      volumeSetIdentifier: "EXT_SET",
+      externalFiles: [{
+        path: "REMOTE.TXT",
+        targetVolumeSequenceNumber: 1,
+        targetExtent: remoteFile.extent,
+        size: remoteFile.size,
+      }],
+      externalDirectories: [{
+        path: "EXTDIR",
+        targetVolumeSequenceNumber: 1,
+        targetExtent: remoteDirectory.extent,
+        size: remoteDirectory.size,
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const unresolved = parseIsoImage(volumeTwo, { includeData: true });
+    const unresolvedFile = unresolved.files.find((file) => file.path === "REMOTE.TXT");
+    const unresolvedDirectory = unresolved.root.children.find((node) => "children" in node && node.path === "EXTDIR");
+    const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true });
+    const resolved = volumeSet.images[1]!;
+    const resolvedFile = resolved.files.find((file) => file.path === "REMOTE.TXT");
+    const resolvedChild = resolved.files.find((file) => file.path === "EXTDIR/CHILD.TXT");
+    const parsedPathDirectory = unresolved.primaryVolumeDescriptor.pathTables?.typeL.find((record) => (
+      new TextDecoder("ascii").decode(record.identifier) === "EXTDIR"
+    ));
+
+    expect(validateIsoImage(volumeOne)).toEqual([]);
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(unresolvedFile).toMatchObject({
+      path: "REMOTE.TXT",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: "remote file\n".length,
+    });
+    expect(unresolvedFile?.data).toBeUndefined();
+    expect(unresolvedDirectory).toMatchObject({
+      path: "EXTDIR",
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+    expect(parsedPathDirectory).toMatchObject({
+      extent: remoteDirectory.extent,
+      parentDirectoryNumber: 1,
+    });
+    expect(new TextDecoder("ascii").decode(parsedPathDirectory?.identifier)).toBe("EXTDIR");
+    expect(resolvedFile).toMatchObject({
+      path: "REMOTE.TXT",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: "remote file\n".length,
+    });
+    expect(resolvedFile?.data).toEqual(new TextEncoder().encode("remote file\n"));
+    expect(resolvedChild).toMatchObject({
+      path: "EXTDIR/CHILD.TXT",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: "remote child\n".length,
+    });
+    expect(resolvedChild?.data).toEqual(new TextEncoder().encode("remote child\n"));
   });
 
   test("writes, validates, and reads explicit file version numbers", () => {

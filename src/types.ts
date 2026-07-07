@@ -41,6 +41,36 @@ export type IsoInputDirectory = {
   systemUse?: ByteInput;
 };
 
+export type IsoInputExternalFile = {
+  path: string;
+  version?: number;
+  targetVolumeSequenceNumber: number;
+  targetExtent: number;
+  size?: number;
+  extendedAttributeRecordLength?: number;
+  fileUnitSize?: number;
+  interleaveGapSize?: number;
+  date?: Date;
+  timeZoneOffsetMinutes?: number;
+  hidden?: boolean;
+  associated?: boolean;
+  systemUse?: ByteInput;
+};
+
+export type IsoInputExternalDirectory = {
+  path: string;
+  targetVolumeSequenceNumber: number;
+  targetExtent: number;
+  size?: number;
+  extendedAttributeRecordLength?: number;
+  fileUnitSize?: number;
+  interleaveGapSize?: number;
+  date?: Date;
+  timeZoneOffsetMinutes?: number;
+  hidden?: boolean;
+  systemUse?: ByteInput;
+};
+
 export type ExtendedAttributeRecordInput = {
   ownerIdentification?: number;
   groupIdentification?: number;
@@ -80,6 +110,8 @@ export type ExtendedAttributeRecord = {
 
 export type CreateIsoOptions = {
   directories?: IsoInputDirectory[];
+  externalFiles?: IsoInputExternalFile[];
+  externalDirectories?: IsoInputExternalDirectory[];
   identifierLevel?: 1 | 2;
   systemArea?: ByteInput;
   terminatorCount?: number;
