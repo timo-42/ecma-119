@@ -228,6 +228,7 @@ describe("directory record System Use", () => {
 
     const parsed = parseIsoImage(image, { includeData: true });
 
+    expect(validateIsoImage(image)).toEqual([]);
     expect(parsed.files[0]?.path).toBe("MUTATE.TXT");
     expect(parsed.files[0]?.data).toEqual(asciiBytes("mutated\n"));
     expect(parsed.files[0]?.systemUse).toEqual(systemUse);
