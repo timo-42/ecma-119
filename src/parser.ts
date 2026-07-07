@@ -37,6 +37,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
       assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
+      assertSupportedSecondaryEscapeSequences(descriptor);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
     }
   }
@@ -1982,6 +1983,12 @@ function validateSecondaryEscapeSequences(
       message: `${descriptor.kind} volume descriptor escape sequences field must be zero after the last escape sequence byte`,
     }];
   }
+  if (!isSupportedSecondaryEscapeSequence(descriptor.kind, bytes)) {
+    return [{
+      code: `${codePrefix}.escape_sequences.value`,
+      message: `${descriptor.kind} volume descriptor escape sequences contain an unsupported value`,
+    }];
+  }
   return [];
 }
 
@@ -2937,6 +2944,36 @@ function assertSupportedSecondaryVolumeFlags(descriptor: SupplementaryVolumeDesc
   }
 }
 
+function assertSupportedSecondaryEscapeSequences(descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): void {
+  const bytes = descriptor.escapeSequences;
+  if (allZero(bytes)) {
+    return;
+  }
+  if (bytes[0] === 0) {
+    throw new Error(`${descriptor.kind} volume descriptor escape sequences must start at BP 89 when present`);
+  }
+  const firstZero = bytes.indexOf(0);
+  if (firstZero !== -1 && !allZero(bytes.subarray(firstZero))) {
+    throw new Error(`${descriptor.kind} volume descriptor escape sequences field must be zero after the last escape sequence byte`);
+  }
+  if (!isSupportedSecondaryEscapeSequence(descriptor.kind, bytes)) {
+    throw new Error(`${descriptor.kind} volume descriptor escape sequences contain an unsupported value`);
+  }
+}
+
+function isSupportedSecondaryEscapeSequence(kind: "supplementary" | "enhanced", bytes: Uint8Array): boolean {
+  const sequenceEnd = bytes.indexOf(0);
+  const sequence = sequenceEnd === -1 ? bytes : bytes.subarray(0, sequenceEnd);
+  if (kind === "enhanced") {
+    return bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x45));
+  }
+  return [
+    Uint8Array.of(0x25, 0x2f, 0x40),
+    Uint8Array.of(0x25, 0x2f, 0x43),
+    Uint8Array.of(0x25, 0x2f, 0x45),
+  ].some((supported) => bytesEqual(sequence, supported));
+}
+
 function validateVolumeDescriptorMetadata(descriptor: PathTableValidationInput, codePrefix: string, label: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (descriptor.volumeSetSize < 1) {
@@ -3279,6 +3316,24 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     if (
       (issue.code === "supplementary.volume_sequence_number.mismatch" || issue.code === "enhanced.volume_sequence_number.mismatch")
       && message.includes(`${issue.code.split(".")[0]} volume descriptor volume sequence number must match primary volume descriptor`)
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "supplementary.escape_sequences.value" || issue.code === "enhanced.escape_sequences.value")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor escape sequences contain an unsupported value`)
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "supplementary.escape_sequences.start" || issue.code === "enhanced.escape_sequences.start")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor escape sequences must start at BP 89`)
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "supplementary.escape_sequences.padding" || issue.code === "enhanced.escape_sequences.padding")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor escape sequences field must be zero after the last escape sequence byte`)
     ) {
       return true;
     }

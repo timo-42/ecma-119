@@ -3696,6 +3696,41 @@ describe("validateIsoImage hardening", () => {
   test.each([
     {
       kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP", escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40) }] },
+      code: "supplementary.escape_sequences.value",
+      message: "supplementary volume descriptor escape sequences contain an unsupported value",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH", escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45) }] },
+      code: "enhanced.escape_sequences.value",
+      message: "enhanced volume descriptor escape sequences contain an unsupported value",
+    },
+  ])("rejects unsupported $kind escape sequence values during parsing", ({ options, code, message }) => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "escape sequence value\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const secondaryDescriptorOffset = 17 * SECTOR_SIZE;
+    image.set(Uint8Array.of(0x41, 0x42, 0x43), secondaryDescriptorOffset + 88);
+
+    expect(() => parseIsoImage(image)).toThrow(new RegExp(message, "i"));
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code,
+        message,
+      }),
+    ]);
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
       options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
       codePrefix: "supplementary",
     },
