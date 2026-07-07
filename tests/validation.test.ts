@@ -1288,6 +1288,72 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      path: "supplementary:.",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      path: "enhanced:.",
+    },
+  ])("reports $kind descriptor root both-endian mismatches with descriptor-specific paths", ({ options, descriptorOffset, path }) => {
+    const image = createIsoImage([{ path: "README.TXT", data: "secondary root mismatch\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image[descriptorOffset + 156 + 2 + 7] ^= 0xff;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.extent.endian_mismatch",
+          path,
+          message: expect.stringContaining(`directory record location of extent at ${path} must store matching little- and big-endian values`),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "supplementary.root_directory_record.date",
+      path: "supplementary:.",
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+      code: "enhanced.root_directory_record.date",
+      path: "enhanced:.",
+    },
+  ])("reports malformed $kind descriptor root dates with descriptor-specific paths", ({ options, descriptorOffset, code, path }) => {
+    const image = createIsoImage([{ path: "README.TXT", data: "secondary root date\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image[descriptorOffset + 156 + 18 + 1] = 13;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          path,
+          message: expect.stringMatching(/root directory record date\/time is invalid: month/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports a missing directory self record when a directory starts with padding", () => {
     const image = baselineImage();
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
