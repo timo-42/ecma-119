@@ -408,6 +408,76 @@ describe("handcrafted ISO reader fixture", () => {
       expect(rootFile && !("children" in rootFile) ? new TextDecoder("ascii").decode(rootFile.data) : undefined).toBe(expected.payload);
     }
   });
+
+  test.each([
+    { kind: "supplementary" as const, descriptorVersion: 1 as const, fileStructureVersion: 1 as const, volumeIdentifier: "SUP_EXT" },
+    { kind: "enhanced" as const, descriptorVersion: 2 as const, fileStructureVersion: 2 as const, volumeIdentifier: "ENH_EXT" },
+  ])("resolves external directories and files in $kind descriptor trees across volume sets", ({ kind, descriptorVersion, fileStructureVersion, volumeIdentifier }) => {
+    const data = asciiBytes("externaldata");
+    const volumeOne = handcraftedExternalPayloadVolumeIso(data);
+    const volumeTwo = handcraftedSecondaryDescriptorIso({
+      kind,
+      descriptorVersion,
+      fileStructureVersion,
+      volumeIdentifier,
+      volumeSetSize: 2,
+      volumeSequenceNumber: 2,
+    });
+    writeExternalSecondaryDirectoryExtent(volumeOne, 96, 25, data, 2);
+    const secondaryRootOffset = 25 * SECTOR_SIZE;
+    const externalDirectoryRecord = findDirectoryRecordOffset(volumeTwo, secondaryRootOffset, SECTOR_SIZE, "ALT");
+    writeBoth32(volumeTwo, externalDirectoryRecord + 2, 96);
+    writeBoth16(volumeTwo, externalDirectoryRecord + 28, 1);
+    writeUint32LE(volumeTwo, 23 * SECTOR_SIZE + 12, 96);
+    writeUint32BE(volumeTwo, 24 * SECTOR_SIZE + 12, 96);
+    const externalFileRecord = findDirectoryRecordOffset(volumeTwo, secondaryRootOffset, SECTOR_SIZE, "SUPAPP.TXT;1");
+    writeBoth32(volumeTwo, externalFileRecord + 2, 99);
+    writeBoth32(volumeTwo, externalFileRecord + 10, data.byteLength);
+    writeBoth16(volumeTwo, externalFileRecord + 28, 1);
+
+    const unresolved = parseIsoImage(volumeTwo, { includeData: true }).descriptors.find((descriptor) => descriptor.kind === kind);
+    const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true });
+    const resolved = volumeSet.images[1]?.descriptors.find((descriptor) => descriptor.kind === kind);
+    const resolvedDirectory = resolved?.kind === kind
+      ? resolved.rootDirectoryRecord.children.find((entry) => "children" in entry && entry.path === "ALT")
+      : undefined;
+    const resolvedFile = resolvedDirectory && "children" in resolvedDirectory
+      ? resolvedDirectory.children.find((entry) => entry.path === "ALT/CHILD.TXT")
+      : undefined;
+    const resolvedRootFile = resolved?.kind === kind
+      ? resolved.rootDirectoryRecord.children.find((entry) => !("children" in entry) && entry.identifier === "SUPAPP.TXT;1")
+      : undefined;
+
+    expect(validateIsoImage(volumeOne)).toEqual([]);
+    expect(validateIsoImage(volumeTwo)).toEqual([]);
+    expect(unresolved?.kind === kind ? unresolved.rootDirectoryRecord.children.find((entry) => entry.path === "ALT") : undefined).toMatchObject({
+      volumeSequenceNumber: 1,
+      external: true,
+      children: [],
+    });
+    expect(resolvedDirectory).toMatchObject({
+      path: "ALT",
+      extent: 96,
+      volumeSequenceNumber: 1,
+      external: true,
+    });
+    expect(resolvedFile).toMatchObject({
+      path: "ALT/CHILD.TXT",
+      identifier: "CHILD.TXT;1",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: data.byteLength,
+    });
+    expect(resolvedFile && !("children" in resolvedFile) ? resolvedFile.data : undefined).toEqual(data);
+    expect(resolvedRootFile).toMatchObject({
+      path: "SUPAPP.TXT",
+      identifier: "SUPAPP.TXT;1",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: data.byteLength,
+    });
+    expect(resolvedRootFile && !("children" in resolvedRootFile) ? resolvedRootFile.data : undefined).toEqual(data);
+  });
 });
 
 function handcraftedIso(options: { fileFlags?: number; fileIdentifier?: string; filePayload?: Uint8Array } = {}): Uint8Array {
@@ -791,7 +861,32 @@ function handcraftedExternalPayloadVolumeIso(data: Uint8Array): Uint8Array {
   return image;
 }
 
-function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enhanced"; descriptorVersion: 1 | 2; fileStructureVersion: 1 | 2; volumeIdentifier: string }): Uint8Array {
+function writeExternalSecondaryDirectoryExtent(
+  image: Uint8Array,
+  directorySector: number,
+  parentExtent: number,
+  data: Uint8Array,
+  parentVolumeSequenceNumber: number,
+): void {
+  const directory = sector(image, directorySector);
+  directory.fill(0);
+  const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const self = directoryRecord({ extent: directorySector, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber: 1 });
+  const parent = directoryRecord({ extent: parentExtent, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber: parentVolumeSequenceNumber });
+  const child = directoryRecord({ extent: 99, size: data.byteLength, flags: 0, identifier: asciiBytes("CHILD.TXT;1"), date, volumeSequenceNumber: 1 });
+  directory.set(self, 0);
+  directory.set(parent, self.byteLength);
+  directory.set(child, self.byteLength + parent.byteLength);
+}
+
+function handcraftedSecondaryDescriptorIso(input: {
+  kind: "supplementary" | "enhanced";
+  descriptorVersion: 1 | 2;
+  fileStructureVersion: 1 | 2;
+  volumeIdentifier: string;
+  volumeSetSize?: number;
+  volumeSequenceNumber?: number;
+}): Uint8Array {
   const image = new Uint8Array(34 * SECTOR_SIZE);
   const pvd = sector(image, 16);
   const secondaryDescriptor = sector(image, 17);
@@ -814,6 +909,8 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
   const bibliographicPayload = new TextEncoder().encode("secondary bibliographic reference\n");
   const copyrightPayload = new TextEncoder().encode("secondary copyright reference\n");
   const abstractPayload = new TextEncoder().encode("secondary abstract reference\n");
+  const volumeSetSize = input.volumeSetSize ?? 1;
+  const volumeSequenceNumber = input.volumeSequenceNumber ?? 1;
 
   secondaryFileData.set(filePayload);
   secondaryApplicationFileData.set(applicationPayload);
@@ -828,18 +925,18 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
   writePathTableRoot(secondaryPathTableM, "big", 25);
   writePathTableDirectory(secondaryPathTableM, 10, "big", asciiBytes("ALT"), 26, 1);
 
-  const primaryRootSelf = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
-  const primaryRootParent = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
+  const primaryRootSelf = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber });
+  const primaryRootParent = directoryRecord({ extent: 21, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber });
   primaryRootDirectory.set(primaryRootSelf, 0);
   primaryRootDirectory.set(primaryRootParent, primaryRootSelf.byteLength);
 
-  const secondaryRootSelf = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
-  const secondaryRootParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
-  const secondaryChild = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("ALT"), date });
-  const secondaryApplicationFile = directoryRecord({ extent: 28, size: applicationPayload.byteLength, flags: 0, identifier: asciiBytes("SUPAPP.TXT;1"), date });
-  const secondaryBibliographicFile = directoryRecord({ extent: 29, size: bibliographicPayload.byteLength, flags: 0, identifier: asciiBytes("SUPBIB.TXT;1"), date });
-  const secondaryCopyrightFile = directoryRecord({ extent: 30, size: copyrightPayload.byteLength, flags: 0, identifier: asciiBytes("SUPCPY.TXT;1"), date });
-  const secondaryAbstractFile = directoryRecord({ extent: 31, size: abstractPayload.byteLength, flags: 0, identifier: asciiBytes("SUPDOC.TXT;1"), date });
+  const secondaryRootSelf = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber });
+  const secondaryRootParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber });
+  const secondaryChild = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("ALT"), date, volumeSequenceNumber });
+  const secondaryApplicationFile = directoryRecord({ extent: 28, size: applicationPayload.byteLength, flags: 0, identifier: asciiBytes("SUPAPP.TXT;1"), date, volumeSequenceNumber });
+  const secondaryBibliographicFile = directoryRecord({ extent: 29, size: bibliographicPayload.byteLength, flags: 0, identifier: asciiBytes("SUPBIB.TXT;1"), date, volumeSequenceNumber });
+  const secondaryCopyrightFile = directoryRecord({ extent: 30, size: copyrightPayload.byteLength, flags: 0, identifier: asciiBytes("SUPCPY.TXT;1"), date, volumeSequenceNumber });
+  const secondaryAbstractFile = directoryRecord({ extent: 31, size: abstractPayload.byteLength, flags: 0, identifier: asciiBytes("SUPDOC.TXT;1"), date, volumeSequenceNumber });
   secondaryRootDirectory.set(secondaryRootSelf, 0);
   secondaryRootDirectory.set(secondaryRootParent, secondaryRootSelf.byteLength);
   secondaryRootDirectory.set(secondaryChild, secondaryRootSelf.byteLength + secondaryRootParent.byteLength);
@@ -849,9 +946,9 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
     secondaryRootOffset += record.byteLength;
   }
 
-  const childSelf = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
-  const childParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
-  const childFile = directoryRecord({ extent: 27, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("SECOND.TXT;1"), date });
+  const childSelf = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date, volumeSequenceNumber });
+  const childParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date, volumeSequenceNumber });
+  const childFile = directoryRecord({ extent: 27, size: filePayload.byteLength, flags: 0, identifier: asciiBytes("SECOND.TXT;1"), date, volumeSequenceNumber });
   secondaryChildDirectory.set(childSelf, 0);
   secondaryChildDirectory.set(childParent, childSelf.byteLength);
   secondaryChildDirectory.set(childFile, childSelf.byteLength + childParent.byteLength);
@@ -863,6 +960,8 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
     typeLPathTableLocation: 19,
     typeMPathTableLocation: 20,
     volumeSpaceSize: 34,
+    volumeSetSize,
+    volumeSequenceNumber,
     date,
   });
 
@@ -875,6 +974,8 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
     typeLPathTableLocation: 23,
     typeMPathTableLocation: 24,
     volumeSpaceSize: 34,
+    volumeSetSize,
+    volumeSequenceNumber,
     applicationIdentifier: "_SUPAPP.TXT;1",
     copyrightFileIdentifier: "SUPCPY.TXT;1",
     abstractFileIdentifier: "SUPDOC.TXT;1",
@@ -931,6 +1032,8 @@ function writeSecondaryDescriptor(
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
     volumeSpaceSize: number;
+    volumeSetSize?: number;
+    volumeSequenceNumber?: number;
     applicationIdentifier?: string;
     copyrightFileIdentifier?: string;
     abstractFileIdentifier?: string;
@@ -946,8 +1049,8 @@ function writeSecondaryDescriptor(
   writeAscii(bytes, 40, 32, input.volumeIdentifier, 0x20);
   writeBoth32(bytes, 80, input.volumeSpaceSize);
   bytes.set(input.descriptorVersion === 2 ? Uint8Array.of(0x25, 0x2f, 0x45) : Uint8Array.of(0x25, 0x2f, 0x40), 88);
-  writeBoth16(bytes, 120, 1);
-  writeBoth16(bytes, 124, 1);
+  writeBoth16(bytes, 120, input.volumeSetSize ?? 1);
+  writeBoth16(bytes, 124, input.volumeSequenceNumber ?? 1);
   writeBoth16(bytes, 128, SECTOR_SIZE);
   writeBoth32(bytes, 132, input.pathTableSize);
   writeUint32LE(bytes, 140, input.typeLPathTableLocation);
