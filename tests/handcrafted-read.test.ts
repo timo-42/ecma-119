@@ -199,6 +199,7 @@ describe("handcrafted ISO reader fixture", () => {
       version: descriptorVersion,
       volumeIdentifier,
       fileStructureVersion,
+      abstractFileIdentifier: "SUPDOC.TXT;1",
       typeLPathTableLocation: 23,
       typeMPathTableLocation: 24,
     });
@@ -221,6 +222,17 @@ describe("handcrafted ISO reader fixture", () => {
     expect(childDirectory && "children" in childDirectory && !("children" in childDirectory.children[0]!)
       ? new TextDecoder("ascii").decode(childDirectory.children[0].data)
       : undefined).toBe("hello secondary\n");
+
+    const rootFile = parsedDescriptor?.kind === kind
+      ? parsedDescriptor.rootDirectoryRecord.children.find((node) => !("children" in node) && node.identifier === "SUPDOC.TXT;1")
+      : undefined;
+    expect(rootFile).toMatchObject({
+      path: "SUPDOC.TXT",
+      identifier: "SUPDOC.TXT;1",
+      extent: 28,
+      size: "secondary root reference\n".length,
+    });
+    expect(rootFile && !("children" in rootFile) ? new TextDecoder("ascii").decode(rootFile.data) : undefined).toBe("secondary root reference\n");
   });
 });
 
@@ -517,10 +529,13 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
   const secondaryRootDirectory = sector(image, 25);
   const secondaryChildDirectory = sector(image, 26);
   const secondaryFileData = sector(image, 27);
+  const secondaryRootFileData = sector(image, 28);
   const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
   const filePayload = new TextEncoder().encode("hello secondary\n");
+  const rootFilePayload = new TextEncoder().encode("secondary root reference\n");
 
   secondaryFileData.set(filePayload);
+  secondaryRootFileData.set(rootFilePayload);
 
   writePathTableRoot(primaryPathTableL, "little", 21);
   writePathTableRoot(primaryPathTableM, "big", 21);
@@ -537,9 +552,11 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
   const secondaryRootSelf = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
   const secondaryRootParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
   const secondaryChild = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: asciiBytes("ALT"), date });
+  const secondaryRootFile = directoryRecord({ extent: 28, size: rootFilePayload.byteLength, flags: 0, identifier: asciiBytes("SUPDOC.TXT;1"), date });
   secondaryRootDirectory.set(secondaryRootSelf, 0);
   secondaryRootDirectory.set(secondaryRootParent, secondaryRootSelf.byteLength);
   secondaryRootDirectory.set(secondaryChild, secondaryRootSelf.byteLength + secondaryRootParent.byteLength);
+  secondaryRootDirectory.set(secondaryRootFile, secondaryRootSelf.byteLength + secondaryRootParent.byteLength + secondaryChild.byteLength);
 
   const childSelf = directoryRecord({ extent: 26, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(0), date });
   const childParent = directoryRecord({ extent: 25, size: SECTOR_SIZE, flags: 0x02, identifier: Uint8Array.of(1), date });
@@ -567,6 +584,7 @@ function handcraftedSecondaryDescriptorIso(input: { kind: "supplementary" | "enh
     typeLPathTableLocation: 23,
     typeMPathTableLocation: 24,
     volumeSpaceSize: 30,
+    abstractFileIdentifier: "SUPDOC.TXT;1",
     date,
   });
 
@@ -586,6 +604,7 @@ function writePrimaryDescriptor(
     typeLPathTableLocation: number;
     typeMPathTableLocation: number;
     volumeSpaceSize: number;
+    abstractFileIdentifier?: string;
     date: Date;
   },
 ): void {
@@ -635,17 +654,17 @@ function writeSecondaryDescriptor(
   writeUint32LE(bytes, 140, input.typeLPathTableLocation);
   writeUint32BE(bytes, 148, input.typeMPathTableLocation);
   bytes.set(input.rootDirectoryRecord, 156);
-  writeDescriptorTextFields(bytes, input.date);
+  writeDescriptorTextFields(bytes, input.date, { abstractFileIdentifier: input.abstractFileIdentifier });
   bytes[881] = input.fileStructureVersion;
 }
 
-function writeDescriptorTextFields(bytes: Uint8Array, date: Date): void {
+function writeDescriptorTextFields(bytes: Uint8Array, date: Date, options: { abstractFileIdentifier?: string } = {}): void {
   writeAscii(bytes, 190, 128, "", 0x20);
   writeAscii(bytes, 318, 128, "", 0x20);
   writeAscii(bytes, 446, 128, "", 0x20);
   writeAscii(bytes, 574, 128, "HANDCRAFTED TEST", 0x20);
   writeAscii(bytes, 702, 37, "", 0x20);
-  writeAscii(bytes, 739, 37, "", 0x20);
+  writeAscii(bytes, 739, 37, options.abstractFileIdentifier ?? "", 0x20);
   writeAscii(bytes, 776, 37, "", 0x20);
   bytes.set(volumeDate(date), 813);
   bytes.set(volumeDate(date), 830);
