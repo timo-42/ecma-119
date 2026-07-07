@@ -34,6 +34,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
   for (const descriptor of descriptors) {
     if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
+      assertSupportedSecondaryVolumeFlags(descriptor);
       validateDescriptorPathTableReferences(image, descriptor, `${descriptor.kind} volume descriptor`);
     }
   }
@@ -2904,6 +2905,12 @@ function assertSupportedDescriptorProfile(descriptor: PathTableValidationInput, 
   }
 }
 
+function assertSupportedSecondaryVolumeFlags(descriptor: SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor): void {
+  if ((descriptor.volumeFlags & 0xfe) !== 0) {
+    throw new Error(`${descriptor.kind} volume descriptor flags bits 1 through 7 must be zero`);
+  }
+}
+
 function validateVolumeDescriptorMetadata(descriptor: PathTableValidationInput, codePrefix: string, label: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (descriptor.volumeSetSize < 1) {
@@ -3204,6 +3211,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     if (
       (issue.code === "supplementary.logical_block_size" || issue.code === "enhanced.logical_block_size")
       && message.includes(`${issue.code.split(".")[0]} volume descriptor logical block size must be 2048`)
+    ) {
+      return true;
+    }
+    if (
+      (issue.code === "supplementary.volume_flags" || issue.code === "enhanced.volume_flags")
+      && message.includes(`${issue.code.split(".")[0]} volume descriptor flags bits 1 through 7 must be zero`)
     ) {
       return true;
     }
