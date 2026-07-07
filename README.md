@@ -70,7 +70,7 @@ File input `version` defaults to 1 and may be set from 1 through 32767 to write 
 
 Files marked with `associated: true` may share the same path, identifier, and version as a regular file in the same directory. The parser returns both records with the same `path` and `identifier`; the associated file is distinguished by the Associated File flag.
 
-Directory inputs may set `interleave` with the same `{ fileUnitSize, interleaveGapSize }` shape used by files. An empty directory path targets the root directory.
+Directory records are written as a single non-interleaved file section as required by ECMA-119. An empty directory path targets the root directory.
 
 `parseIsoImage(image)` includes regular file payloads and volume partition payloads by default. Use `parseIsoImage(image, { includeData: false })` to read descriptors and directory trees without loading those payload bytes.
 
@@ -96,7 +96,7 @@ Implemented support is intentionally explicit:
 - validation that descriptor file-reference fields resolve to files described in the root directory
 - Level 1 primary identifier authoring by default, with `identifierLevel: 2` support for longer primary directory and file identifiers
 - file version number authoring from 1 through 32767
-- directory records with standard `.` and `..` entries
+- directory records with standard `.` and `..` entries, written and parsed as single non-interleaved directory sections
 - hidden flags for generated files and directories, associated file flags for generated files, and regular/associated file pairs with the same identifier
 - ECMA-119 date/time offset bytes for volume descriptors, directory records, and structured Extended Attribute Records
 - opaque directory record System Use bytes
@@ -104,11 +104,8 @@ Implemented support is intentionally explicit:
 - non-interleaved file sections
 - writer-generated compatible non-interleaved multi-extent file sections
 - writer-generated interleaved regular file sections, including Extended Attribute Records that fit within the assigned file unit
-- writer-generated interleaved directory records, including the root directory
 - read-side reconstruction of compatible interleaved regular file sections
-- read-side reconstruction of compatible interleaved directory records
 - read-side coalescing of compatible non-interleaved multi-extent file sections
-- read-side coalescing and low-level encoding of compatible multi-extent directory records
 - byte-level parser for generated and compatible ECMA-119 images
 
 Executable boot semantics, partition filesystem semantics, cross-volume payload resolution across multiple images, and Rock Ridge/Joliet extensions are outside the supported profile. Boot record descriptors, enhanced volume descriptors, raw volume partition descriptors/payloads, and external-volume records are supported as descriptor/data structures only.

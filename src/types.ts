@@ -29,7 +29,6 @@ export type IsoInputFileInterleaveOptions = {
 
 export type IsoInputDirectory = {
   path: string;
-  interleave?: IsoInputFileInterleaveOptions;
   date?: Date;
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;

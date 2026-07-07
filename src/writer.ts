@@ -380,13 +380,15 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
   }
 
   for (const input of directories) {
+    if ("interleave" in input && input.interleave !== undefined) {
+      throw new Error("directory records must not be recorded in interleaved mode");
+    }
     const directoryTimeZoneOffsetMinutes = input.timeZoneOffsetMinutes ?? defaultTimeZoneOffsetMinutes;
     const directory = ensureDirectory(root, normalizeDirectoryPath(input.path, identifierLevel).parts, input.date ?? now, directoryTimeZoneOffsetMinutes);
-    const interleave = checkedInterleaveOptions(input.interleave);
     directory.date = input.date ?? directory.date;
     directory.timeZoneOffsetMinutes = directoryTimeZoneOffsetMinutes;
-    directory.fileUnitSize = interleave.fileUnitSize;
-    directory.interleaveGapSize = interleave.interleaveGapSize;
+    directory.fileUnitSize = 0;
+    directory.interleaveGapSize = 0;
     directory.flags = inputDirectoryFlags(directory.flags, input);
     if (input.extendedAttributeRecord !== undefined) {
       directory.extendedAttributeRecord = isExtendedAttributeRecordInput(input.extendedAttributeRecord)
@@ -398,9 +400,7 @@ function buildTree(files: IsoInputFile[], directories: IsoInputDirectory[], now:
       if (directory.extendedAttributeRecord.byteLength === 0) {
         throw new Error("directory extended attribute record must contain at least one byte");
       }
-      directory.extendedAttributeRecordLength = input.interleave === undefined
-        ? sectorsForBytes(directory.extendedAttributeRecord.byteLength)
-        : checkedInterleavedExtendedAttributeRecordLength(directory.extendedAttributeRecord, directory);
+      directory.extendedAttributeRecordLength = sectorsForBytes(directory.extendedAttributeRecord.byteLength);
       if (directory.extendedAttributeRecordLength > 0xff) {
         throw new Error("directory extended attribute record exceeds 255 logical blocks");
       }
