@@ -609,6 +609,22 @@ describe("volume descriptor sequence parsing", () => {
     expect(parsed.files.map((file) => file.identifier)).toEqual(["COPY.TXT;2", "README.;32767"]);
   });
 
+  test("writes descriptor file references to associated root files", () => {
+    const image = createIsoImage([{ path: "COPY.TXT", data: "associated copyright\n", associated: true }], {
+      copyrightFileIdentifier: "COPY.TXT",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image);
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor.copyrightFileIdentifier).toBe("COPY.TXT;1");
+    expect(parsed.files[0]).toMatchObject({
+      path: "COPY.TXT",
+      identifier: "COPY.TXT;1",
+      flags: 0x04,
+    });
+  });
+
   test("rejects invalid descriptor file identifier versions", () => {
     expect(() => createIsoImage([{ path: "COPY.TXT", data: "", version: 1 }], {
       copyrightFileIdentifier: "COPY.TXT;0",
@@ -619,6 +635,28 @@ describe("volume descriptor sequence parsing", () => {
     expect(() => createIsoImage([{ path: "COPY.TXT", data: "", version: 1 }], {
       supplementaryVolumeDescriptors: [{ abstractFileIdentifier: "COPY.TXT;01" }],
     })).toThrow(/file version number/i);
+  });
+
+  test("rejects descriptor file references that are not root directory files", () => {
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "" }], {
+      copyrightFileIdentifier: "MISSING.TXT",
+    })).toThrow(/primary volume descriptor copyright file identifier references MISSING\.TXT;1, which is not a file described in the root directory/i);
+    expect(() => createIsoImage([{ path: "DIR/COPY.TXT", data: "" }], {
+      abstractFileIdentifier: "DIR/COPY.TXT",
+    })).toThrow(/primary volume descriptor abstract file identifier must reference a file in the root directory/i);
+    expect(() => createIsoImage([], {
+      directories: [{ path: "COPY" }],
+      bibliographicFileIdentifier: "COPY",
+    })).toThrow(/primary volume descriptor bibliographic file identifier references COPY\.;1, which is not a file described in the root directory/i);
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "", version: 2 }], {
+      copyrightFileIdentifier: "COPY.TXT",
+    })).toThrow(/primary volume descriptor copyright file identifier references COPY\.TXT;1, which is not a file described in the root directory/i);
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "" }], {
+      supplementaryVolumeDescriptors: [{ abstractFileIdentifier: "MISSING.TXT" }],
+    })).toThrow(/supplementary volume descriptor abstract file identifier references MISSING\.TXT;1, which is not a file described in the root directory/i);
+    expect(() => createIsoImage([{ path: "COPY.TXT", data: "" }], {
+      enhancedVolumeDescriptors: [{ bibliographicFileIdentifier: "MISSING.TXT" }],
+    })).toThrow(/enhanced volume descriptor bibliographic file identifier references MISSING\.TXT;1, which is not a file described in the root directory/i);
   });
 
   test("writes, validates, and reads Level 2 primary identifiers", () => {
