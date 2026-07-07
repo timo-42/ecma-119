@@ -348,8 +348,9 @@ function validateRawDescriptorRootDirectoryRecordBothEndianFields(image: Uint8Ar
     if (allZero(image.subarray(offset, offset + SECTOR_SIZE))) {
       return issues;
     }
-    if (isRootDirectoryRecordDescriptorAt(image, offset)) {
-      issues.push(...validateRawDirectoryRecordBothEndianFields(image, offset + 156, "."));
+    const descriptorRootPath = rawDescriptorRootPathAt(image, offset);
+    if (descriptorRootPath) {
+      issues.push(...validateRawDirectoryRecordBothEndianFields(image, offset + 156, descriptorRootPath));
     }
     if (isVolumeDescriptorSetTerminatorAt(image, offset)) {
       return issues;
@@ -359,13 +360,22 @@ function validateRawDescriptorRootDirectoryRecordBothEndianFields(image: Uint8Ar
   return issues;
 }
 
-function isRootDirectoryRecordDescriptorAt(image: Uint8Array, offset: number): boolean {
+function rawDescriptorRootPathAt(image: Uint8Array, offset: number): string | undefined {
   if (readAscii(image, offset + 1, 5) !== STANDARD_IDENTIFIER) {
-    return false;
+    return undefined;
   }
   const type = image[offset];
   const version = image[offset + 6];
-  return (type === 1 && version === 1) || (type === 2 && (version === 1 || version === 2));
+  if (type === 1 && version === 1) {
+    return ".";
+  }
+  if (type === 2 && version === 1) {
+    return "supplementary:.";
+  }
+  if (type === 2 && version === 2) {
+    return "enhanced:.";
+  }
+  return undefined;
 }
 
 export function parseVolumeDescriptors(imageInput: Uint8Array | ArrayBuffer): VolumeDescriptor[] {
@@ -575,11 +585,12 @@ function validateRawDescriptorDateFields(image: Uint8Array): ValidationIssue[] {
       const version = image[offset + 6]!;
       const codePrefix = type === 1 ? "pvd" : version === 2 ? "enhanced" : "supplementary";
       const descriptorLabel = type === 1 ? "primary" : version === 2 ? "enhanced" : "supplementary";
+      const rootPath = type === 1 ? "." : `${codePrefix}:.`;
       issues.push(...validateRawDescriptorDateField(image, offset + 813, `${codePrefix}.creation_date`, `${descriptorLabel} volume creation date and time`));
       issues.push(...validateRawDescriptorDateField(image, offset + 830, `${codePrefix}.modification_date`, `${descriptorLabel} volume modification date and time`));
       issues.push(...validateRawDescriptorDateField(image, offset + 847, `${codePrefix}.expiration_date`, `${descriptorLabel} volume expiration date and time`));
       issues.push(...validateRawDescriptorDateField(image, offset + 864, `${codePrefix}.effective_date`, `${descriptorLabel} volume effective date and time`));
-      issues.push(...validateRawDirectoryRecordDateField(image, offset + 156, `${codePrefix}.root_directory_record.date`, `${descriptorLabel} volume descriptor root directory record date/time`, "."));
+      issues.push(...validateRawDirectoryRecordDateField(image, offset + 156, `${codePrefix}.root_directory_record.date`, `${descriptorLabel} volume descriptor root directory record date/time`, rootPath));
     }
     if (type === 255) {
       return issues;
