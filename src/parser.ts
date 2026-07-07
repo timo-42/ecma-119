@@ -630,7 +630,7 @@ function validatePathTableReferenceForParsing(
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${label} is invalid: ${message}`);
   }
-  validateDecodedPathTableForParsing(pathTable, descriptor, label);
+  validateDecodedPathTableForParsing(pathTable, descriptor, label, endian);
 }
 
 function assertDescriptorPathTableHierarchy(
@@ -691,7 +691,12 @@ function decodeDescriptorPathTableForHierarchy(
   return decodePathTable(image.subarray(start, start + descriptor.pathTableSize), endian);
 }
 
-function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], descriptor: PathTableValidationInput, label: string): void {
+function validateDecodedPathTableForParsing(
+  pathTable: PathTableRecord[],
+  descriptor: PathTableValidationInput,
+  label: string,
+  endian: "little" | "big",
+): void {
   if (pathTable.length === 0) {
     throw new Error(`${label} must contain the root directory record`);
   }
@@ -713,6 +718,10 @@ function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], descri
     if (descriptor.kind === "primary" && index !== 0 && !isSupportedPrimaryDirectoryIdentifier(record.identifier)) {
       throw new Error(`${label} record ${index + 1} directory identifier contains invalid ECMA-119 primary d-characters`);
     }
+  }
+  const orderIssues = validatePathTableOrder(pathTable, "", endian);
+  if (orderIssues.length > 0) {
+    throw new Error(orderIssues[0]!.message);
   }
 }
 
@@ -3908,6 +3917,13 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code.startsWith("path_table.") && issue.code.endsWith(".identifier.characters") && message.includes("path table record")) {
+      return true;
+    }
+    if (
+      (issue.code.startsWith("path_table.") || issue.code.includes("_path_table."))
+      && issue.code.includes(".order.")
+      && message.includes("path table records must be ordered")
+    ) {
       return true;
     }
     if (

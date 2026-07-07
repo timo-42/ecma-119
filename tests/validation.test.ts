@@ -648,7 +648,9 @@ describe("validateIsoImage hardening", () => {
     swapBytes(image, littlePathTableOffset + thirdRecordOffset, littlePathTableOffset + fourthRecordOffset, recordLength);
     swapBytes(image, bigPathTableOffset + thirdRecordOffset, bigPathTableOffset + fourthRecordOffset, recordLength);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L path table records must be ordered by hierarchy level/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.little.order.level",
@@ -660,6 +662,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports path table records with parent numbers out of ECMA-119 order", () => {
@@ -675,7 +678,9 @@ describe("validateIsoImage hardening", () => {
     swapBytes(image, littlePathTableOffset + fourthRecordOffset, littlePathTableOffset + fifthRecordOffset, recordLength);
     swapBytes(image, bigPathTableOffset + fourthRecordOffset, bigPathTableOffset + fifthRecordOffset, recordLength);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L path table records must be ordered by parent directory number/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.little.order.parent",
@@ -687,6 +692,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports path table records with sibling identifiers out of ECMA-119 order", () => {
@@ -702,7 +708,9 @@ describe("validateIsoImage hardening", () => {
     swapBytes(image, littlePathTableOffset + secondRecordOffset, littlePathTableOffset + thirdRecordOffset, recordLength);
     swapBytes(image, bigPathTableOffset + secondRecordOffset, bigPathTableOffset + thirdRecordOffset, recordLength);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/Type L path table records must be ordered by directory identifier/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "path_table.little.order.identifier",
@@ -714,6 +722,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("writes directory records in ECMA-119 file identifier order", () => {
