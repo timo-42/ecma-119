@@ -4,9 +4,11 @@ export const SECTOR_SIZE = 2048;
 export const SYSTEM_AREA_SECTORS = 16;
 export const STANDARD_IDENTIFIER = "CD001";
 
+export type ByteInput = Uint8Array | string;
+
 export type IsoInputFile = {
   path: string;
-  data: Uint8Array | Buffer | string;
+  data: ByteInput;
   version?: number;
   multiExtent?: boolean | IsoInputFileMultiExtentOptions;
   interleave?: IsoInputFileInterleaveOptions;
@@ -14,8 +16,8 @@ export type IsoInputFile = {
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;
   associated?: boolean;
-  extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
-  systemUse?: Uint8Array | Buffer | string;
+  extendedAttributeRecord?: ByteInput | ExtendedAttributeRecordInput;
+  systemUse?: ByteInput;
 };
 
 export type IsoInputFileMultiExtentOptions = {
@@ -33,8 +35,8 @@ export type IsoInputDirectory = {
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;
   associated?: boolean;
-  extendedAttributeRecord?: Uint8Array | Buffer | string | ExtendedAttributeRecordInput;
-  systemUse?: Uint8Array | Buffer | string;
+  extendedAttributeRecord?: ByteInput | ExtendedAttributeRecordInput;
+  systemUse?: ByteInput;
 };
 
 export type ExtendedAttributeRecordInput = {
@@ -50,10 +52,10 @@ export type ExtendedAttributeRecordInput = {
   recordAttributes?: number;
   recordLength?: number;
   systemIdentifier?: string;
-  systemUse?: Uint8Array | Buffer | string;
+  systemUse?: ByteInput;
   version?: number;
-  applicationUse?: Uint8Array | Buffer | string;
-  escapeSequences?: Uint8Array | Buffer | string;
+  applicationUse?: ByteInput;
+  escapeSequences?: ByteInput;
 };
 
 export type ExtendedAttributeRecord = {
@@ -77,7 +79,7 @@ export type ExtendedAttributeRecord = {
 export type CreateIsoOptions = {
   directories?: IsoInputDirectory[];
   identifierLevel?: 1 | 2;
-  systemArea?: Uint8Array | Buffer | string;
+  systemArea?: ByteInput;
   terminatorCount?: number;
   volumeSetSize?: number;
   volumeSequenceNumber?: number;
@@ -90,7 +92,7 @@ export type CreateIsoOptions = {
   copyrightFileIdentifier?: string;
   abstractFileIdentifier?: string;
   bibliographicFileIdentifier?: string;
-  volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
+  volumeDescriptorApplicationUse?: ByteInput;
   optionalPathTables?: OptionalPathTableCopies;
   bootRecord?: BootRecordOptions;
   bootRecords?: BootRecordOptions[];
@@ -114,7 +116,7 @@ export type SupplementaryVolumeDescriptorOptions = {
   volumeFlags?: number;
   systemIdentifier?: string;
   volumeIdentifier?: string;
-  escapeSequences?: Uint8Array | Buffer | string;
+  escapeSequences?: ByteInput;
   volumeSetIdentifier?: string;
   publisherIdentifier?: string;
   dataPreparerIdentifier?: string;
@@ -122,7 +124,7 @@ export type SupplementaryVolumeDescriptorOptions = {
   copyrightFileIdentifier?: string;
   abstractFileIdentifier?: string;
   bibliographicFileIdentifier?: string;
-  volumeDescriptorApplicationUse?: Uint8Array | Buffer | string;
+  volumeDescriptorApplicationUse?: ByteInput;
   optionalPathTables?: OptionalPathTableCopies;
   timeZoneOffsetMinutes?: number;
   createdAt?: Date;
@@ -136,14 +138,14 @@ export type EnhancedVolumeDescriptorOptions = SupplementaryVolumeDescriptorOptio
 export type BootRecordOptions = {
   bootSystemIdentifier?: string;
   bootIdentifier?: string;
-  bootSystemUse?: Uint8Array | Buffer | string;
+  bootSystemUse?: ByteInput;
 };
 
 export type VolumePartitionOptions = {
   systemIdentifier?: string;
   volumePartitionIdentifier?: string;
-  systemUse?: Uint8Array | Buffer | string;
-  data?: Uint8Array | Buffer | string;
+  systemUse?: ByteInput;
+  data?: ByteInput;
   size?: number;
 };
 
