@@ -7,6 +7,7 @@ import {
   isLevelTwoFileIdentifier,
   isSupportedPrimaryDirectoryIdentifier,
   isSupportedPrimaryFileIdentifier,
+  normalizeFilePath,
   toLevelOneFileIdentifier,
   toLevelTwoFileIdentifier,
 } from "../src/index";
@@ -67,6 +68,13 @@ describe("Level 2 identifier predicates", () => {
     expect(toLevelTwoFileIdentifier("longfilename1234567890.txt", 42)).toBe("LONGFILENAME1234567890.TXT;42");
     expect(toLevelTwoFileIdentifier("longfilename1234567890", 42)).toBe("LONGFILENAME1234567890.;42");
     expect(() => toLevelTwoFileIdentifier(`${"A".repeat(28)}.TXT`)).toThrow(/30 d-characters/i);
+  });
+
+  test("rejects file paths whose ECMA-119 path length exceeds 255 bytes", () => {
+    const directories = Array.from({ length: 7 }, () => "D".repeat(31));
+    const fileName = `${"F".repeat(26)}.TXT`;
+
+    expect(() => normalizeFilePath([...directories, fileName].join("/"), 2)).toThrow(/file path length must not exceed 255 bytes/i);
   });
 });
 

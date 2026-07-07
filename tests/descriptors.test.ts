@@ -58,6 +58,26 @@ describe("volume descriptor sequence parsing", () => {
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("no extension\n");
   });
 
+  test("writes, validates, and reads file paths at the ECMA-119 path length limit", () => {
+    const directories = [...Array.from({ length: 6 }, () => "D".repeat(31)), "E".repeat(30)];
+    const fileName = `${"F".repeat(26)}.TXT`;
+    const path = [...directories, fileName].join("/");
+    const image = createIsoImage([{ path, data: "max path length\n" }], {
+      identifierLevel: 2,
+      volumeIdentifier: "PATH_LIMIT",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]).toMatchObject({
+      path,
+      identifier: `${"F".repeat(26)}.TXT;1`,
+    });
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("max path length\n");
+  });
+
   test("writes, validates, and reads a local volume set member", () => {
     const payload = new TextEncoder().encode("volume member data\n");
     const image = createIsoImage([{

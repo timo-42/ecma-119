@@ -742,6 +742,7 @@ function sectorsForBytes(size: number): number {
 
 type PathTableValidationInput = PrimaryVolumeDescriptor | SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor;
 type CanonicalPathTableRecord = PathTableRecord & { key: string };
+const MAX_FILE_PATH_LENGTH = 255;
 
 function validatePathTableReferences(
   image: Uint8Array,
@@ -1297,11 +1298,12 @@ function validateDirectoryHierarchy(
   path: string,
   localVolumeSequenceNumber: number,
   visited: Set<number>,
-  options: { validatePrimaryLevelOne?: boolean; depth?: number } = {},
+  options: { validatePrimaryLevelOne?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const validatePrimaryLevelOne = options.validatePrimaryLevelOne ?? false;
   const depth = options.depth ?? 1;
+  const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
   if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return issues;
   }
@@ -1384,6 +1386,9 @@ function validateDirectoryHierarchy(
       }
       issues.push(...validateOrdinaryDirectoryRecordIdentifier(record, recordPath || "."));
       issues.push(...validateOrdinaryFileExtendedAttributeFlags(record, recordPath || "."));
+      if (!isDirectory && !isMultiExtentContinuationRecord) {
+        issues.push(...validateFilePathLength(record, recordPath || ".", filePathLengthPrefix));
+      }
       const recordKey = ordinaryDirectoryRecordKey(record);
       if (ordinaryRecordKeys.has(recordKey) && !isMultiExtentContinuationRecord) {
         issues.push({
@@ -1455,6 +1460,7 @@ function validateDirectoryHierarchy(
     }
     issues.push(...validateDirectoryHierarchy(image, childDirectory, directory, childPath, localVolumeSequenceNumber, new Set(visited), {
       depth: depth + 1,
+      filePathLengthPrefix: filePathLengthPrefix + record.identifier.length + 1,
       validatePrimaryLevelOne,
     }));
   }
@@ -1466,6 +1472,18 @@ function validateDirectoryHierarchy(
     });
   }
   return issues;
+}
+
+function validateFilePathLength(record: DecodedDirectoryRecord, path: string, filePathLengthPrefix: number): ValidationIssue[] {
+  const filePathLength = filePathLengthPrefix + record.identifier.length;
+  if (filePathLength <= MAX_FILE_PATH_LENGTH) {
+    return [];
+  }
+  return [{
+    code: "directory.file_path_length",
+    message: `file path length at ${path} must not exceed ${MAX_FILE_PATH_LENGTH} bytes`,
+    path,
+  }];
 }
 
 function validateDirectoryDataLength(directory: IsoDirectoryEntry, path: string): ValidationIssue[] {
