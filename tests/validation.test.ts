@@ -289,7 +289,9 @@ describe("validateIsoImage hardening", () => {
     const recordOffset = findDirectoryRecordOffsetByPath(image, ["A", "B", "C", "D", "E", "F", "G", "H.TXT;1"]);
     image[recordOffset + 25] |= 0x02;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/primary directory hierarchy depth at A\/B\/C\/D\/E\/F\/G\/H\.TXT must not exceed 8 levels/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.hierarchy_depth",
@@ -298,6 +300,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("does not apply the primary hierarchy depth rule to supplementary descriptors", () => {
@@ -762,7 +765,9 @@ describe("validateIsoImage hardening", () => {
     image[fileRecordOffset + 32] = invalidFileIdentifier.length;
     image.set(new TextEncoder().encode(invalidFileIdentifier), fileRecordOffset + 33);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/file path length at .* must not exceed 255 bytes/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.file_path_length",
@@ -771,6 +776,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports directory records that are out of ECMA-119 file identifier order", () => {
