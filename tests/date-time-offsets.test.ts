@@ -46,6 +46,27 @@ describe("ECMA-119 date/time zone offsets", () => {
     expect(parsed.files[0]?.date.toISOString()).toBe("2026-07-05T23:02:03.000Z");
   });
 
+  test("reads and validates unspecified directory record dates", () => {
+    const image = createIsoImage([{
+      path: "NODATE.TXT",
+      data: "unspecified directory date\n",
+    }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const rootDirectory = getRootDirectoryBytes(image);
+    const fileRecordOffset = findDirectoryRecordOffset(rootDirectory, "NODATE.TXT;1");
+    rootDirectory.fill(0, fileRecordOffset + 18, fileRecordOffset + 25);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files[0]).toMatchObject({
+      path: "NODATE.TXT",
+      date: null,
+      data: new TextEncoder().encode("unspecified directory date\n"),
+    });
+  });
+
   test("allows file and directory date offsets to override the global offset", () => {
     const date = new Date(Date.UTC(2026, 6, 6, 2, 0, 0));
     const image = createIsoImage([{

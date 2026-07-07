@@ -152,7 +152,7 @@ export type IsoFileEntry = {
   extent: number;
   extendedAttributeRecordLength: number;
   size: number;
-  date: Date;
+  date: Date | null;
   flags: number;
   fileUnitSize: number;
   interleaveGapSize: number;
@@ -180,7 +180,7 @@ export type IsoDirectoryEntry = {
   extent: number;
   extendedAttributeRecordLength: number;
   size: number;
-  date: Date;
+  date: Date | null;
   flags: number;
   fileUnitSize: number;
   interleaveGapSize: number;

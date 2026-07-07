@@ -805,6 +805,22 @@ describe("extended attribute records", () => {
     });
   });
 
+  test("low-level directory record codec preserves unspecified recording dates", () => {
+    const record = encodeDirectoryRecord({
+      extent: 20,
+      dataLength: 1,
+      flags: 0,
+      identifier: asciiBytes("NODATE.TXT;1"),
+      date: null,
+      volumeSequenceNumber: 1,
+    });
+
+    expect([...record.subarray(18, 25)]).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(decodeDirectoryRecord(record, 0)).toMatchObject({
+      date: null,
+    });
+  });
+
   test("low-level directory record decoder rejects malformed layout", () => {
     const identifier = asciiBytes("PADD.TXT;1");
     const date = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));

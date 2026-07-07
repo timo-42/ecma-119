@@ -20,7 +20,7 @@ export type DirectoryRecordInput = {
   fileUnitSize?: number;
   interleaveGapSize?: number;
   identifier: Uint8Array;
-  date: Date;
+  date: Date | null;
   timeZoneOffsetMinutes?: number;
   volumeSequenceNumber?: number;
   systemUse?: Uint8Array;
@@ -31,7 +31,7 @@ export type DecodedDirectoryRecord = {
   extent: number;
   extendedAttributeRecordLength: number;
   dataLength: number;
-  date: Date;
+  date: Date | null;
   flags: number;
   fileUnitSize: number;
   interleaveGapSize: number;

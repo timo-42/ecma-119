@@ -219,14 +219,15 @@ export function sectorOffset(sector: number): number {
   return sector * SECTOR_SIZE;
 }
 
-export function encodeDirectoryDate(date: Date, timeZoneOffsetMinutes = 0): Uint8Array {
+export function encodeDirectoryDate(date: Date | null | undefined, timeZoneOffsetMinutes = 0): Uint8Array {
   const bytes = new Uint8Array(7);
-  writeDirectoryDateTime(dateToDirectoryDateTime(date, timeZoneOffsetMinutes), bytes);
+  writeDirectoryDateTime(date ? dateToDirectoryDateTime(date, timeZoneOffsetMinutes) : null, bytes);
   return bytes;
 }
 
-export function decodeDirectoryDate(bytes: Uint8Array, offset: number): Date {
-  return dateTimeToDate(readDirectoryDateTime(bytes, offset));
+export function decodeDirectoryDate(bytes: Uint8Array, offset: number): Date | null {
+  const value = readDirectoryDateTime(bytes, offset);
+  return value ? dateTimeToDate(value) : null;
 }
 
 export function encodeVolumeDate(date: Date | null | undefined, timeZoneOffsetMinutes = 0): Uint8Array {
@@ -278,13 +279,17 @@ export function dateTimeToDate(value: DirectoryDateTime | VolumeDescriptorDateTi
   return new Date(local.getTime() - value.timeZoneOffsetMinutes * 60_000);
 }
 
-export function writeDirectoryDateTime(value: DirectoryDateTime, bytes: Uint8Array, offset?: number): number;
-export function writeDirectoryDateTime(bytes: Uint8Array, offset: number, value: DirectoryDateTime): void;
-export function writeDirectoryDateTime(first: DirectoryDateTime | Uint8Array, second: Uint8Array | number, third: DirectoryDateTime | number = 0): number | void {
+export function writeDirectoryDateTime(value: DirectoryDateTime | null, bytes: Uint8Array, offset?: number): number;
+export function writeDirectoryDateTime(bytes: Uint8Array, offset: number, value: DirectoryDateTime | null): void;
+export function writeDirectoryDateTime(first: DirectoryDateTime | Uint8Array | null, second: Uint8Array | number, third: DirectoryDateTime | null | number = 0): number | void {
   const bytes = first instanceof Uint8Array ? first : second as Uint8Array;
   const offset = first instanceof Uint8Array ? second as number : third as number;
-  const value = first instanceof Uint8Array ? third as DirectoryDateTime : first;
+  const value = first instanceof Uint8Array ? third as DirectoryDateTime | null : first;
   ensureLength(bytes, offset, 7);
+  if (value === null) {
+    bytes.fill(0, offset, offset + 7);
+    return first instanceof Uint8Array ? undefined : offset + 7;
+  }
   validateDateTime(value);
   bytes[offset] = clampYearSince1900(value.year);
   bytes[offset + 1] = value.month;
@@ -296,8 +301,11 @@ export function writeDirectoryDateTime(first: DirectoryDateTime | Uint8Array, se
   return first instanceof Uint8Array ? undefined : offset + 7;
 }
 
-export function readDirectoryDateTime(bytes: Uint8Array, offset = 0): DirectoryDateTime {
+export function readDirectoryDateTime(bytes: Uint8Array, offset = 0): DirectoryDateTime | null {
   ensureLength(bytes, offset, 7);
+  if (allZero(bytes.subarray(offset, offset + 7))) {
+    return null;
+  }
   const value = {
     year: 1900 + bytes[offset]!,
     month: bytes[offset + 1]!,
@@ -431,6 +439,10 @@ function encodeOffset(minutes: number): number {
 
 function decodeOffset(byte: number): number {
   return (byte > 127 ? byte - 256 : byte) * 15;
+}
+
+function allZero(bytes: Uint8Array): boolean {
+  return bytes.every((byte) => byte === 0);
 }
 
 function clampYearSince1900(year: number): number {
