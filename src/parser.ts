@@ -583,10 +583,10 @@ function validatePathTableReferenceForParsing(
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${label} is invalid: ${message}`);
   }
-  validateDecodedPathTableForParsing(pathTable, label);
+  validateDecodedPathTableForParsing(pathTable, descriptor, label);
 }
 
-function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], label: string): void {
+function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], descriptor: PathTableValidationInput, label: string): void {
   if (pathTable.length === 0) {
     throw new Error(`${label} must contain the root directory record`);
   }
@@ -594,12 +594,16 @@ function validateDecodedPathTableForParsing(pathTable: PathTableRecord[], label:
   if (root.parentDirectoryNumber !== 1 || root.identifier.length !== 1 || root.identifier[0] !== 0) {
     throw new Error(`${label} first record must be the root directory with parent number 1`);
   }
+  const directoryIdentifierLengthLimit = pathTableDirectoryIdentifierLengthLimit(descriptor);
   for (const [index, record] of pathTable.entries()) {
     const invalidParent = index === 0
       ? record.parentDirectoryNumber !== 1
       : record.parentDirectoryNumber < 1 || record.parentDirectoryNumber >= index + 1;
     if (invalidParent) {
       throw new Error(`${label} record ${index + 1} parent number ${record.parentDirectoryNumber} does not reference an earlier directory`);
+    }
+    if (index !== 0 && record.identifier.length > directoryIdentifierLengthLimit) {
+      throw new Error(`${label} record ${index + 1} directory identifier length must not exceed ${directoryIdentifierLengthLimit} bytes`);
     }
   }
 }
@@ -3571,6 +3575,9 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "directory.directory_identifier.length" && message.includes("directory record directory identifier length")) {
+      return true;
+    }
+    if (issue.code.includes("_path_table.") && issue.code.endsWith(".identifier.length") && message.includes("path table record")) {
       return true;
     }
     if (
