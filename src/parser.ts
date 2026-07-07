@@ -1786,6 +1786,7 @@ function validateDescriptorRootFileReferences(
     return [];
   }
   const issues: ValidationIssue[] = [];
+  const path = descriptorRootValidationPath(descriptor);
   const fields = [
     { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 318, 128), code: "publisher_identifier.file_reference", label: "publisher identifier" },
     { identifier: prefixedDescriptorFileIdentifier(descriptor.raw, 446, 128), code: "data_preparer_identifier.file_reference", label: "data preparer identifier" },
@@ -1802,10 +1803,15 @@ function validateDescriptorRootFileReferences(
       issues.push({
         code: `${codePrefix}.${field.code}`,
         message: `${descriptor.kind} volume descriptor ${field.label} references ${field.identifier}, which is not a file described in the root directory`,
+        path,
       });
     }
   }
   return issues;
+}
+
+function descriptorRootValidationPath(descriptor: PathTableValidationInput): string {
+  return descriptor.kind === "primary" ? "." : `${descriptor.kind}:.`;
 }
 
 function prefixedDescriptorFileIdentifier(bytes: Uint8Array, offset: number, length: number): string | undefined {
