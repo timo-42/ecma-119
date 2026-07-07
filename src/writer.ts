@@ -13,7 +13,7 @@ import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FIL
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
+import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -1060,7 +1060,7 @@ function checkedInterleavedExtendedAttributeRecordLength(
   return section.fileUnitSize;
 }
 
-function writeSystemArea(image: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {
+function writeSystemArea(image: Uint8Array, value: ByteInput | undefined): void {
   if (value === undefined) {
     return;
   }
@@ -1072,7 +1072,7 @@ function writeSystemArea(image: Uint8Array, value: Uint8Array | Buffer | string 
   image.set(systemArea, 0);
 }
 
-function writeApplicationUse(bytes: Uint8Array, value: Uint8Array | Buffer | string | undefined): void {
+function writeApplicationUse(bytes: Uint8Array, value: ByteInput | undefined): void {
   if (value === undefined) {
     return;
   }
@@ -1232,7 +1232,7 @@ function comparePathTableIdentifierBytes(left: Uint8Array, right: Uint8Array): n
   return 0;
 }
 
-function toBytes(data: Uint8Array | Buffer | string): Uint8Array {
+function toBytes(data: ByteInput): Uint8Array {
   if (typeof data === "string") {
     return new TextEncoder().encode(data);
   }
@@ -1242,7 +1242,7 @@ function toBytes(data: Uint8Array | Buffer | string): Uint8Array {
   return new Uint8Array(data);
 }
 
-function isExtendedAttributeRecordInput(data: Uint8Array | Buffer | string | ExtendedAttributeRecordInput): data is ExtendedAttributeRecordInput {
+function isExtendedAttributeRecordInput(data: ByteInput | ExtendedAttributeRecordInput): data is ExtendedAttributeRecordInput {
   return typeof data === "object" && !(data instanceof Uint8Array);
 }
 

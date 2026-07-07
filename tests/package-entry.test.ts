@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, posix as pathPosix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -55,6 +55,20 @@ function dryRunPacklist(): Set<string> {
   });
   const [{ files }] = JSON.parse(packOutput) as PackDryRunOutput;
   return new Set(files.map((file) => pathPosix.normalize(file.path)));
+}
+
+function declarationFiles(directory: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory)) {
+    const path = resolve(directory, entry);
+    const stats = statSync(path);
+    if (stats.isDirectory()) {
+      files.push(...declarationFiles(path));
+    } else if (entry.endsWith(".d.ts")) {
+      files.push(path);
+    }
+  }
+  return files;
 }
 
 describe("package entry", () => {
@@ -131,6 +145,16 @@ describe("package entry", () => {
           `${mapFile} references ${source}, but ${referencedPath} is not included in the package`,
         ).toBe(true);
       }
+    }
+  }, 20_000);
+
+  test("public declarations do not require Node Buffer globals", () => {
+    buildPackage();
+    const declarations = declarationFiles(resolve(root, "dist"));
+
+    expect(declarations.length).toBeGreaterThan(0);
+    for (const declaration of declarations) {
+      expect(readFileSync(declaration, "utf8")).not.toMatch(/\bBuffer\b/u);
     }
   }, 20_000);
 });
