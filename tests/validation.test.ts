@@ -3330,6 +3330,31 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports enhanced Type M path table parent issues", () => {
+    const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "nested\n" }], {
+      volumeIdentifier: "VALIDATION",
+      enhancedVolumeDescriptors: [{
+        volumeIdentifier: "ENHANCED",
+      }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    const pathTableOffset = readUint32BE(image, enhancedDescriptorOffset + 148) * SECTOR_SIZE;
+    const rootPathTableRecordLength = 10;
+    const childParentDirectoryNumberOffset = pathTableOffset + rootPathTableRecordLength + 6;
+    image[childParentDirectoryNumberOffset] = 0;
+    image[childParentDirectoryNumberOffset + 1] = 2;
+
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "enhanced_path_table.big.parent",
+          message: expect.stringMatching(/Type M path table record 2 parent number 2/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports zero enhanced path table parent directory numbers as range issues", () => {
     const image = createIsoImage([{ path: "DIR/FILE.TXT", data: "enhanced parent zero\n" }], {
       volumeIdentifier: "VALIDATION",
