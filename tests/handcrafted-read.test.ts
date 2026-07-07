@@ -437,15 +437,26 @@ describe("handcrafted ISO reader fixture", () => {
 
     const unresolved = parseIsoImage(volumeTwo, { includeData: true }).descriptors.find((descriptor) => descriptor.kind === kind);
     const volumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: true });
+    const metadataOnlyVolumeSet = parseIsoVolumeSet([volumeOne, volumeTwo], { includeData: false });
     const resolved = volumeSet.images[1]?.descriptors.find((descriptor) => descriptor.kind === kind);
+    const metadataOnlyResolved = metadataOnlyVolumeSet.images[1]?.descriptors.find((descriptor) => descriptor.kind === kind);
     const resolvedDirectory = resolved?.kind === kind
       ? resolved.rootDirectoryRecord.children.find((entry) => "children" in entry && entry.path === "ALT")
+      : undefined;
+    const metadataOnlyDirectory = metadataOnlyResolved?.kind === kind
+      ? metadataOnlyResolved.rootDirectoryRecord.children.find((entry) => "children" in entry && entry.path === "ALT")
       : undefined;
     const resolvedFile = resolvedDirectory && "children" in resolvedDirectory
       ? resolvedDirectory.children.find((entry) => entry.path === "ALT/CHILD.TXT")
       : undefined;
+    const metadataOnlyFile = metadataOnlyDirectory && "children" in metadataOnlyDirectory
+      ? metadataOnlyDirectory.children.find((entry) => entry.path === "ALT/CHILD.TXT")
+      : undefined;
     const resolvedRootFile = resolved?.kind === kind
       ? resolved.rootDirectoryRecord.children.find((entry) => !("children" in entry) && entry.identifier === "SUPAPP.TXT;1")
+      : undefined;
+    const metadataOnlyRootFile = metadataOnlyResolved?.kind === kind
+      ? metadataOnlyResolved.rootDirectoryRecord.children.find((entry) => !("children" in entry) && entry.identifier === "SUPAPP.TXT;1")
       : undefined;
 
     expect(validateIsoImage(volumeOne)).toEqual([]);
@@ -469,6 +480,13 @@ describe("handcrafted ISO reader fixture", () => {
       size: data.byteLength,
     });
     expect(resolvedFile && !("children" in resolvedFile) ? resolvedFile.data : undefined).toEqual(data);
+    expect(metadataOnlyFile).toMatchObject({
+      path: "ALT/CHILD.TXT",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: data.byteLength,
+    });
+    expect(metadataOnlyFile && !("children" in metadataOnlyFile) ? metadataOnlyFile.data : undefined).toBeUndefined();
     expect(resolvedRootFile).toMatchObject({
       path: "SUPAPP.TXT",
       identifier: "SUPAPP.TXT;1",
@@ -477,6 +495,14 @@ describe("handcrafted ISO reader fixture", () => {
       size: data.byteLength,
     });
     expect(resolvedRootFile && !("children" in resolvedRootFile) ? resolvedRootFile.data : undefined).toEqual(data);
+    expect(metadataOnlyRootFile).toMatchObject({
+      path: "SUPAPP.TXT",
+      identifier: "SUPAPP.TXT;1",
+      volumeSequenceNumber: 1,
+      external: true,
+      size: data.byteLength,
+    });
+    expect(metadataOnlyRootFile && !("children" in metadataOnlyRootFile) ? metadataOnlyRootFile.data : undefined).toBeUndefined();
   });
 });
 
