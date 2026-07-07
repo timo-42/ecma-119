@@ -1714,6 +1714,13 @@ function validateDotDirectoryRecord(
       path,
     });
   }
+  if (record.volumeSequenceNumber !== expectedEntry.volumeSequenceNumber) {
+    issues.push({
+      code: `${code}.volume_sequence_number`,
+      message: `directory ${recordName} record at ${path} does not match the ${expectedName} volume sequence number`,
+      path,
+    });
+  }
 
   return issues;
 }
@@ -2311,6 +2318,9 @@ function assertDotDirectoryRecordForParsing(
     || record.dataLength !== expectedEntry.size
   ) {
     throw new Error(`directory ${recordName} record at ${path} does not match the ${expectedName} extent fields`);
+  }
+  if (record.volumeSequenceNumber !== expectedEntry.volumeSequenceNumber) {
+    throw new Error(`directory ${recordName} record at ${path} does not match the ${expectedName} volume sequence number`);
   }
 }
 
