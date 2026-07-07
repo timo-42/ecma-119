@@ -68,6 +68,8 @@ Use `bootRecord` for a single Boot Record descriptor or `bootRecords` for additi
 
 `terminatorCount` defaults to 1 and may be set from 1 through 255 to emit one or more Volume Descriptor Set Terminators.
 
+Generated and parsed descriptor sequences follow the ECMA-119 Volume Descriptor Set order: one Primary Volume Descriptor, zero or more Supplementary Volume Descriptors, zero or more Enhanced Volume Descriptors, zero or more Volume Partition Descriptors, zero or more Boot Records, and one or more Volume Descriptor Set Terminators.
+
 `volumeSetSize` and `volumeSequenceNumber` default to 1. They may be set to describe the generated image as a local member of a larger volume set; generated directory records use the same local sequence number. When parsing, directory and file records whose volume sequence number is within the descriptor volume set but differs from the local volume are returned as unresolved external entries with `external: true`; their metadata is preserved, but file payloads and external directory children are not loaded from the local image.
 
 File input `version` defaults to 1 and may be set from 1 through 32767 to write a non-default ECMA-119 file version number. The parser preserves the full identifier, such as `README.TXT;2`, while `path` omits the version suffix.
