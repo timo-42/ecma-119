@@ -1982,9 +1982,13 @@ function validateSecondaryEscapeSequences(
 }
 
 function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sector: number): SupplementaryVolumeDescriptor | EnhancedVolumeDescriptor {
-  const rootRecord = image[offset + 156] === 0 ? undefined : decodeDirectoryRecord(image, offset + 156, offset + 190);
+  const descriptorKind = image[offset + 6] === 2 ? "enhanced" : "supplementary";
+  if (image[offset + 156] === 0) {
+    throw new Error(`missing directory record at ${descriptorKind}:.`);
+  }
+  const rootRecord = decodeDirectoryRecord(image, offset + 156, offset + 190);
   const common = {
-    ...baseDescriptor(image, offset, sector, image[offset + 6] === 2 ? "enhanced" : "supplementary"),
+    ...baseDescriptor(image, offset, sector, descriptorKind),
     type: 2 as const,
     volumeFlags: image[offset + 7]!,
     systemIdentifier: readAsciiTrimmed(image, offset + 8, 32),
@@ -1998,7 +2002,7 @@ function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sec
     optionalTypeLPathTableLocation: readUint32LEAt(image, offset + 144),
     typeMPathTableLocation: readUint32BEAt(image, offset + 148),
     optionalTypeMPathTableLocation: readUint32BEAt(image, offset + 152),
-    rootDirectoryRecord: rootRecord ? directoryEntryFromRecord(rootRecord, "", []) : emptyDirectoryEntry(),
+    rootDirectoryRecord: directoryEntryFromRecord(rootRecord, "", []),
     volumeSetIdentifier: readAsciiTrimmed(image, offset + 190, 128),
     publisherIdentifier: readAsciiTrimmed(image, offset + 318, 128),
     dataPreparerIdentifier: readAsciiTrimmed(image, offset + 446, 128),
@@ -2025,22 +2029,6 @@ function decodeSecondaryVolumeDate(image: Uint8Array, offset: number): Date | nu
     return null;
   }
   return decodeVolumeDate(image, offset);
-}
-
-function emptyDirectoryEntry(): IsoDirectoryEntry {
-  return {
-    path: "",
-    identifier: "",
-    extent: 0,
-    extendedAttributeRecordLength: 0,
-    size: 0,
-    date: new Date(0),
-    flags: FILE_FLAG_DIRECTORY,
-    fileUnitSize: 0,
-    interleaveGapSize: 0,
-    volumeSequenceNumber: 1,
-    children: [],
-  };
 }
 
 function parsePartitionDescriptor(image: Uint8Array, offset: number, sector: number): VolumePartitionDescriptor {
