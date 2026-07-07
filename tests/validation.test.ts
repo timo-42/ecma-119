@@ -1981,6 +1981,32 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("reports regular file extents outside the image without duplicate parse issues", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "file bounds\n" }]);
+    const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
+    const fileRecordOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "README.TXT;1");
+    writeUint32Both(image, fileRecordOffset + 2, image.byteLength / SECTOR_SIZE);
+
+    expect(() => parseIsoImage(image)).toThrow(/invalid extent bounds for README\.TXT/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.file_extent_bounds",
+          path: "README.TXT",
+          message: "file record at README.TXT has invalid extent bounds",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "image.parse",
+        }),
+      ]),
+    );
+  });
+
   test("reports descriptor root directory data lengths that are not logical block multiples", () => {
     const image = baselineImage([{ path: "README.TXT", data: "root alignment\n" }]);
     const rootDirectoryOffset = rootDirectoryExtent(image) * SECTOR_SIZE;
