@@ -472,6 +472,120 @@ describe("extended attribute records", () => {
     );
   });
 
+  test.each([
+    {
+      label: "application use and escape sequence bounds",
+      input: { applicationUse: asciiBytes("app"), escapeSequences: Uint8Array.of(0x25) },
+      code: "extended_attribute_record.application_use_escape_sequences.bounds",
+      message: /application use and escape sequences.*exceed record length/i,
+      mutate: (bytes: Uint8Array) => writeBoth16(bytes, 246, 0xffff),
+    },
+    {
+      label: "owner and group pairing",
+      input: {},
+      code: "extended_attribute_record.owner_group",
+      message: /owner identification and group identification.*both be zero or both be nonzero/i,
+      mutate: (bytes: Uint8Array) => writeBoth16(bytes, 0, 1),
+    },
+    {
+      label: "permissions",
+      input: {},
+      code: "extended_attribute_record.permissions",
+      message: /permissions.*bits 1,3,5,7,9,11,13,15/i,
+      mutate: (bytes: Uint8Array) => {
+        bytes[8] = 0;
+        bytes[9] = 0;
+      },
+    },
+    {
+      label: "reserved record format",
+      input: {},
+      code: "extended_attribute_record.record_format.reserved",
+      message: /record format.*reserved value 4/i,
+      mutate: (bytes: Uint8Array) => {
+        bytes[78] = 4;
+      },
+    },
+    {
+      label: "reserved record attributes",
+      input: {},
+      code: "extended_attribute_record.record_attributes.reserved",
+      message: /record attributes.*reserved value 3/i,
+      mutate: (bytes: Uint8Array) => {
+        bytes[79] = 3;
+      },
+    },
+    {
+      label: "record length for format zero",
+      input: {},
+      code: "extended_attribute_record.record_length",
+      message: /record length.*must be zero when record format is zero/i,
+      mutate: (bytes: Uint8Array) => writeBoth16(bytes, 80, 1),
+    },
+    {
+      label: "fixed record length",
+      input: { recordFormat: 1, recordLength: 1 },
+      code: "extended_attribute_record.record_length",
+      message: /record length.*at least one for fixed-length records/i,
+      mutate: (bytes: Uint8Array) => writeBoth16(bytes, 80, 0),
+    },
+    {
+      label: "variable record length",
+      input: { recordFormat: 2, recordLength: 1 },
+      code: "extended_attribute_record.record_length",
+      message: /record length.*1 through 32767 for variable-length records/i,
+      mutate: (bytes: Uint8Array) => writeBoth16(bytes, 80, 0),
+    },
+    {
+      label: "version",
+      input: {},
+      code: "extended_attribute_record.version",
+      message: /version.*must be 1/i,
+      mutate: (bytes: Uint8Array) => {
+        bytes[180] = 2;
+      },
+    },
+  ])("reports targeted malformed $label in raw extended attribute records", ({ input, code, message, mutate }) => {
+    const data = asciiBytes("malformed scalar ear\n");
+    const image = createIsoImage([{
+      path: "BADSCAL.TXT",
+      data,
+      extendedAttributeRecord: {
+        systemIdentifier: "VALIDATION",
+        ...input,
+      },
+    }]);
+    const record = findRootFileRecord(image, "BADSCAL.TXT;1");
+    const extent = readBoth32(record, 2);
+    const ear = sector(image, extent);
+
+    mutate(ear);
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    expect(parsed.files[0]?.data).toEqual(data);
+    expect(parsed.files[0]?.extendedAttributeRecord).toEqual(ear);
+    expect(parsed.files[0]?.extendedAttributeRecordFields).toBeUndefined();
+
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code,
+          path: "BADSCAL.TXT",
+          message: expect.stringMatching(message),
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "extended_attribute_record.parse",
+          path: "BADSCAL.TXT",
+        }),
+      ]),
+    );
+  });
+
   test("preserves opaque raw extended attribute bytes even when structured decoding fails", () => {
     const data = asciiBytes("opaque raw ear\n");
     const extendedAttributeRecord = new Uint8Array(SECTOR_SIZE);
