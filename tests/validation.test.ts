@@ -790,7 +790,9 @@ describe("validateIsoImage hardening", () => {
     expect(image[aOffset]).toBe(image[bOffset]);
     swapBytes(image, aOffset, bOffset, image[aOffset]!);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory records at \. are not ordered according to ECMA-119 file identifier ordering at A\.TXT/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.record_order",
@@ -799,6 +801,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports associated file records that are not sorted before non-associated records with the same identifier", () => {
@@ -813,7 +816,9 @@ describe("validateIsoImage hardening", () => {
     image.set(image.subarray(aOffset + 33, aOffset + 33 + identifierLength), bOffset + 33);
     image[bOffset + 25] |= 0x04;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory records at \. are not ordered according to ECMA-119 file identifier ordering at A\.TXT/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.record_order",
@@ -822,6 +827,19 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test("accepts associated file records sorted before non-associated records with the same identifier", () => {
+    const image = baselineImage([
+      { path: "PAIR.TXT", data: "regular\n" },
+      { path: "PAIR.TXT", data: "associated\n", associated: true },
+    ]);
+    const parsed = parseIsoImage(image, { includeData: true });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.files.map((file) => file.flags)).toEqual([0x04, 0x00]);
+    expect(parsed.files.map((file) => file.identifier)).toEqual(["PAIR.TXT;1", "PAIR.TXT;1"]);
   });
 
   test("reports duplicate ordinary directory records in the same directory", () => {
@@ -834,7 +852,9 @@ describe("validateIsoImage hardening", () => {
     const bOffset = findDirectoryRecordOffset(image, rootDirectoryOffset, SECTOR_SIZE, "B.TXT;1");
     copyDirectoryRecordIdentifier(image, aOffset, bOffset);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory records at \. contain duplicate file identifier entries at A\.TXT/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.record_duplicate",
@@ -843,6 +863,7 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("does not report associated and non-associated records with the same identifier as duplicates", () => {
@@ -874,7 +895,9 @@ describe("validateIsoImage hardening", () => {
     const bOffset = findDirectoryRecordOffsetByPath(image, ["DIR", "B.TXT;1"]);
     copyDirectoryRecordIdentifier(image, aOffset, bOffset);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory records at DIR contain duplicate file identifier entries at DIR\/A\.TXT/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "directory.record_duplicate",
@@ -883,6 +906,42 @@ describe("validateIsoImage hardening", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test.each([
+    {
+      kind: "supplementary",
+      options: { supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+    },
+    {
+      kind: "enhanced",
+      options: { enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }] },
+      descriptorOffset: 17 * SECTOR_SIZE,
+    },
+  ])("rejects duplicate ordinary directory records in $kind descriptor trees during parsing", ({ kind, options, descriptorOffset }) => {
+    const image = createIsoImage([{ path: "A.TXT", data: "a\n" }, { path: "B.TXT", data: "b\n" }], {
+      volumeIdentifier: "VALIDATION",
+      ...options,
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const aOffset = findDirectoryRecordOffsetByPath(image, ["A.TXT;1"], descriptorOffset + 156);
+    const bOffset = findDirectoryRecordOffsetByPath(image, ["B.TXT;1"], descriptorOffset + 156);
+    copyDirectoryRecordIdentifier(image, aOffset, bOffset);
+
+    expect(() => parseIsoImage(image)).toThrow(/directory records at \. contain duplicate file identifier entries at A\.TXT/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.record_duplicate",
+          path: `${kind}:./A.TXT`,
+          message: `directory records at ${kind}:. contain duplicate file identifier entries`,
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports Type L and Type M path table mirror mismatches", () => {

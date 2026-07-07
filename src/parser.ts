@@ -2361,6 +2361,9 @@ function readDirectoryTree(
   const children: IsoNode[] = [];
   let offset = 0;
   let recordIndex = 0;
+  let previousOrdinaryRecord: DecodedDirectoryRecord | undefined;
+  let previousOrdinaryPath = "";
+  const ordinaryRecordKeys = new Set<string>();
 
   while (offset < bytes.byteLength) {
     const length = bytes[offset]!;
@@ -2398,6 +2401,10 @@ function readDirectoryTree(
     const cleanName = stripVersion(identifier);
     const recordPath = joinPath(path, cleanName) || ".";
     assertOrdinaryDirectoryRecordIdentifierForParsing(record, recordPath);
+    assertDirectoryRecordUniquenessForParsing(record, ordinaryRecordKeys, recordPath, path || ".");
+    assertDirectoryRecordOrderForParsing(previousOrdinaryRecord, record, recordPath, previousOrdinaryPath, path || ".");
+    previousOrdinaryRecord = record;
+    previousOrdinaryPath = recordPath;
     if (options.validatePrimaryHierarchyDepth && isDirectory && record.volumeSequenceNumber === localVolumeSequenceNumber) {
       assertPrimaryHierarchyDepthForParsing(depth + 1, recordPath);
     }
@@ -2502,6 +2509,26 @@ function hasNonzeroUnusedDirectoryBytes(bytes: Uint8Array, offset: number, nextS
 function assertOrdinaryDirectoryRecordIdentifierForParsing(record: DecodedDirectoryRecord, path: string): void {
   if (record.identifier.length === 1 && (record.identifier[0] === 0 || record.identifier[0] === 1)) {
     throw new Error(`directory record at ${path} must not use special identifier ${record.identifier[0]} outside self/parent records`);
+  }
+}
+
+function assertDirectoryRecordUniquenessForParsing(record: DecodedDirectoryRecord, keys: Set<string>, recordPath: string, directoryPath: string): void {
+  const key = ordinaryDirectoryRecordKey(record);
+  if (keys.has(key)) {
+    throw new Error(`directory records at ${directoryPath} contain duplicate file identifier entries at ${recordPath}`);
+  }
+  keys.add(key);
+}
+
+function assertDirectoryRecordOrderForParsing(
+  previousRecord: DecodedDirectoryRecord | undefined,
+  record: DecodedDirectoryRecord,
+  recordPath: string,
+  previousPath: string,
+  directoryPath: string,
+): void {
+  if (previousRecord && compareDirectoryRecordOrder(previousRecord, record) > 0) {
+    throw new Error(`directory records at ${directoryPath} are not ordered according to ECMA-119 file identifier ordering at ${recordPath || previousPath || directoryPath}`);
   }
 }
 
@@ -3804,6 +3831,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "directory.file_path_length" && message.includes("file path length")) {
+      return true;
+    }
+    if (issue.code === "directory.record_order" && message.includes("ECMA-119 file identifier ordering")) {
+      return true;
+    }
+    if (issue.code === "directory.record_duplicate" && message.includes("duplicate file identifier entries")) {
       return true;
     }
     if (issue.code.includes("_path_table.") && issue.code.endsWith(".identifier.length") && message.includes("path table record")) {
