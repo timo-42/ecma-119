@@ -303,7 +303,7 @@ describe("validateIsoImage hardening", () => {
     expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
-  test("does not apply the primary hierarchy depth rule to supplementary descriptors", () => {
+  test("reports supplementary hierarchy depth violations in external images", () => {
     const image = createIsoImage([{ path: "A/B/C/D/E/F/G/H.TXT", data: "supplementary depth\n" }], {
       volumeIdentifier: "DEPTH",
       supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
@@ -314,6 +314,34 @@ describe("validateIsoImage hardening", () => {
       image,
       ["A", "B", "C", "D", "E", "F", "G", "H.TXT;1"],
       supplementaryDescriptorOffset + 156,
+    );
+    image[recordOffset + 25] |= 0x02;
+
+    expect(() => parseIsoImage(image)).toThrow(/supplementary directory hierarchy depth at A\/B\/C\/D\/E\/F\/G\/H\.TXT must not exceed 8 levels/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "directory.hierarchy_depth",
+          path: "supplementary:./A/B/C/D/E/F/G/H.TXT",
+          message: "supplementary directory hierarchy depth must not exceed 8 levels",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
+  test("does not apply the hierarchy depth limit to enhanced descriptors", () => {
+    const image = createIsoImage([{ path: "A/B/C/D/E/F/G/H.TXT", data: "enhanced depth\n" }], {
+      volumeIdentifier: "DEPTH",
+      enhancedVolumeDescriptors: [{ volumeIdentifier: "ENH" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const enhancedDescriptorOffset = 17 * SECTOR_SIZE;
+    const recordOffset = findDirectoryRecordOffsetByPath(
+      image,
+      ["A", "B", "C", "D", "E", "F", "G", "H.TXT;1"],
+      enhancedDescriptorOffset + 156,
     );
     image[recordOffset + 25] |= 0x02;
 
