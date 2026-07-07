@@ -70,6 +70,7 @@ export function parseIsoImage(imageInput: Uint8Array | ArrayBuffer, options: { i
       assertDescriptorPathTableHierarchy(image, descriptor, `${descriptor.kind}_path_table`);
     }
   }
+  assertPrimaryVolumeSpaceSize(image, pvd, populatedDescriptors);
   const primaryVolumeDescriptor = populatedDescriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
   if (!primaryVolumeDescriptor) {
     throw new Error("missing primary volume descriptor");
@@ -819,15 +820,26 @@ function validateVolumeSpaceSize(
   }
   const minimumVolumeSpaceSize = minimumReferencedVolumeSpaceSize(image, descriptors);
   if (Number.isFinite(minimumVolumeSpaceSize) && descriptor.volumeSpaceSize < minimumVolumeSpaceSize) {
-    const message = codePrefix === "pvd"
-      ? `volume space size ${descriptor.volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`
-      : `${codePrefix} volume space size ${descriptor.volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`;
+    const message = volumeSpaceLowerBoundMessage(descriptor.volumeSpaceSize, minimumVolumeSpaceSize, codePrefix);
     issues.push({
       code: `${codePrefix}.volume_space_size.lower_bound`,
       message,
     });
   }
   return issues;
+}
+
+function volumeSpaceLowerBoundMessage(volumeSpaceSize: number, minimumVolumeSpaceSize: number, codePrefix: string): string {
+  return codePrefix === "pvd"
+    ? `volume space size ${volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`
+    : `${codePrefix} volume space size ${volumeSpaceSize} is smaller than referenced sector end ${minimumVolumeSpaceSize}`;
+}
+
+function assertPrimaryVolumeSpaceSize(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): void {
+  const issues = validateVolumeSpaceSize(image, pvd, descriptors, "pvd");
+  if (issues.length > 0) {
+    throw new Error(issues[0]!.message);
+  }
 }
 
 function minimumReferencedVolumeSpaceSize(image: Uint8Array, descriptors: VolumeDescriptor[]): number {
@@ -3252,16 +3264,19 @@ function assertSupportedPartitionVolumeDescriptor(image: Uint8Array, descriptor:
   const location = descriptor.volumePartitionLocation;
   const size = descriptor.volumePartitionSize;
   const end = location + size;
-  const volumeSpaceSectors = Math.min(Math.floor(image.byteLength / SECTOR_SIZE), pvd.volumeSpaceSize);
+  const imageSectors = Math.floor(image.byteLength / SECTOR_SIZE);
   if (
     !Number.isInteger(location)
     || !Number.isInteger(size)
     || size < 1
     || end > 0xffffffff
-    || end > volumeSpaceSectors
-    || location > volumeSpaceSectors
+    || end > imageSectors
+    || location > imageSectors
   ) {
     throw new Error(`volume partition extent ${location}+${size} is out of bounds`);
+  }
+  if (end > pvd.volumeSpaceSize) {
+    throw new Error(volumeSpaceLowerBoundMessage(pvd.volumeSpaceSize, end, "pvd"));
   }
 }
 
@@ -3669,6 +3684,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code.endsWith(".root_directory_record.identifier") && issue.message === message) {
+      return true;
+    }
+    if (
+      (issue.code === "pvd.volume_space_size" || issue.code === "pvd.volume_space_size.lower_bound")
+      && issue.message === message
+    ) {
       return true;
     }
     if (

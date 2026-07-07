@@ -245,13 +245,13 @@ describe("volume partition descriptor writing", () => {
 
     expect(parseVolumeDescriptors(image).some((descriptor) => descriptor.kind === "partition")).toBe(true);
     expect(() => parseIsoImage(image, { includeData: false })).toThrow(
-      new RegExp(`volume partition extent ${partition!.volumePartitionLocation}\\+${partition!.volumePartitionSize} is out of bounds`, "i"),
+      new RegExp(`volume space size .* is smaller than referenced sector end ${partition!.volumePartitionLocation + partition!.volumePartitionSize}`, "i"),
     );
     expect(validateIsoImage(image)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "partition.bounds",
-          message: expect.stringMatching(/out of bounds/i),
+          code: "pvd.volume_space_size.lower_bound",
+          message: expect.stringMatching(/smaller than referenced sector end/i),
         }),
       ]),
     );

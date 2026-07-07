@@ -1401,6 +1401,25 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test("rejects primary volume space sizes that exceed the image length during parsing", () => {
+    const image = baselineImage([{ path: "README.TXT", data: "volume space length\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["README.TXT"]);
+
+    setPrimaryVolumeSpaceSize(image, image.length / SECTOR_SIZE + 1);
+
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size exceeds image length$/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pvd.volume_space_size",
+          message: "volume space size exceeds image length",
+        }),
+      ]),
+    );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+  });
+
   test("reports primary volume space smaller than descriptor sequence", () => {
     const image = createIsoImage([{ path: "README.TXT", data: "descriptor sequence\n" }], {
       supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPP" }],
@@ -1409,11 +1428,14 @@ describe("validateIsoImage hardening", () => {
     });
     setPrimaryVolumeSpaceSize(image, 17);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size 17 is smaller than referenced sector end /i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports primary volume space smaller than primary path tables", () => {
@@ -1422,11 +1444,14 @@ describe("validateIsoImage hardening", () => {
     const pathTableSize = readBothEndianUint32(image, PVD_OFFSET + 132);
     setPrimaryVolumeSpaceSize(image, typeMPathTableLocation + Math.ceil(pathTableSize / SECTOR_SIZE) - 1);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size .* is smaller than referenced sector end /i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports primary volume space smaller than file extended attribute record and data", () => {
@@ -1443,11 +1468,14 @@ describe("validateIsoImage hardening", () => {
     const fileExtendedAttributeRecordLength = image[fileRecordOffset + 1]!;
     setPrimaryVolumeSpaceSize(image, fileExtent + fileExtendedAttributeRecordLength);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size .* is smaller than referenced sector end /i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports primary volume space smaller than directory extended attribute record and directory data", () => {
@@ -1466,11 +1494,14 @@ describe("validateIsoImage hardening", () => {
     const dirExtendedAttributeRecordLength = image[dirRecordOffset + 1]!;
     setPrimaryVolumeSpaceSize(image, dirExtent + dirExtendedAttributeRecordLength);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size .* is smaller than referenced sector end /i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports primary volume space smaller than supplementary directory tree", () => {
@@ -1482,11 +1513,14 @@ describe("validateIsoImage hardening", () => {
     const supplementaryRootExtent = readBothEndianUint32(image, supplementaryDescriptorOffset + 156 + 2);
     setPrimaryVolumeSpaceSize(image, supplementaryRootExtent);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size .* is smaller than referenced sector end /i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports primary volume space smaller than volume partition extent", () => {
@@ -1502,11 +1536,14 @@ describe("validateIsoImage hardening", () => {
     expect(partition).toBeDefined();
     setPrimaryVolumeSpaceSize(image, partition!.volumePartitionLocation + partition!.volumePartitionSize - 1);
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/^volume space size .* is smaller than referenced sector end /i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expectVolumeSpaceLowerBoundIssue(),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports a path table record that points to itself as parent", () => {
