@@ -183,7 +183,9 @@ describe("extended attribute records", () => {
     const recordOffset = findRootFileRecordOffset(image, "DIR");
     rootDirectory[recordOffset + 25] &= ~0x10;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory record flags for DIR do not match associated extended attribute record fields/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "extended_attribute_record.file_flags",
@@ -192,6 +194,7 @@ describe("extended attribute records", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports file extended attribute flag mismatches", () => {
@@ -210,7 +213,9 @@ describe("extended attribute records", () => {
     const recordOffset = findRootFileRecordOffset(image, "EAR.TXT;1");
     rootDirectory[recordOffset + 25] &= ~0x08;
 
-    expect(validateIsoImage(image)).toEqual(
+    expect(() => parseIsoImage(image)).toThrow(/directory record flags for EAR\.TXT do not match associated extended attribute record fields/i);
+    const issues = validateIsoImage(image);
+    expect(issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           code: "extended_attribute_record.file_flags",
@@ -219,6 +224,7 @@ describe("extended attribute records", () => {
         }),
       ]),
     );
+    expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
   test("reports directories that set the Record file flag", () => {

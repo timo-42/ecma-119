@@ -2439,6 +2439,7 @@ function readDirectoryTree(
         child.extendedAttributeRecord = readExtendedAttributeRecord(image, record);
         const fields = decodeOptionalExtendedAttributeRecord(child.extendedAttributeRecord);
         if (fields) {
+          assertExtendedAttributeRecordFileFlagsMatch(record, fields, recordPath);
           child.extendedAttributeRecordFields = fields;
         }
       }
@@ -2471,6 +2472,7 @@ function readDirectoryTree(
         file.extendedAttributeRecord = readExtendedAttributeRecord(image, firstRecord);
         const fields = decodeOptionalExtendedAttributeRecord(file.extendedAttributeRecord);
         if (fields) {
+          assertExtendedAttributeRecordFileFlagsMatch(firstRecord, fields, filePath);
           file.extendedAttributeRecordFields = fields;
         }
       }
@@ -2493,6 +2495,7 @@ function readDirectoryTree(
     entry.extendedAttributeRecord = image.slice(directory.extent * SECTOR_SIZE, (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE);
     const fields = decodeOptionalExtendedAttributeRecord(entry.extendedAttributeRecord);
     if (fields) {
+      assertExtendedAttributeRecordFileFlagsMatch(entry, fields, path || ".");
       entry.extendedAttributeRecordFields = fields;
     }
   }
@@ -3379,6 +3382,20 @@ function assertDirectoryRecordExtendedAttributeFlagBacking(
   }
 }
 
+function assertExtendedAttributeRecordFileFlagsMatch(
+  entry: Pick<DecodedDirectoryRecord | IsoDirectoryEntry, "flags">,
+  fields: ReturnType<typeof decodeExtendedAttributeRecord>,
+  path: string,
+): void {
+  const expected = (entry.flags & FILE_FLAG_DIRECTORY) !== 0
+    ? extendedAttributeRecordFileFlags(fields) & 0x10
+    : extendedAttributeRecordFileFlags(fields);
+  const actual = entry.flags & ((entry.flags & FILE_FLAG_DIRECTORY) !== 0 ? 0x10 : 0x18);
+  if (actual !== expected) {
+    throw new Error(`directory record flags for ${path} do not match associated extended attribute record fields`);
+  }
+}
+
 function assertSupportedBootVolumeDescriptor(descriptor: BootVolumeDescriptor): void {
   if (!isAString(readAscii(descriptor.raw, 7, 32))) {
     throw new Error("boot system identifier contains invalid ECMA-119 a-characters");
@@ -3868,6 +3885,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code.includes("_path_table.") && issue.code.endsWith(".identifier.length") && message.includes("path table record")) {
+      return true;
+    }
+    if (
+      issue.code === "extended_attribute_record.file_flags"
+      && secondaryDescriptorPathlessMessage(issue.message).includes(message)
+    ) {
       return true;
     }
     if (
