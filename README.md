@@ -4,7 +4,7 @@ TypeScript utilities for reading and writing ECMA-119 4th edition / ISO 9660 CD-
 
 This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one primary volume descriptor, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees, structured boot and partition descriptors with opaque use/payload bytes, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, single-section non-interleaved directories, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
 
-The implementation targets ECMA-119 4th edition, June 2019. Tests include generated write-then-read ISO images, handcrafted in-memory reader images that are not produced by the writer, and checked-in ISO byte fixtures produced by an independent external tool.
+The implementation targets ECMA-119 4th edition, June 2019. Tests exercise generated write-then-read ISO images, handcrafted in-memory reader images that are not produced by the writer, and checked-in ISO byte fixtures produced by an independent external tool.
 
 ## Install
 
@@ -54,7 +54,7 @@ console.log(partition?.data?.subarray(0, 4));
 The root package entry intentionally exposes these API groups:
 
 - image creation: `createIsoImage` and the related input/option types
-- image reading and validation: `parseIsoImage`, `parseVolumeDescriptors`, `validateIsoImage`, descriptor/node types, and validation issues
+- image reading and validation: `parseIsoImage`, `parseIsoVolumeSet`, `parseVolumeDescriptors`, `validateIsoImage`, descriptor/node types, and validation issues
 - constants and flags: sector and standard identifier constants, directory record file flag constants, and Extended Attribute Record constants
 - low-level ECMA-119 helpers: binary/date/string helpers, directory record codecs, Extended Attribute Record codecs, identifier helpers, and path table codecs
 
