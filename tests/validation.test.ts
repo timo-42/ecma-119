@@ -568,6 +568,39 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
+  test.each([
+    {
+      label: "Type L",
+      offset: 140,
+      readLocation: readUint32LE,
+      validationCode: "path_table.little.record_length",
+    },
+    {
+      label: "Type M",
+      offset: 148,
+      readLocation: readUint32BE,
+      validationCode: "path_table.big.record_length",
+    },
+  ])("rejects malformed mandatory $label path tables during parsing", ({ label, offset, readLocation, validationCode }) => {
+    const image = baselineImage([{ path: "DIR/FILE.TXT", data: "parse mandatory path table\n" }]);
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const pathTableOffset = readLocation(image, PVD_OFFSET + offset) * SECTOR_SIZE;
+    image[pathTableOffset + 10] = 0;
+
+    expect(() => parseIsoImage(image)).toThrow(
+      new RegExp(`primary volume descriptor ${label} path table is invalid: .*zero identifier length`, "i"),
+    );
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: validationCode,
+          message: expect.stringMatching(/zero identifier length/i),
+        }),
+      ]),
+    );
+  });
+
   test("reports zero-length records inside declared path table data", () => {
     const image = baselineImage([{ path: "DIR/FILE.TXT", data: "path table zero\n" }]);
     const pathTableOffset = readUint32LE(image, PVD_OFFSET + 140) * SECTOR_SIZE;
@@ -757,6 +790,46 @@ describe("validateIsoImage hardening", () => {
         expect.objectContaining({
           code: "path_table.optional.big.hierarchy.record",
           message: expect.stringMatching(/optional Type M path table directory record does not match/i),
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      label: "Type L",
+      endian: "little" as const,
+      offset: 144,
+      readLocation: readUint32LE,
+      validationCode: "path_table.optional.little.record_length",
+    },
+    {
+      label: "Type M",
+      endian: "big" as const,
+      offset: 152,
+      readLocation: readUint32BE,
+      validationCode: "path_table.optional.big.record_length",
+    },
+  ])("rejects malformed optional $label path tables during parsing", ({ label, endian, offset, readLocation, validationCode }) => {
+    const image = withOptionalPathTableCopy(
+      baselineImage([{ path: "DIR/FILE.TXT", data: "parse optional path table\n" }]),
+      PVD_OFFSET,
+      endian,
+      () => {},
+    );
+    expect(parseIsoImage(image).files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+
+    const optionalPathTableOffset = readLocation(image, PVD_OFFSET + offset) * SECTOR_SIZE;
+    image[optionalPathTableOffset + 10] = 0;
+
+    expect(() => parseIsoImage(image)).toThrow(
+      new RegExp(`primary volume descriptor optional ${label} path table is invalid: .*zero identifier length`, "i"),
+    );
+    expect(validateIsoImage(image)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: validationCode,
+          message: expect.stringMatching(/zero identifier length/i),
         }),
       ]),
     );
