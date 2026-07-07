@@ -2302,7 +2302,9 @@ function populateDescriptorDirectoryTree(image: Uint8Array, descriptor: VolumeDe
     pathTables: readDescriptorPathTables(image, descriptor),
     rootDirectoryRecord: readDirectoryTree(image, descriptor.rootDirectoryRecord, descriptor.rootDirectoryRecord, "", includeData, descriptor.volumeSequenceNumber, descriptor.volumeSetSize, new Set(), {
       ...(descriptor.kind === "primary" ? {} : { identifierProfile: descriptor.kind }),
+      enforceFilePathLength: true,
       validatePrimaryIdentifiers: descriptor.kind === "primary",
+      validatePrimaryHierarchyDepth: descriptor.kind === "primary",
     }),
   };
 }
@@ -2335,11 +2337,16 @@ function readDirectoryTree(
   localVolumeSequenceNumber: number,
   volumeSetSize: number,
   visited: Set<number>,
-  options: { identifierProfile?: DirectoryIdentifierProfile; validatePrimaryIdentifiers?: boolean } = {},
+  options: { identifierProfile?: DirectoryIdentifierProfile; validatePrimaryIdentifiers?: boolean; validatePrimaryHierarchyDepth?: boolean; enforceFilePathLength?: boolean; depth?: number; filePathLengthPrefix?: number } = {},
 ): IsoDirectoryEntry {
+  const depth = options.depth ?? 1;
+  const filePathLengthPrefix = options.filePathLengthPrefix ?? 0;
   assertSupportedDirectoryEntry(directory, path || ".", volumeSetSize);
   if (directory.volumeSequenceNumber !== localVolumeSequenceNumber) {
     return markExternalDirectory(directory);
+  }
+  if (options.validatePrimaryHierarchyDepth) {
+    assertPrimaryHierarchyDepthForParsing(depth, path || ".");
   }
   assertDirectoryDataLengthForParsing(directory, path || ".");
   assertDirectoryInBounds(image, directory, path || ".");
@@ -2391,11 +2398,17 @@ function readDirectoryTree(
     const cleanName = stripVersion(identifier);
     const recordPath = joinPath(path, cleanName) || ".";
     assertOrdinaryDirectoryRecordIdentifierForParsing(record, recordPath);
+    if (options.validatePrimaryHierarchyDepth && isDirectory && record.volumeSequenceNumber === localVolumeSequenceNumber) {
+      assertPrimaryHierarchyDepthForParsing(depth + 1, recordPath);
+    }
     if (options.identifierProfile) {
       assertDirectoryRecordIdentifierProfileForParsing(record, recordPath, options.identifierProfile);
     }
     if (options.validatePrimaryIdentifiers) {
       assertPrimaryDirectoryRecordIdentifierForParsing(record, recordPath);
+    }
+    if (options.enforceFilePathLength && !isDirectory) {
+      assertPrimaryFilePathLengthForParsing(record, recordPath, filePathLengthPrefix);
     }
 
     if (isDirectory) {
@@ -2414,7 +2427,11 @@ function readDirectoryTree(
           child.extendedAttributeRecordFields = fields;
         }
       }
-      children.push(readDirectoryTree(image, child, directory, childPath, includeData, localVolumeSequenceNumber, volumeSetSize, new Set(visited), options));
+      children.push(readDirectoryTree(image, child, directory, childPath, includeData, localVolumeSequenceNumber, volumeSetSize, new Set(visited), {
+        ...options,
+        depth: depth + 1,
+        filePathLengthPrefix: filePathLengthPrefix + record.identifier.length + 1,
+      }));
     } else {
       const filePath = recordPath;
       const chain = readFileSectionChain(bytes, offset, record, filePath);
@@ -2493,6 +2510,19 @@ function assertPrimaryDirectoryRecordIdentifierForParsing(record: DecodedDirecto
   const valid = isDirectory ? isSupportedPrimaryDirectoryIdentifier(record.identifier) : isSupportedPrimaryFileIdentifier(record.identifier);
   if (!valid) {
     throw new Error(`primary directory record ${isDirectory ? "directory identifier contains invalid ECMA-119 primary d-characters" : "file identifier contains invalid ECMA-119 primary file identifier"} at ${path}`);
+  }
+}
+
+function assertPrimaryHierarchyDepthForParsing(depth: number, path: string): void {
+  if (depth > 8) {
+    throw new Error(`primary directory hierarchy depth at ${path} must not exceed 8 levels`);
+  }
+}
+
+function assertPrimaryFilePathLengthForParsing(record: DecodedDirectoryRecord, path: string, filePathLengthPrefix: number): void {
+  const filePathLength = filePathLengthPrefix + record.identifier.length;
+  if (filePathLength > MAX_FILE_PATH_LENGTH) {
+    throw new Error(`file path length at ${path} must not exceed ${MAX_FILE_PATH_LENGTH} bytes`);
   }
 }
 
@@ -3768,6 +3798,12 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
       return true;
     }
     if (issue.code === "directory.directory_identifier.length" && message.includes("directory record directory identifier length")) {
+      return true;
+    }
+    if (issue.code === "directory.hierarchy_depth" && message.includes("primary directory hierarchy depth")) {
+      return true;
+    }
+    if (issue.code === "directory.file_path_length" && message.includes("file path length")) {
       return true;
     }
     if (issue.code.includes("_path_table.") && issue.code.endsWith(".identifier.length") && message.includes("path table record")) {
