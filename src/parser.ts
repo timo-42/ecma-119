@@ -2700,22 +2700,36 @@ function identifierDecoderForDescriptor(descriptor: PrimaryVolumeDescriptor | Su
 }
 
 function decodeSecondaryFileIdentifier(identifier: Uint8Array): string {
-  if (isLikelyBigEndianUcs2LatinIdentifier(identifier)) {
+  if (isLikelyBigEndianUcs2Identifier(identifier)) {
     return decodeUcs2FileIdentifier(identifier);
   }
   return decodeFileIdentifier(identifier);
 }
 
-function isLikelyBigEndianUcs2LatinIdentifier(identifier: Uint8Array): boolean {
+function isLikelyBigEndianUcs2Identifier(identifier: Uint8Array): boolean {
   if (identifier.byteLength < 2 || identifier.byteLength % 2 !== 0) {
     return false;
   }
+  if (isPlainAsciiIdentifierBytes(identifier)) {
+    return false;
+  }
+  let hasNonAsciiByte = false;
   for (let offset = 0; offset < identifier.byteLength; offset += 2) {
-    if (identifier[offset] !== 0) {
+    const code = (identifier[offset]! << 8) | identifier[offset + 1]!;
+    if (!isPrintableUcs2IdentifierCodeUnit(code)) {
       return false;
     }
+    hasNonAsciiByte ||= identifier[offset]! > 0 || identifier[offset + 1]! > 0x7f;
   }
-  return true;
+  return hasNonAsciiByte;
+}
+
+function isPlainAsciiIdentifierBytes(identifier: Uint8Array): boolean {
+  return identifier.every((byte) => byte >= 0x20 && byte <= 0x7e);
+}
+
+function isPrintableUcs2IdentifierCodeUnit(code: number): boolean {
+  return code >= 0x20 && code <= 0xfffd && (code < 0xd800 || code > 0xdfff);
 }
 
 function secondaryEscapeSequence(bytes: Uint8Array): Uint8Array {

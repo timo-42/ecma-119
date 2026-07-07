@@ -100,7 +100,7 @@ describe("UCS-2 identifier decoding", () => {
   test("decodes ECMA-119 special and UCS-2 file identifiers", () => {
     expect(decodeUcs2FileIdentifier(Uint8Array.of(0))).toBe(".");
     expect(decodeUcs2FileIdentifier(Uint8Array.of(1))).toBe("..");
-    expect(decodeUcs2FileIdentifier(ucs2be("Å/É.T;1"))).toBe("Å/É.T;1");
+    expect(decodeUcs2FileIdentifier(ucs2be("資料/é.T;1"))).toBe("資料/é.T;1");
     expect(() => decodeUcs2FileIdentifier(Uint8Array.of(0, 0x41, 0))).toThrow(/UCS-2 file identifier byte length/i);
   });
 });
