@@ -1888,10 +1888,6 @@ function validateDescriptorRootFileReferences(
   descriptor: PathTableValidationInput,
   codePrefix: string,
 ): ValidationIssue[] {
-  const rootFileIdentifiers = rootDirectoryFileIdentifiers(image, descriptor.rootDirectoryRecord);
-  if (!rootFileIdentifiers) {
-    return [];
-  }
   const issues: ValidationIssue[] = [];
   const path = descriptorRootValidationPath(descriptor);
   const fields: DescriptorFileReferenceField[] = [
@@ -1912,6 +1908,15 @@ function validateDescriptorRootFileReferences(
         message: `${descriptor.kind} volume descriptor ${field.label} references ${field.identifier}, which must be an ECMA-119 Level 1 file identifier`,
         path,
       });
+      continue;
+    }
+  }
+  const rootFileIdentifiers = rootDirectoryFileIdentifiers(image, descriptor.rootDirectoryRecord);
+  if (!rootFileIdentifiers) {
+    return issues;
+  }
+  for (const field of fields) {
+    if (!field.identifier || (field.prefixed && !isLevelOneFileIdentifier(new TextEncoder().encode(field.identifier)))) {
       continue;
     }
     if (!rootFileIdentifiers.has(field.identifier)) {
