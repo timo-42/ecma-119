@@ -2532,10 +2532,12 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
     const dateIssues = validateExtendedAttributeRecordDateFields(extendedAttributeRecord, recordPath);
     const characterIssues = validateExtendedAttributeRecordCharacterFields(extendedAttributeRecord, recordPath);
     const reservedIssues = validateExtendedAttributeRecordReservedBytes(extendedAttributeRecord, recordPath);
+    const scalarIssues = validateExtendedAttributeRecordScalarLayoutFields(extendedAttributeRecord, recordPath);
     issues.push(...bothEndianIssues);
     issues.push(...dateIssues);
     issues.push(...characterIssues);
     issues.push(...reservedIssues);
+    issues.push(...scalarIssues);
     try {
       const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
       if ((record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY) {
@@ -2566,7 +2568,7 @@ function validateExtendedAttributeRecords(image: Uint8Array, directory: IsoDirec
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues, ...characterIssues, ...reservedIssues], extendedAttributeRecord)) {
+      if (!shouldSuppressExtendedAttributeRecordParse(message, [...bothEndianIssues, ...dateIssues, ...characterIssues, ...reservedIssues, ...scalarIssues], extendedAttributeRecord)) {
         issues.push({
           code: "extended_attribute_record.parse",
           message,
@@ -2591,6 +2593,7 @@ function validateDirectoryEntryExtendedAttributeRecord(image: Uint8Array, entry:
   issues.push(...validateExtendedAttributeRecordDateFields(extendedAttributeRecord, path));
   issues.push(...validateExtendedAttributeRecordCharacterFields(extendedAttributeRecord, path));
   issues.push(...validateExtendedAttributeRecordReservedBytes(extendedAttributeRecord, path));
+  issues.push(...validateExtendedAttributeRecordScalarLayoutFields(extendedAttributeRecord, path));
   try {
     const fields = decodeExtendedAttributeRecord(extendedAttributeRecord);
     const expected = extendedAttributeRecordFileFlags(fields) & 0x10;
@@ -2707,6 +2710,101 @@ function validateExtendedAttributeRecordReservedBytes(bytes: Uint8Array, path: s
   return [];
 }
 
+function validateExtendedAttributeRecordScalarLayoutFields(bytes: Uint8Array, path: string): ValidationIssue[] {
+  if (bytes.byteLength < 181) {
+    return [];
+  }
+  const issues: ValidationIssue[] = [];
+  const ownerIdentification = readMatchingBothEndianUint16(bytes, 0);
+  const groupIdentification = readMatchingBothEndianUint16(bytes, 4);
+  if (
+    ownerIdentification !== undefined
+    && groupIdentification !== undefined
+    && (ownerIdentification === 0) !== (groupIdentification === 0)
+  ) {
+    issues.push({
+      code: "extended_attribute_record.owner_group",
+      message: `extended attribute record owner identification and group identification at ${path} must both be zero or both be nonzero`,
+      path,
+    });
+  }
+
+  const permissions = (bytes[8]! << 8) | bytes[9]!;
+  if ((permissions & 0xaaaa) !== 0xaaaa) {
+    issues.push({
+      code: "extended_attribute_record.permissions",
+      message: `extended attribute record permissions at ${path} must set bits 1,3,5,7,9,11,13,15`,
+      path,
+    });
+  }
+
+  const recordFormat = bytes[78]!;
+  const recordAttributes = bytes[79]!;
+  const recordLength = readMatchingBothEndianUint16(bytes, 80);
+  const applicationUseLength = readMatchingBothEndianUint16(bytes, 246);
+  if (applicationUseLength !== undefined && 250 + applicationUseLength + bytes[181]! > bytes.byteLength) {
+    issues.push({
+      code: "extended_attribute_record.application_use_escape_sequences.bounds",
+      message: `extended attribute record application use and escape sequences at ${path} exceed record length`,
+      path,
+    });
+  }
+  if (recordFormat > 3 && recordFormat < 128) {
+    issues.push({
+      code: "extended_attribute_record.record_format.reserved",
+      message: `extended attribute record record format at ${path} uses reserved value ${recordFormat}`,
+      path,
+    });
+  }
+  if (recordAttributes > 2) {
+    issues.push({
+      code: "extended_attribute_record.record_attributes.reserved",
+      message: `extended attribute record record attributes at ${path} uses reserved value ${recordAttributes}`,
+      path,
+    });
+  }
+  if (recordLength !== undefined) {
+    if (recordFormat === 0 && recordLength !== 0) {
+      issues.push({
+        code: "extended_attribute_record.record_length",
+        message: `extended attribute record record length at ${path} must be zero when record format is zero`,
+        path,
+      });
+    } else if (recordFormat === 1 && recordLength < 1) {
+      issues.push({
+        code: "extended_attribute_record.record_length",
+        message: `extended attribute record record length at ${path} must be at least one for fixed-length records`,
+        path,
+      });
+    } else if ((recordFormat === 2 || recordFormat === 3) && (recordLength < 1 || recordLength > 32767)) {
+      issues.push({
+        code: "extended_attribute_record.record_length",
+        message: `extended attribute record record length at ${path} must be 1 through 32767 for variable-length records`,
+        path,
+      });
+    }
+  }
+
+  const version = bytes[180]!;
+  if (version !== 1) {
+    issues.push({
+      code: "extended_attribute_record.version",
+      message: `extended attribute record version at ${path} must be 1`,
+      path,
+    });
+  }
+  return issues;
+}
+
+function readMatchingBothEndianUint16(bytes: Uint8Array, offset: number): number | undefined {
+  if (bytes.byteLength < offset + 4) {
+    return undefined;
+  }
+  const little = bytes[offset]! | (bytes[offset + 1]! << 8);
+  const big = (bytes[offset + 2]! << 8) | bytes[offset + 3]!;
+  return little === big ? little : undefined;
+}
+
 function validateExtendedAttributeRecordDateField(bytes: Uint8Array, offset: number, code: string, label: string, path: string, required: boolean): ValidationIssue[] {
   const text = readAscii(bytes, offset, 16);
   if (/^0{16}$/u.test(text)) {
@@ -2738,16 +2836,37 @@ function shouldSuppressExtendedAttributeRecordParse(message: string, issues: Val
   const hasDateIssue = issues.some((issue) => issue.code.startsWith("extended_attribute_record.") && issue.code.endsWith("_date"));
   const hasCharacterIssue = issues.some((issue) => issue.code === "extended_attribute_record.system_identifier.characters");
   const hasReservedIssue = issues.some((issue) => issue.code === "extended_attribute_record.reserved_bytes");
+  const hasOwnerGroupIssue = issues.some((issue) => issue.code === "extended_attribute_record.owner_group");
+  const hasPermissionsIssue = issues.some((issue) => issue.code === "extended_attribute_record.permissions");
+  const hasApplicationUseEscapeBoundsIssue = issues.some((issue) => issue.code === "extended_attribute_record.application_use_escape_sequences.bounds");
+  const hasRecordFormatIssue = issues.some((issue) => issue.code === "extended_attribute_record.record_format.reserved");
+  const hasRecordAttributesIssue = issues.some((issue) => issue.code === "extended_attribute_record.record_attributes.reserved");
+  const hasRecordLengthIssue = issues.some((issue) => issue.code === "extended_attribute_record.record_length");
+  const hasVersionIssue = issues.some((issue) => issue.code === "extended_attribute_record.version");
+  const hasStructuredVersion = bytes[180] === 1;
   return (hasBothEndianIssue
     && message.includes("both-endian")
     && bytes[180] === 1)
     || (hasDateIssue && isExtendedAttributeRecordDateParseMessage(message))
     || (hasCharacterIssue && message.includes("system identifier contains invalid ECMA-119 a-characters"))
-    || (hasReservedIssue && message.includes("reserved bytes must be zero"));
+    || (hasReservedIssue && message.includes("reserved bytes must be zero"))
+    || (hasStructuredVersion && hasApplicationUseEscapeBoundsIssue && message.includes("application use and escape sequences exceed record length"))
+    || (hasStructuredVersion && hasOwnerGroupIssue && message.includes("owner identification and group identification must both be zero or both be nonzero"))
+    || (hasStructuredVersion && hasPermissionsIssue && message.includes("permissions bits 1,3,5,7,9,11,13,15 must be set"))
+    || (hasStructuredVersion && hasRecordFormatIssue && message.includes("record format values 4 through 127 are reserved"))
+    || (hasStructuredVersion && hasRecordAttributesIssue && message.includes("record attributes values 3 through 255 are reserved"))
+    || (hasStructuredVersion && hasRecordLengthIssue && isExtendedAttributeRecordLengthParseMessage(message))
+    || (hasVersionIssue && message.includes("extended attribute record version must be 1"));
 }
 
 function isExtendedAttributeRecordDateParseMessage(message: string): boolean {
   return /\b(date|month|day|hour|minute|second|hundredths|offset)\b/i.test(message);
+}
+
+function isExtendedAttributeRecordLengthParseMessage(message: string): boolean {
+  return message.includes("record length must be zero when record format is zero")
+    || message.includes("record length must be at least one for fixed-length records")
+    || message.includes("record length must be 1 through 32767 for variable-length records");
 }
 
 function assertExtentInBounds(image: Uint8Array, extent: number, extendedAttributeRecordLength: number, length: number, path: string): void {
