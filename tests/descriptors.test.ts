@@ -826,6 +826,127 @@ describe("volume descriptor sequence parsing", () => {
       : undefined).toBe("supplementary ucs2 authoring\n");
   });
 
+  test("writes Joliet supplementary descriptors through extension options", () => {
+    const image = createIsoImage({
+      profile: "ecma-119",
+      files: [{
+        path: "DIR/FILE.TXT",
+        data: "joliet extension\n",
+      }],
+      extensions: {
+        joliet: {
+          level: 3,
+          descriptor: {
+            volumeIdentifier: "JOLIET",
+            publisherIdentifier: "JOLIET_PUB",
+          },
+        },
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    const parsed = parseIsoImage(image, { includeData: true });
+    const supplementary = parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary");
+    if (supplementary?.kind !== "supplementary") {
+      throw new Error("expected supplementary descriptor");
+    }
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(parsed.descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "terminator"]);
+    expect(supplementary).toMatchObject({
+      extension: "joliet",
+      jolietLevel: 3,
+      volumeIdentifier: "JOLIET",
+      publisherIdentifier: "JOLIET_PUB",
+    });
+    expect(supplementary.escapeSequences.subarray(0, 3)).toEqual(Uint8Array.of(0x25, 0x2f, 0x45));
+    expect(supplementary.pathTables?.typeL[1]?.identifier).toEqual(ucs2be("DIR"));
+    expect(supplementary.rootDirectoryRecord.children[0]).toMatchObject({
+      path: "DIR",
+      identifier: "DIR",
+    });
+    const directory = supplementary.rootDirectoryRecord.children[0];
+    if (!directory || !("children" in directory)) {
+      throw new Error("expected Joliet directory");
+    }
+    expect(directory.children[0]).toMatchObject({
+      path: "DIR/FILE.TXT",
+      identifier: "FILE.TXT;1",
+      size: "joliet extension\n".length,
+    });
+    expect(parsed.files.map((file) => file.path)).toEqual(["DIR/FILE.TXT"]);
+    expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("joliet extension\n");
+  });
+
+  test("maps Joliet extension levels to supplementary escape sequences", () => {
+    const cases = [
+      { level: 1 as const, escapeSequences: Uint8Array.of(0x25, 0x2f, 0x40) },
+      { level: 2 as const, escapeSequences: Uint8Array.of(0x25, 0x2f, 0x43) },
+      { level: 3 as const, escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45) },
+    ];
+
+    for (const testCase of cases) {
+      const image = createIsoImage([{ path: "JOLIET.TXT", data: `level ${testCase.level}\n` }], {
+        extensions: { joliet: { level: testCase.level } },
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+      });
+      const supplementary = parseIsoImage(image).descriptors.find((descriptor) => descriptor.kind === "supplementary");
+
+      expect(validateIsoImage(image)).toEqual([]);
+      expect(supplementary).toMatchObject({
+        kind: "supplementary",
+        extension: "joliet",
+        jolietLevel: testCase.level,
+      });
+      expect(supplementary?.kind === "supplementary" ? supplementary.escapeSequences.subarray(0, 3) : undefined).toEqual(testCase.escapeSequences);
+    }
+  });
+
+  test("accepts Joliet extension list shorthand and disabled object form", () => {
+    const shorthand = createIsoImage([{ path: "JOLIET.TXT", data: "list shorthand\n" }], {
+      extensions: ["joliet"],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const disabled = createIsoImage([{ path: "PLAIN.TXT", data: "disabled\n" }], {
+      extensions: { joliet: { enabled: false } },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+
+    expect(validateIsoImage(shorthand)).toEqual([]);
+    expect(parseIsoImage(shorthand).descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "supplementary", "terminator"]);
+    expect(parseIsoImage(shorthand).descriptors.find((descriptor) => descriptor.kind === "supplementary")).toMatchObject({
+      extension: "joliet",
+      jolietLevel: 3,
+    });
+    expect(parseIsoImage(disabled).descriptors.map((descriptor) => descriptor.kind)).toEqual(["primary", "terminator"]);
+  });
+
+  test("rejects unsupported profiles, unsupported extension names, invalid Joliet levels, and duplicate Joliet descriptors", () => {
+    expect(() => createIsoImage([], {
+      // @ts-expect-error unsupported profile for runtime validation
+      profile: "ecma-168",
+    })).toThrow(/unsupported ISO profile/i);
+    expect(() => createIsoImage([], {
+      // @ts-expect-error unsupported extension for runtime validation
+      extensions: ["rockRidge"],
+    })).toThrow(/unsupported ISO extension/i);
+    expect(() => createIsoImage([], {
+      extensions: {
+        joliet: {
+          // @ts-expect-error unsupported Joliet level for runtime validation
+          level: 4,
+        },
+      },
+    })).toThrow(/Joliet level/i);
+    expect(() => createIsoImage([{ path: "JOLIET.TXT", data: "duplicate\n" }], {
+      extensions: { joliet: true },
+      supplementaryVolumeDescriptors: [{
+        escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
+        identifierEncoding: "ucs2-be",
+      }],
+    })).toThrow(/explicit Joliet supplementary volume descriptor/i);
+  });
+
   test("requires UCS-2 escape sequences for supplementary UCS-2BE identifier authoring", () => {
     expect(() => createIsoImage([{ path: "README.TXT", data: "bad ucs2 authoring\n" }], {
       supplementaryVolumeDescriptors: [{ identifierEncoding: "ucs2-be" }],

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { createIsoImage, parseIsoImage, parseVolumeDescriptors, validateIsoImage, writeUint16LE, writeUint32LE } from "../src/index";
+import { createIsoImage, parseIsoImage, parseVolumeDescriptors, readUint32LE, validateIsoImage, writeUint16LE, writeUint32LE } from "../src/index";
 import { SECTOR_SIZE } from "../src/types";
 
 const encoder = new TextEncoder();
@@ -185,6 +185,114 @@ describe("boot volume descriptor writing", () => {
     expect(parsed.files.map((file) => file.path)).toEqual(["BOOT.TXT"]);
   });
 
+  test("writes and reads a high-level El Torito boot catalog with sections", () => {
+    const initialImage = bootImageBytes();
+    const sectionImage = sectionBootImageBytes();
+    const image = createIsoImage([{ path: "BOOT.TXT", data: "high-level el torito\n" }], {
+      extensions: {
+        elTorito: {
+          platform: "efi",
+          manufacturer: "ECMA-119 TEST",
+          initial: {
+            data: initialImage,
+            loadSegment: 0x7c0,
+            systemType: 0,
+          },
+          sections: [{
+            platform: "x86",
+            identifier: "BIOS",
+            entries: [{
+              data: sectionImage,
+              bootable: false,
+              mediaType: "1.44m",
+              loadSegment: 0x1234,
+              systemType: 0x42,
+              extensions: [{
+                selectionCriteria: Uint8Array.of(0x01, 0x02, 0x03),
+              }],
+            }],
+          }],
+        },
+      },
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const descriptorOnlyBoot = parseVolumeDescriptors(image).find((descriptor) => descriptor.kind === "boot");
+    const parsed = parseIsoImage(image, { includeData: true });
+    const boot = parsed.descriptors.find((descriptor) => descriptor.kind === "boot");
+
+    if (descriptorOnlyBoot?.kind !== "boot" || boot?.kind !== "boot") {
+      throw new Error("expected El Torito boot descriptor");
+    }
+
+    const catalogLocation = readUint32LE(descriptorOnlyBoot.raw, 71);
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(descriptorOnlyBoot.bootSystemIdentifier).toBe("EL TORITO SPECIFICATION");
+    expect(catalogLocation).toBeGreaterThan(0);
+    expect(boot.bootCatalog).toMatchObject({
+      location: catalogLocation,
+      validationEntry: {
+        platformId: 0xef,
+        manufacturer: "ECMA-119 TEST",
+      },
+      initialEntry: {
+        bootable: true,
+        mediaType: 0,
+        loadSegment: 0x7c0,
+        systemType: 0,
+        sectorCount: 4,
+        loadRba: catalogLocation + 1,
+      },
+    });
+    expect(boot.bootCatalog?.entries.map((entry) => entry.kind)).toEqual(["validation", "initial", "section-header", "section", "extension"]);
+    expect(boot.bootCatalog?.initialEntry.data).toEqual(initialImage);
+    expect(boot.bootCatalog?.entries[2]).toMatchObject({
+      kind: "section-header",
+      moreHeadersFollow: false,
+      platformId: 0,
+      sectionEntryCount: 2,
+      identifier: "BIOS",
+    });
+    expect(boot.bootCatalog?.entries[3]).toMatchObject({
+      kind: "section",
+      bootable: false,
+      mediaType: 2,
+      loadSegment: 0x1234,
+      systemType: 0x42,
+      sectorCount: 2,
+      loadRba: catalogLocation + 2,
+    });
+    expect(boot.bootCatalog?.entries[3]?.kind === "section" ? boot.bootCatalog.entries[3].data : undefined).toEqual(sectionImage);
+    expect(boot.bootCatalog?.entries[4]?.kind === "extension" ? boot.bootCatalog.entries[4].selectionCriteria.subarray(0, 3) : undefined).toEqual(Uint8Array.of(0x01, 0x02, 0x03));
+  });
+
+  test("rejects ambiguous and out-of-range high-level El Torito options", () => {
+    expect(() => createIsoImage([{ path: "BOOT.TXT", data: "x" }], {
+      bootRecord: { bootSystemIdentifier: "EL TORITO SPECIFICATION" },
+      extensions: { elTorito: { initial: bootImageBytes() } },
+    })).toThrow(/extensions\.elTorito cannot be combined/i);
+
+    expect(() => createIsoImage([{ path: "BOOT.TXT", data: "x" }], {
+      bootRecords: [{ bootSystemIdentifier: "EL TORITO SPECIFICATION" }],
+      extensions: { elTorito: { initial: bootImageBytes() } },
+    })).toThrow(/extensions\.elTorito cannot be combined/i);
+
+    expect(() => createIsoImage([{ path: "BOOT.TXT", data: "x" }], {
+      extensions: { elTorito: { initial: { data: bootImageBytes(), mediaType: 5 } } },
+    })).toThrow(/mediaType/i);
+
+    expect(() => createIsoImage([{ path: "BOOT.TXT", data: "x" }], {
+      extensions: { elTorito: { initial: { data: bootImageBytes(), loadSegment: 0x10000 } } },
+    })).toThrow(/loadSegment/i);
+
+    expect(() => createIsoImage([{ path: "BOOT.TXT", data: "x" }], {
+      extensions: { elTorito: { initial: { data: bootImageBytes(), systemType: 0x100 } } },
+    })).toThrow(/systemType/i);
+
+    expect(() => createIsoImage([{ path: "BOOT.TXT", data: "x" }], {
+      extensions: { elTorito: { initial: { data: bootImageBytes(), loadSectorCount: 0x10000 } } },
+    })).toThrow(/loadSectorCount/i);
+  });
+
   test("reports invalid El Torito boot catalog checksums", () => {
     const image = imageWithBootCatalog();
     image[bootCatalogOffset(image) + 4] ^= 0xff;
@@ -271,6 +379,13 @@ function bootImageBytes(): Uint8Array {
   const bytes = new Uint8Array(512 * 4);
   bytes.set(encoder.encode("boot image payload\n"));
   bytes[512 * 4 - 1] = 0xa5;
+  return bytes;
+}
+
+function sectionBootImageBytes(): Uint8Array {
+  const bytes = new Uint8Array(512 * 2);
+  bytes.set(encoder.encode("section boot image\n"));
+  bytes[512 * 2 - 1] = 0x5a;
   return bytes;
 }
 

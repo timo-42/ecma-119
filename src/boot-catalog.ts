@@ -1,11 +1,138 @@
-import { readAsciiTrimmed, readUint16LE, readUint32LE, sectorOffset } from "./binary.js";
+import { isAscii, readAsciiTrimmed, readUint16LE, readUint32LE, sectorOffset, writeAsciiPadded, writeUint16LE, writeUint32LE } from "./binary.js";
 import { SECTOR_SIZE, type IsoBootCatalog, type IsoBootCatalogBootEntry, type IsoBootCatalogEntry, type IsoBootCatalogExtensionEntry, type IsoBootCatalogSectionHeaderEntry, type IsoBootCatalogUnknownEntry, type IsoBootCatalogValidationEntry, type ValidationIssue } from "./types.js";
 
 export const EL_TORITO_BOOT_SYSTEM_IDENTIFIER = "EL TORITO SPECIFICATION";
 
-const BOOT_CATALOG_ENTRY_SIZE = 0x20;
-const BOOT_CATALOG_ENTRIES_PER_SECTOR = SECTOR_SIZE / BOOT_CATALOG_ENTRY_SIZE;
-const EL_TORITO_LOAD_SECTOR_SIZE = 512;
+export const BOOT_CATALOG_ENTRY_SIZE = 0x20;
+export const BOOT_CATALOG_ENTRIES_PER_SECTOR = SECTOR_SIZE / BOOT_CATALOG_ENTRY_SIZE;
+export const EL_TORITO_LOAD_SECTOR_SIZE = 512;
+
+export type ElToritoCatalogInput = {
+  platformId: number;
+  manufacturer: string;
+  initialEntry: ElToritoCatalogBootEntryInput;
+  sections: ElToritoCatalogSectionInput[];
+};
+
+export type ElToritoCatalogSectionInput = {
+  platformId: number;
+  identifier: string;
+  entries: ElToritoCatalogSectionEntryInput[];
+};
+
+export type ElToritoCatalogBootEntryInput = {
+  bootable: boolean;
+  mediaType: number;
+  loadSegment: number;
+  systemType: number;
+  loadSectorCount: number;
+  loadRba: number;
+};
+
+export type ElToritoCatalogSectionEntryInput = ElToritoCatalogBootEntryInput & {
+  extensions: ElToritoCatalogExtensionEntryInput[];
+};
+
+export type ElToritoCatalogExtensionEntryInput = {
+  selectionCriteria: Uint8Array;
+  extensionFollows?: boolean;
+};
+
+export function encodeElToritoBootCatalog(input: ElToritoCatalogInput): Uint8Array {
+  assertCatalogFitsInOneSector(input);
+  const bytes = new Uint8Array(SECTOR_SIZE);
+  encodeValidationEntry(bytes.subarray(0, BOOT_CATALOG_ENTRY_SIZE), input);
+  encodeBootEntry(bytes.subarray(BOOT_CATALOG_ENTRY_SIZE, BOOT_CATALOG_ENTRY_SIZE * 2), input.initialEntry);
+
+  let entryIndex = 2;
+  for (const [sectionIndex, section] of input.sections.entries()) {
+    encodeSectionHeaderEntry(
+      bytes.subarray(entryIndex * BOOT_CATALOG_ENTRY_SIZE, (entryIndex + 1) * BOOT_CATALOG_ENTRY_SIZE),
+      section,
+      sectionIndex < input.sections.length - 1,
+    );
+    entryIndex += 1;
+    for (const entry of section.entries) {
+      encodeBootEntry(bytes.subarray(entryIndex * BOOT_CATALOG_ENTRY_SIZE, (entryIndex + 1) * BOOT_CATALOG_ENTRY_SIZE), entry);
+      entryIndex += 1;
+      for (const [extensionIndex, extension] of entry.extensions.entries()) {
+        encodeExtensionEntry(
+          bytes.subarray(entryIndex * BOOT_CATALOG_ENTRY_SIZE, (entryIndex + 1) * BOOT_CATALOG_ENTRY_SIZE),
+          extension,
+          extension.extensionFollows ?? extensionIndex < entry.extensions.length - 1,
+        );
+        entryIndex += 1;
+      }
+    }
+  }
+  return bytes;
+}
+
+function encodeValidationEntry(entry: Uint8Array, input: ElToritoCatalogInput): void {
+  entry[0] = 0x01;
+  entry[1] = input.platformId;
+  if (!isAscii(input.manufacturer)) {
+    throw new Error("El Torito manufacturer must contain only ASCII characters");
+  }
+  writeAsciiPadded(entry, 4, 24, input.manufacturer, 0x00);
+  entry[30] = 0x55;
+  entry[31] = 0xaa;
+  writeUint16LE(entry, 28, checksumWordForValidationEntry(entry));
+}
+
+function encodeBootEntry(entry: Uint8Array, input: ElToritoCatalogBootEntryInput): void {
+  entry[0] = input.bootable ? 0x88 : 0x00;
+  entry[1] = input.mediaType;
+  writeUint16LE(entry, 2, input.loadSegment);
+  entry[4] = input.systemType;
+  writeUint16LE(entry, 6, input.loadSectorCount);
+  writeUint32LE(entry, 8, input.loadRba);
+}
+
+function encodeSectionHeaderEntry(entry: Uint8Array, input: ElToritoCatalogSectionInput, moreHeadersFollow: boolean): void {
+  entry[0] = moreHeadersFollow ? 0x90 : 0x91;
+  entry[1] = input.platformId;
+  writeUint16LE(entry, 2, sectionCatalogEntryCount(input));
+  if (!isAscii(input.identifier)) {
+    throw new Error("El Torito section identifier must contain only ASCII characters");
+  }
+  writeAsciiPadded(entry, 4, 28, input.identifier, 0x00);
+}
+
+function encodeExtensionEntry(entry: Uint8Array, input: ElToritoCatalogExtensionEntryInput, extensionFollows: boolean): void {
+  if (input.selectionCriteria.byteLength > 30) {
+    throw new Error("El Torito extension selection criteria exceeds 30 bytes");
+  }
+  entry[0] = 0x44;
+  entry[1] = extensionFollows ? 0x20 : 0x00;
+  entry.set(input.selectionCriteria, 2);
+}
+
+function assertCatalogFitsInOneSector(input: ElToritoCatalogInput): void {
+  const count = bootCatalogEntryCount(input);
+  if (count > BOOT_CATALOG_ENTRIES_PER_SECTOR) {
+    throw new Error(`El Torito boot catalog requires ${count} entries; maximum is ${BOOT_CATALOG_ENTRIES_PER_SECTOR}`);
+  }
+}
+
+function bootCatalogEntryCount(input: ElToritoCatalogInput): number {
+  return 2 + input.sections.reduce((sum, section) => sum + 1 + sectionCatalogEntryCount(section), 0);
+}
+
+function sectionCatalogEntryCount(input: ElToritoCatalogSectionInput): number {
+  return input.entries.reduce((sum, entry) => sum + 1 + entry.extensions.length, 0);
+}
+
+function checksumWordForValidationEntry(entry: Uint8Array): number {
+  let sum = 0;
+  for (let offset = 0; offset < BOOT_CATALOG_ENTRY_SIZE; offset += 2) {
+    if (offset === 28) {
+      continue;
+    }
+    sum = (sum + readUint16LE(entry, offset)) & 0xffff;
+  }
+  return (0x10000 - sum) & 0xffff;
+}
 
 export function parseElToritoBootCatalog(image: Uint8Array, location: number, options: { includeData?: boolean } = {}): IsoBootCatalog {
   const issues = validateElToritoBootCatalog(image, location);

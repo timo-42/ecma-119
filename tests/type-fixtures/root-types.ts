@@ -7,8 +7,14 @@ import {
   type BootRecordOptions,
   type ByteInput,
   type CreateIsoOptions,
+  type ElToritoBootEntryOptions,
+  type ElToritoOptions,
   type EnhancedVolumeDescriptor,
   type ExtendedAttributeRecordInput,
+  type IsoExtensionList,
+  type IsoExtensionName,
+  type IsoExtensionOptions,
+  type IsoProfile,
   type IsoBootCatalog,
   type IsoBootCatalogEntry,
   type IsoDirectoryEntry,
@@ -21,7 +27,11 @@ import {
   type IsoInputFile,
   type IsoNode,
   type IsoVolumeSet,
+  type JolietOptions,
   type PrimaryVolumeDescriptor,
+  type RockRidgeInput,
+  type RockRidgeMetadata,
+  type SuspEntry,
   type SupplementaryVolumeDescriptor,
   type ValidationIssue,
   type VolumeDescriptor,
@@ -30,6 +40,36 @@ import {
 
 const byteInput: ByteInput = new DataView(new ArrayBuffer(4));
 const imageInput: IsoImageInput = new Uint8Array(2048 * 18).buffer;
+const profile: IsoProfile = "ecma-119";
+const extensionName: IsoExtensionName = "joliet";
+const extensionList: IsoExtensionList = ["joliet"];
+const jolietOptions: JolietOptions = {
+  level: 3,
+  descriptor: {
+    volumeIdentifier: "JOLIET",
+  },
+};
+const elToritoBootEntry: ElToritoBootEntryOptions = {
+  data: byteInput,
+  mediaType: "no-emulation",
+  loadSegment: 0x7c0,
+};
+const elToritoOptions: ElToritoOptions = {
+  platform: "x86",
+  manufacturer: "FIXTURE",
+  initial: elToritoBootEntry,
+};
+const extensionOptions: IsoExtensionOptions = {
+  joliet: jolietOptions,
+  elTorito: elToritoOptions,
+};
+const rockRidgeInput: RockRidgeInput = {
+  name: "readme.txt",
+  mode: 0o100644,
+  timestamps: {
+    modifiedAt: new Date("2024-01-01T00:00:00Z"),
+  },
+};
 
 const file: IsoInputFile = {
   path: "README.TXT",
@@ -41,7 +81,7 @@ const file: IsoInputFile = {
     systemIdentifier: "FIXTURE",
     applicationUse: byteInput,
   } satisfies ExtendedAttributeRecordInput,
-  systemUse: byteInput,
+  rockRidge: rockRidgeInput,
 };
 
 const directory: IsoInputDirectory = {
@@ -85,6 +125,8 @@ const externalDirectory: IsoInputExternalDirectory = {
 };
 
 const options: CreateIsoOptions = {
+  profile,
+  extensions: extensionOptions,
   directories: [directory],
   externalFiles: [externalFile],
   volumeSetSize: 2,
@@ -106,6 +148,16 @@ const options: CreateIsoOptions = {
     volumeIdentifier: "ENH",
     escapeSequences: Uint8Array.of(0x25, 0x2f, 0x45),
   }],
+};
+
+const extensionListOptions: CreateIsoOptions = {
+  extensions: extensionList,
+};
+
+const disabledJolietOptions: CreateIsoOptions = {
+  extensions: {
+    joliet: { enabled: false },
+  },
 };
 
 const externalDirectoryOptions: CreateIsoOptions = {
@@ -143,6 +195,8 @@ const bootCatalog: IsoBootCatalog | undefined = parsed.descriptors.find(
 )?.bootCatalog;
 const bootCatalogEntry: IsoBootCatalogEntry | undefined = bootCatalog?.entries[0];
 const bootCatalogData: Uint8Array | undefined = bootCatalog?.initialEntry.data;
+const rockRidge: RockRidgeMetadata | undefined = fileEntry?.rockRidge;
+const rockRidgeEntry: SuspEntry | undefined = rockRidge?.entries[0];
 
 void bootCatalogData;
 void bootCatalogEntry;
@@ -150,6 +204,9 @@ void descriptors;
 void directoryEntry;
 void enhanced;
 void entryPath;
+void extensionName;
+void extensionListOptions;
+void disabledJolietOptions;
 void externalDirectoryOptions;
 void fileEntry;
 void imageFromObjectOverload;
@@ -157,6 +214,8 @@ void issues;
 void parsedFromView;
 void partition;
 void primary;
+void rockRidge;
+void rockRidgeEntry;
 void associatedDirectory;
 void multiExtentDirectory;
 void supplementary;

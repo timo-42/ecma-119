@@ -5,4 +5,5 @@ export * from "./extended-attribute-record.js";
 export * from "./identifiers.js";
 export * from "./path-table.js";
 export * from "./parser.js";
+export * from "./rock-ridge.js";
 export * from "./writer.js";
