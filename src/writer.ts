@@ -9,12 +9,14 @@ import {
   writeUint32Both,
   writeUint32LE,
 } from "./binary.js";
+import { EL_TORITO_BOOT_SYSTEM_IDENTIFIER, EL_TORITO_LOAD_SECTOR_SIZE, encodeElToritoBootCatalog, type ElToritoCatalogBootEntryInput, type ElToritoCatalogInput, type ElToritoCatalogSectionEntryInput } from "./boot-catalog.js";
 import { bytesFromInput } from "./byte-input.js";
 import { directoryRecordLength, encodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_FLAG_HIDDEN, FILE_FLAG_MULTI_EXTENT } from "./directory-record.js";
 import { decodeExtendedAttributeRecord, encodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { encodeUcs2Identifier, isLevelOneFileIdentifier, type IdentifierLevel, normalizeDirectoryPath, normalizeFileIdentifierReference, normalizeFilePath } from "./identifiers.js";
 import { encodePathTable, type PathTableRecord } from "./path-table.js";
-import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, type IsoInputExternalDirectory, type IsoInputExternalFile, IsoInputFile, type OptionalPathTableCopies, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
+import { encodeRockRidgeDiscoverySystemUse, encodeRockRidgeSystemUse } from "./rock-ridge.js";
+import { type BootRecordOptions, type ByteInput, CreateIsoOptions, type ElToritoBootEntryOptions, type ElToritoExtensionEntryOptions, type ElToritoMediaType, type ElToritoOptions, type ElToritoPlatform, type ElToritoSectionEntryOptions, type ElToritoSectionOptions, type EnhancedVolumeDescriptorOptions, type ExtendedAttributeRecordInput, type IsoInputDirectory, type IsoInputExternalDirectory, type IsoInputExternalFile, IsoInputFile, type JolietOptions, type OptionalPathTableCopies, type RockRidgeInput, SECTOR_SIZE, STANDARD_IDENTIFIER, SYSTEM_AREA_SECTORS, type SupplementaryVolumeDescriptorOptions, type VolumePartitionOptions } from "./types.js";
 import { encodeVolumeDate } from "./binary.js";
 
 type FileNode = {
@@ -67,6 +69,7 @@ type DirectoryNode = {
 
 type BuildTreeState = {
   directoryCount: number;
+  usesRockRidge: boolean;
 };
 
 const MAX_FILE_SECTION_SIZE = 0xffffffff;
@@ -79,6 +82,18 @@ type PreparedVolumePartition = {
   data?: Uint8Array | undefined;
   location: number;
   size: number;
+};
+
+type PreparedElTorito = {
+  catalogSector: number;
+  catalog: ElToritoCatalogInput;
+  imageEntries: PreparedElToritoImageEntry[];
+};
+
+type PreparedElToritoImageEntry = {
+  catalogEntry: ElToritoCatalogBootEntryInput;
+  data: Uint8Array;
+  extentSectors: number;
 };
 
 type PreparedSecondaryDescriptor = {
@@ -110,6 +125,7 @@ type SecondaryIdentifierEncoding = "primary" | "ucs2-be";
 export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInputFile[] } & CreateIsoOptions), maybeOptions: CreateIsoOptions = {}): Uint8Array {
   const files = Array.isArray(filesOrOptions) ? filesOrOptions : filesOrOptions.files;
   const options = Array.isArray(filesOrOptions) ? maybeOptions : filesOrOptions;
+  assertSupportedProfile(options.profile ?? "ecma-119");
   const now = options.createdAt ?? new Date();
   const timeZoneOffsetMinutes = options.timeZoneOffsetMinutes ?? 0;
   const identifierLevel = checkedIdentifierLevel(options.identifierLevel ?? 1);
@@ -131,10 +147,11 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   const pathTableSectors = sectorsForBytes(pathTableBytesL.length);
   const optionalPathTables = normalizeOptionalPathTables(options.optionalPathTables);
   const bootRecords = normalizeBootRecords(options);
+  const preparedElTorito = prepareElTorito(options, bootRecords);
   const volumePartitions = normalizeVolumePartitions(options);
   const secondaryDescriptors = normalizeSecondaryDescriptors(options, directories);
   const terminatorCount = checkedTerminatorCount(options.terminatorCount ?? 1);
-  const descriptorSectorCount = 1 + bootRecords.length + secondaryDescriptors.length + volumePartitions.length + terminatorCount;
+  const descriptorSectorCount = 1 + bootRecords.length + (preparedElTorito ? 1 : 0) + secondaryDescriptors.length + volumePartitions.length + terminatorCount;
 
   let nextSector = SYSTEM_AREA_SECTORS + descriptorSectorCount;
   const typeLPathTableSector = nextSector;
@@ -220,6 +237,14 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
     preparedPartitions.push(prepared);
     nextSector += prepared.size;
   }
+  if (preparedElTorito) {
+    preparedElTorito.catalogSector = nextSector;
+    nextSector += 1;
+    for (const entry of preparedElTorito.imageEntries) {
+      entry.catalogEntry.loadRba = nextSector;
+      nextSector += entry.extentSectors;
+    }
+  }
 
   const image = new Uint8Array(nextSector * SECTOR_SIZE);
   writeSystemArea(image, options.systemArea);
@@ -280,6 +305,12 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
       image.set(partition.data, sectorOffset(partition.location));
     }
   }
+  if (preparedElTorito) {
+    image.set(encodeElToritoBootCatalog(preparedElTorito.catalog), sectorOffset(preparedElTorito.catalogSector));
+    for (const entry of preparedElTorito.imageEntries) {
+      image.set(entry.data, sectorOffset(entry.catalogEntry.loadRba));
+    }
+  }
 
   let descriptorSector = SYSTEM_AREA_SECTORS;
   image.set(encodePrimaryVolumeDescriptor({
@@ -318,11 +349,20 @@ export function createIsoImage(filesOrOptions: IsoInputFile[] | ({ files: IsoInp
   for (const bootRecord of bootRecords) {
     image.set(encodeBootVolumeDescriptor(bootRecord), sectorOffset(descriptorSector++));
   }
+  if (preparedElTorito) {
+    image.set(encodeElToritoBootVolumeDescriptor(preparedElTorito.catalogSector), sectorOffset(descriptorSector++));
+  }
   for (let index = 0; index < terminatorCount; index += 1) {
     image.set(encodeTerminator(), sectorOffset(descriptorSector++));
   }
 
   return image;
+}
+
+function assertSupportedProfile(profile: CreateIsoOptions["profile"]): void {
+  if (profile !== "ecma-119") {
+    throw new Error(`unsupported ISO profile: ${String(profile)}`);
+  }
 }
 
 function buildTree(
@@ -335,7 +375,7 @@ function buildTree(
   identifierLevel: IdentifierLevel,
   volumeSet: VolumeSetOptions,
 ): DirectoryNode {
-  const state: BuildTreeState = { directoryCount: 1 };
+  const state: BuildTreeState = { directoryCount: 1, usesRockRidge: false };
   const root: DirectoryNode = {
     kind: "directory",
     name: "",
@@ -433,8 +473,12 @@ function buildTree(
         fileNode.flags |= extendedAttributeRecordFileFlags(fields);
       }
     }
-    if (file.systemUse !== undefined) {
-      fileNode.systemUse = toBytes(file.systemUse);
+    const systemUse = inputSystemUse(file, "file");
+    if (systemUse !== undefined) {
+      fileNode.systemUse = systemUse;
+    }
+    if (file.rockRidge !== undefined) {
+      state.usesRockRidge = true;
     }
     directory.children.set(fileChildKey(normalized.isoIdentifier, fileNode.flags), fileNode);
   }
@@ -470,8 +514,12 @@ function buildTree(
         directory.flags |= extendedAttributeRecordFileFlags(fields) & 0x10;
       }
     }
-    if (input.systemUse !== undefined) {
-      directory.systemUse = toBytes(input.systemUse);
+    const systemUse = inputSystemUse(input, "directory");
+    if (systemUse !== undefined) {
+      directory.systemUse = systemUse;
+    }
+    if (input.rockRidge !== undefined) {
+      state.usesRockRidge = true;
     }
   }
 
@@ -510,8 +558,12 @@ function buildTree(
       flags: inputDirectoryFlags(FILE_FLAG_DIRECTORY, input),
       pathTableIndex: 0,
     };
-    if (input.systemUse !== undefined) {
-      directory.systemUse = toBytes(input.systemUse);
+    const systemUse = inputSystemUse(input, "external directory");
+    if (systemUse !== undefined) {
+      directory.systemUse = systemUse;
+    }
+    if (input.rockRidge !== undefined) {
+      state.usesRockRidge = true;
     }
     parent.children.set(directoryChildKey(name), directory);
   }
@@ -542,13 +594,33 @@ function buildTree(
       volumeSequenceNumber: externalVolumeSequenceNumber,
       external: true,
     };
-    if (input.systemUse !== undefined) {
-      fileNode.systemUse = toBytes(input.systemUse);
+    const systemUse = inputSystemUse(input, "external file");
+    if (systemUse !== undefined) {
+      fileNode.systemUse = systemUse;
+    }
+    if (input.rockRidge !== undefined) {
+      state.usesRockRidge = true;
     }
     directory.children.set(fileChildKey(normalized.isoIdentifier, flags), fileNode);
   }
 
+  if (state.usesRockRidge) {
+    root.systemUse = root.systemUse === undefined
+      ? encodeRockRidgeDiscoverySystemUse()
+      : prependRockRidgeDiscoverySystemUse(root.systemUse);
+  }
   return root;
+}
+
+function prependRockRidgeDiscoverySystemUse(systemUse: Uint8Array): Uint8Array {
+  if (systemUse.byteLength >= 2 && new TextDecoder("ascii").decode(systemUse.subarray(0, 2)) === "SP") {
+    return systemUse;
+  }
+  const discovery = encodeRockRidgeDiscoverySystemUse();
+  const bytes = new Uint8Array(discovery.byteLength + systemUse.byteLength);
+  bytes.set(discovery);
+  bytes.set(systemUse, discovery.byteLength);
+  return bytes;
 }
 
 function ensureDirectory(root: DirectoryNode, parts: string[], date: Date, timeZoneOffsetMinutes: number, state: BuildTreeState): DirectoryNode {
@@ -1076,12 +1148,251 @@ function encodeBootVolumeDescriptor(options: BootRecordOptions): Uint8Array {
   return bytes;
 }
 
+function encodeElToritoBootVolumeDescriptor(catalogSector: number): Uint8Array {
+  const bytes = new Uint8Array(SECTOR_SIZE);
+  bytes[0] = 0;
+  writeAsciiPadded(bytes, 1, 5, STANDARD_IDENTIFIER, 0x00);
+  bytes[6] = 1;
+  writeAField(bytes, 7, 32, EL_TORITO_BOOT_SYSTEM_IDENTIFIER);
+  writeAField(bytes, 39, 32, "");
+  writeUint32LE(bytes, 71, catalogSector);
+  return bytes;
+}
+
 function normalizeBootRecords(options: CreateIsoOptions): BootRecordOptions[] {
   const records = [...(options.bootRecords ?? [])];
   if (options.bootRecord) {
     records.unshift(options.bootRecord);
   }
   return records;
+}
+
+function prepareElTorito(options: CreateIsoOptions, bootRecords: BootRecordOptions[]): PreparedElTorito | undefined {
+  const elTorito = normalizedElToritoOptions(options.extensions);
+  if (!elTorito) {
+    return undefined;
+  }
+  if (bootRecords.some(isElToritoBootRecord)) {
+    throw new Error("extensions.elTorito cannot be combined with a raw EL TORITO SPECIFICATION bootRecord or bootRecords entry");
+  }
+
+  const initial = elTorito.initial ?? elTorito.bootImage;
+  if (initial === undefined) {
+    throw new Error("extensions.elTorito requires an initial boot image");
+  }
+
+  const imageEntries: PreparedElToritoImageEntry[] = [];
+  const platformId = checkedElToritoPlatform(elTorito.platform ?? "x86", "El Torito platform");
+  const catalog: ElToritoCatalogInput = {
+    platformId,
+    manufacturer: checkedElToritoText(elTorito.manufacturer ?? "", 24, "El Torito manufacturer"),
+    initialEntry: normalizeElToritoBootEntry(initial, "El Torito initial boot image", imageEntries),
+    sections: (elTorito.sections ?? []).map((section, index) => normalizeElToritoSection(section, index, platformId, imageEntries)),
+  };
+  assertElToritoCatalogEntryCapacity(catalog);
+  return { catalogSector: 0, catalog, imageEntries };
+}
+
+function normalizedElToritoOptions(extensions: CreateIsoOptions["extensions"]): ElToritoOptions | undefined {
+  if (extensions === undefined) {
+    return undefined;
+  }
+  if (Array.isArray(extensions)) {
+    if ((extensions as readonly string[]).includes("elTorito")) {
+      throw new Error("extensions.elTorito requires options");
+    }
+    return undefined;
+  }
+  if (extensions.elTorito === undefined || extensions.elTorito === false) {
+    return undefined;
+  }
+  if (typeof extensions.elTorito !== "object" || extensions.elTorito === null) {
+    throw new Error("extensions.elTorito must be an options object");
+  }
+  return extensions.elTorito;
+}
+
+function normalizeElToritoSection(
+  section: ElToritoSectionOptions,
+  index: number,
+  defaultPlatformId: number,
+  imageEntries: PreparedElToritoImageEntry[],
+): ElToritoCatalogInput["sections"][number] {
+  const entries = section.entries ?? section.bootImages ?? [];
+  if (entries.length === 0) {
+    throw new Error(`extensions.elTorito.sections[${index}] requires at least one boot image entry`);
+  }
+  return {
+    platformId: section.platform === undefined
+      ? defaultPlatformId
+      : checkedElToritoPlatform(section.platform, `extensions.elTorito.sections[${index}].platform`),
+    identifier: checkedElToritoText(section.identifier ?? "", 28, `extensions.elTorito.sections[${index}].identifier`),
+    entries: entries.map((entry, entryIndex) => normalizeElToritoSectionEntry(entry, `extensions.elTorito.sections[${index}].entries[${entryIndex}]`, imageEntries)),
+  };
+}
+
+function normalizeElToritoSectionEntry(
+  input: ByteInput | ElToritoSectionEntryOptions,
+  label: string,
+  imageEntries: PreparedElToritoImageEntry[],
+): ElToritoCatalogSectionEntryInput {
+  const entry = normalizeElToritoBootEntry(input, label, imageEntries);
+  entry.extensions = normalizeElToritoExtensionEntries(elToritoEntryOptions(input)?.extensions ?? [], `${label}.extensions`);
+  return entry;
+}
+
+function normalizeElToritoBootEntry(
+  input: ByteInput | ElToritoBootEntryOptions,
+  label: string,
+  imageEntries: PreparedElToritoImageEntry[],
+): ElToritoCatalogSectionEntryInput {
+  const options = elToritoEntryOptions(input);
+  const data = toBytes(elToritoEntryData(input, options, label));
+  const loadSectorCount = checkedElToritoLoadSectorCount(options?.loadSectorCount ?? Math.ceil(data.byteLength / EL_TORITO_LOAD_SECTOR_SIZE));
+  const minimumLoadSectorCount = Math.ceil(data.byteLength / EL_TORITO_LOAD_SECTOR_SIZE);
+  if (loadSectorCount < minimumLoadSectorCount) {
+    throw new Error(`${label}.loadSectorCount must cover the boot image data`);
+  }
+  const catalogEntry: ElToritoCatalogSectionEntryInput = {
+    bootable: options?.bootable ?? true,
+    mediaType: checkedElToritoMediaType(options?.mediaType ?? "no-emulation"),
+    loadSegment: checkedElToritoUint16(options?.loadSegment ?? 0, `${label}.loadSegment`),
+    systemType: checkedByte(options?.systemType ?? 0, `${label}.systemType`),
+    loadSectorCount,
+    loadRba: 0,
+    extensions: [],
+  };
+  imageEntries.push({
+    catalogEntry,
+    data,
+    extentSectors: sectorsForBytes(Math.max(data.byteLength, loadSectorCount * EL_TORITO_LOAD_SECTOR_SIZE)),
+  });
+  return catalogEntry;
+}
+
+function normalizeElToritoExtensionEntries(entries: ElToritoExtensionEntryOptions[], label: string): ElToritoCatalogSectionEntryInput["extensions"] {
+  return entries.map((entry, index) => {
+    const selectionCriteria = entry.selectionCriteria === undefined ? new Uint8Array() : toBytes(entry.selectionCriteria);
+    if (selectionCriteria.byteLength > 30) {
+      throw new Error(`${label}[${index}].selectionCriteria exceeds 30 bytes`);
+    }
+    return {
+      selectionCriteria,
+      ...(entry.extensionFollows === undefined ? {} : { extensionFollows: entry.extensionFollows }),
+    };
+  });
+}
+
+function elToritoEntryOptions(input: ByteInput | ElToritoBootEntryOptions | ElToritoSectionEntryOptions): (ElToritoBootEntryOptions & Partial<ElToritoSectionEntryOptions>) | undefined {
+  if (typeof input !== "object" || input === null || ArrayBuffer.isView(input) || input instanceof ArrayBuffer) {
+    return undefined;
+  }
+  if ("data" in input || "image" in input || "bootImage" in input || "bootable" in input || "mediaType" in input || "loadSegment" in input || "systemType" in input || "loadSectorCount" in input || "extensions" in input) {
+    return input as ElToritoBootEntryOptions & Partial<ElToritoSectionEntryOptions>;
+  }
+  return undefined;
+}
+
+function elToritoEntryData(input: ByteInput | ElToritoBootEntryOptions, options: ElToritoBootEntryOptions | undefined, label: string): ByteInput {
+  if (!options) {
+    return input as ByteInput;
+  }
+  const data = options.data ?? options.image ?? options.bootImage;
+  if (data === undefined) {
+    throw new Error(`${label} requires data, image, or bootImage`);
+  }
+  return data;
+}
+
+function checkedElToritoPlatform(value: ElToritoPlatform, label: string): number {
+  if (typeof value === "number") {
+    return checkedByte(value, label);
+  }
+  switch (value.toLowerCase()) {
+    case "x86":
+    case "bios":
+      return 0x00;
+    case "powerpc":
+    case "ppc":
+      return 0x01;
+    case "mac":
+      return 0x02;
+    case "efi":
+      return 0xef;
+    default:
+      throw new Error(`${label} must be x86, bios, powerpc, ppc, mac, efi, or an integer from 0 to 255`);
+  }
+}
+
+function checkedElToritoMediaType(value: ElToritoMediaType): number {
+  if (typeof value === "number") {
+    return checkedElToritoMediaTypeNumber(value);
+  }
+  switch (value.toLowerCase()) {
+    case "no-emulation":
+    case "none":
+      return 0;
+    case "1.2m":
+    case "1.2mb":
+    case "floppy-1.2m":
+      return 1;
+    case "1.44m":
+    case "1.44mb":
+    case "floppy-1.44m":
+      return 2;
+    case "2.88m":
+    case "2.88mb":
+    case "floppy-2.88m":
+      return 3;
+    case "hard-disk":
+    case "hard_disk":
+    case "hdd":
+      return 4;
+    default:
+      throw new Error("El Torito mediaType must be no-emulation, 1.2m, 1.44m, 2.88m, hard-disk, or an integer from 0 to 4");
+  }
+}
+
+function checkedElToritoMediaTypeNumber(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 4) {
+    throw new RangeError("El Torito mediaType must be an integer from 0 to 4");
+  }
+  return value;
+}
+
+function checkedElToritoLoadSectorCount(value: number): number {
+  return checkedElToritoUint16(value, "El Torito loadSectorCount");
+}
+
+function checkedElToritoUint16(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new RangeError(`${label} must be an integer from 0 to 65535`);
+  }
+  return value;
+}
+
+function checkedElToritoText(value: string, maxLength: number, label: string): string {
+  if (new TextEncoder().encode(value).byteLength > maxLength) {
+    throw new Error(`${label} exceeds ${maxLength} bytes`);
+  }
+  writeAsciiPadded(new Uint8Array(maxLength), 0, maxLength, value, 0x00);
+  return value;
+}
+
+function assertElToritoCatalogEntryCapacity(catalog: ElToritoCatalogInput): void {
+  const count = 2 + catalog.sections.reduce((sectionSum, section) => (
+    sectionSum + 1 + section.entries.reduce((entrySum, entry) => entrySum + 1 + entry.extensions.length, 0)
+  ), 0);
+  if (count > 64) {
+    throw new Error(`El Torito boot catalog requires ${count} entries; maximum is 64`);
+  }
+}
+
+function isElToritoBootRecord(record: BootRecordOptions): boolean {
+  if (record.bootSystemIdentifier === undefined) {
+    return false;
+  }
+  return normalizeACharacters(record.bootSystemIdentifier, "boot system identifier").replace(/[ \0]+$/u, "") === EL_TORITO_BOOT_SYSTEM_IDENTIFIER;
 }
 
 function encodeVolumePartitionDescriptor(options: VolumePartitionOptions, location: number, size: number): Uint8Array {
@@ -1117,7 +1428,7 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
     kind: PreparedSecondaryDescriptor["kind"];
     options: SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions;
   }> = [
-    ...(options.supplementaryVolumeDescriptors ?? []).map((descriptor) => ({ kind: "supplementary" as const, options: descriptor })),
+    ...normalizedSupplementaryVolumeDescriptors(options).map((descriptor) => ({ kind: "supplementary" as const, options: descriptor })),
     ...(options.enhancedVolumeDescriptors ?? []).map((descriptor) => ({ kind: "enhanced" as const, options: descriptor })),
   ];
 
@@ -1153,6 +1464,77 @@ function normalizeSecondaryDescriptors(options: CreateIsoOptions, directories: D
       directoryDataLengths: new Map(),
     };
   });
+}
+
+function normalizedSupplementaryVolumeDescriptors(options: CreateIsoOptions): SupplementaryVolumeDescriptorOptions[] {
+  const descriptors = [...(options.supplementaryVolumeDescriptors ?? [])];
+  const joliet = normalizedJolietOptions(options.extensions);
+  if (!joliet) {
+    return descriptors;
+  }
+  if (descriptors.some(isJolietSupplementaryDescriptorOptions)) {
+    throw new Error("extensions.joliet cannot be combined with an explicit Joliet supplementary volume descriptor");
+  }
+  return [jolietDescriptorOptions(joliet), ...descriptors];
+}
+
+function normalizedJolietOptions(extensions: CreateIsoOptions["extensions"]): JolietOptions | undefined {
+  if (extensions === undefined) {
+    return undefined;
+  }
+  if (Array.isArray(extensions)) {
+    for (const extension of extensions) {
+      if (extension !== "joliet") {
+        throw new Error(`unsupported ISO extension: ${extension}`);
+      }
+    }
+    return extensions.includes("joliet") ? {} : undefined;
+  }
+  if (extensions.joliet === undefined || extensions.joliet === false) {
+    return undefined;
+  }
+  if (extensions.joliet === true) {
+    return {};
+  }
+  return extensions.joliet.enabled === false ? undefined : extensions.joliet;
+}
+
+function jolietDescriptorOptions(options: JolietOptions): SupplementaryVolumeDescriptorOptions {
+  const level = checkedJolietLevel(options.level ?? 3);
+  return {
+    ...(options.descriptor ?? {}),
+    escapeSequences: jolietEscapeSequence(level),
+    identifierEncoding: "ucs2-be",
+  };
+}
+
+function checkedJolietLevel(value: number): 1 | 2 | 3 {
+  if (value !== 1 && value !== 2 && value !== 3) {
+    throw new RangeError("Joliet level must be 1, 2, or 3");
+  }
+  return value;
+}
+
+function jolietEscapeSequence(level: 1 | 2 | 3): Uint8Array {
+  if (level === 1) {
+    return Uint8Array.of(0x25, 0x2f, 0x40);
+  }
+  if (level === 2) {
+    return Uint8Array.of(0x25, 0x2f, 0x43);
+  }
+  return Uint8Array.of(0x25, 0x2f, 0x45);
+}
+
+function isJolietSupplementaryDescriptorOptions(options: SupplementaryVolumeDescriptorOptions): boolean {
+  if (options.identifierEncoding !== "ucs2-be" || options.escapeSequences === undefined) {
+    return false;
+  }
+  const escapeSequences = toBytes(options.escapeSequences);
+  return [
+    Uint8Array.of(0x25, 0x2f, 0x40),
+    Uint8Array.of(0x25, 0x2f, 0x43),
+    Uint8Array.of(0x25, 0x2f, 0x45),
+  ].some((supported) => bytesEqual(escapeSequences.subarray(0, supported.byteLength), supported));
 }
 
 function normalizeSecondaryIdentifierEncoding(kind: PreparedSecondaryDescriptor["kind"], options: SupplementaryVolumeDescriptorOptions | EnhancedVolumeDescriptorOptions): SecondaryIdentifierEncoding {
@@ -1226,7 +1608,7 @@ const prefixedDescriptorFileReferenceFields = [
 
 function validateDescriptorFileReferences(options: CreateIsoOptions, root: DirectoryNode, identifierLevel: IdentifierLevel): void {
   validateDescriptorFileReferenceOptions("primary", options, root, identifierLevel);
-  for (const descriptor of options.supplementaryVolumeDescriptors ?? []) {
+  for (const descriptor of normalizedSupplementaryVolumeDescriptors(options)) {
     validateDescriptorFileReferenceOptions("supplementary", descriptor, root, identifierLevel, options);
   }
   for (const descriptor of options.enhancedVolumeDescriptors ?? []) {
@@ -1654,6 +2036,19 @@ function comparePathTableIdentifierBytes(left: Uint8Array, right: Uint8Array): n
 
 function toBytes(data: ByteInput): Uint8Array {
   return bytesFromInput(data);
+}
+
+function inputSystemUse(input: { systemUse?: ByteInput; rockRidge?: RockRidgeInput }, label: string): Uint8Array | undefined {
+  if (input.systemUse !== undefined && input.rockRidge !== undefined) {
+    throw new Error(`${label} cannot combine raw systemUse with structured rockRidge`);
+  }
+  if (input.systemUse !== undefined) {
+    return toBytes(input.systemUse);
+  }
+  if (input.rockRidge !== undefined) {
+    return encodeRockRidgeSystemUse(input.rockRidge);
+  }
+  return undefined;
 }
 
 function isExtendedAttributeRecordInput(data: ByteInput | ExtendedAttributeRecordInput): data is ExtendedAttributeRecordInput {

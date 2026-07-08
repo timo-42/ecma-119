@@ -107,7 +107,14 @@ describe("package entry", () => {
     const image = builtEntry.createIsoImage([{
       path: "PACKAGE.TXT",
       data: "package entry roundtrip\n",
+      rockRidge: {
+        name: "package.txt",
+      },
     }], {
+      profile: "ecma-119",
+      extensions: {
+        joliet: true,
+      },
       volumeIdentifier: "PACKAGE_ENTRY",
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
@@ -120,6 +127,13 @@ describe("package entry", () => {
       path: "PACKAGE.TXT",
       identifier: "PACKAGE.TXT;1",
       size: "package entry roundtrip\n".length,
+      rockRidge: {
+        name: "package.txt",
+      },
+    });
+    expect(parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary")).toMatchObject({
+      extension: "joliet",
+      jolietLevel: 3,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("package entry roundtrip\n");
   }, 20_000);

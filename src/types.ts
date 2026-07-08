@@ -19,6 +19,7 @@ export type IsoInputFile = {
   associated?: boolean;
   extendedAttributeRecord?: ByteInput | ExtendedAttributeRecordInput;
   systemUse?: ByteInput;
+  rockRidge?: RockRidgeInput;
 };
 
 export type IsoInputFileMultiExtentOptions = {
@@ -38,6 +39,7 @@ export type IsoInputDirectory = {
   hidden?: boolean;
   extendedAttributeRecord?: ByteInput | ExtendedAttributeRecordInput;
   systemUse?: ByteInput;
+  rockRidge?: RockRidgeInput;
 };
 
 export type IsoInputExternalFile = {
@@ -54,6 +56,7 @@ export type IsoInputExternalFile = {
   hidden?: boolean;
   associated?: boolean;
   systemUse?: ByteInput;
+  rockRidge?: RockRidgeInput;
 };
 
 export type IsoInputExternalDirectory = {
@@ -68,6 +71,91 @@ export type IsoInputExternalDirectory = {
   timeZoneOffsetMinutes?: number;
   hidden?: boolean;
   systemUse?: ByteInput;
+  rockRidge?: RockRidgeInput;
+};
+
+export type SuspEntry = {
+  signature: string;
+  length: number;
+  version: number;
+  data: Uint8Array;
+  raw: Uint8Array;
+  source: "system-use" | "continuation";
+  offset: number;
+};
+
+export type RockRidgeSymlinkComponent = {
+  flags: number;
+  content: string;
+  kind?: "current" | "parent" | "root" | "volume-root" | "host";
+};
+
+export type RockRidgeSymlink = {
+  flags: number;
+  target?: string;
+  components: RockRidgeSymlinkComponent[];
+};
+
+export type RockRidgeTimestamps = {
+  createdAt?: Date;
+  modifiedAt?: Date;
+  accessedAt?: Date;
+  attributesAt?: Date;
+  backupAt?: Date;
+  expiresAt?: Date;
+  effectiveAt?: Date;
+};
+
+export type RockRidgeMetadata = {
+  entries: SuspEntry[];
+  rawEntries: SuspEntry[];
+  susp?: {
+    skipBytes?: number;
+    extensions?: Array<{
+      identifier: string;
+      descriptor: string;
+      source: string;
+      version: number;
+    }>;
+  };
+  posix?: {
+    mode?: number;
+    links?: number;
+    uid?: number;
+    gid?: number;
+    serial?: number;
+  };
+  name?: string;
+  symlink?: RockRidgeSymlink;
+  timestamps?: RockRidgeTimestamps;
+  device?: {
+    major: number;
+    minor: number;
+  };
+  childLinkExtent?: number;
+  parentLinkExtent?: number;
+  relocated?: boolean;
+};
+
+export type RockRidgeInput = {
+  mode?: number;
+  links?: number;
+  uid?: number;
+  gid?: number;
+  serial?: number;
+  name?: string;
+  symlink?: string | {
+    target: string;
+    flags?: number;
+  };
+  timestamps?: RockRidgeTimestamps;
+  device?: {
+    major: number;
+    minor: number;
+  };
+  childLinkExtent?: number;
+  parentLinkExtent?: number;
+  relocated?: boolean;
 };
 
 export type ExtendedAttributeRecordInput = {
@@ -108,6 +196,8 @@ export type ExtendedAttributeRecord = {
 };
 
 export type CreateIsoOptions = {
+  profile?: IsoProfile;
+  extensions?: IsoExtensionList | IsoExtensionOptions;
   directories?: IsoInputDirectory[];
   externalFiles?: IsoInputExternalFile[];
   externalDirectories?: IsoInputExternalDirectory[];
@@ -138,6 +228,77 @@ export type CreateIsoOptions = {
   modifiedAt?: Date;
   effectiveAt?: Date;
   expiresAt?: Date | null;
+};
+
+export type IsoProfile = "ecma-119";
+
+export type IsoExtensionName = "joliet";
+
+export type IsoExtensionList = IsoExtensionName[];
+
+export type IsoExtensionOptions = {
+  joliet?: boolean | JolietOptions;
+  elTorito?: false | ElToritoOptions;
+};
+
+export type JolietOptions = {
+  enabled?: boolean;
+  level?: 1 | 2 | 3;
+  descriptor?: Omit<SupplementaryVolumeDescriptorOptions, "escapeSequences" | "identifierEncoding">;
+};
+
+export type ElToritoOptions = {
+  platform?: ElToritoPlatform;
+  manufacturer?: string;
+  initial?: ByteInput | ElToritoBootEntryOptions;
+  bootImage?: ByteInput | ElToritoBootEntryOptions;
+  sections?: ElToritoSectionOptions[];
+};
+
+export type ElToritoPlatform = "x86" | "bios" | "powerpc" | "ppc" | "mac" | "efi" | number;
+
+export type ElToritoMediaType =
+  | "no-emulation"
+  | "none"
+  | "1.2m"
+  | "1.2mb"
+  | "floppy-1.2m"
+  | "1.44m"
+  | "1.44mb"
+  | "floppy-1.44m"
+  | "2.88m"
+  | "2.88mb"
+  | "floppy-2.88m"
+  | "hard-disk"
+  | "hard_disk"
+  | "hdd"
+  | number;
+
+export type ElToritoBootEntryOptions = {
+  data?: ByteInput;
+  image?: ByteInput;
+  bootImage?: ByteInput;
+  bootable?: boolean;
+  mediaType?: ElToritoMediaType;
+  loadSegment?: number;
+  systemType?: number;
+  loadSectorCount?: number;
+};
+
+export type ElToritoSectionOptions = {
+  platform?: ElToritoPlatform;
+  identifier?: string;
+  entries?: Array<ByteInput | ElToritoSectionEntryOptions>;
+  bootImages?: Array<ByteInput | ElToritoSectionEntryOptions>;
+};
+
+export type ElToritoSectionEntryOptions = ElToritoBootEntryOptions & {
+  extensions?: ElToritoExtensionEntryOptions[];
+};
+
+export type ElToritoExtensionEntryOptions = {
+  selectionCriteria?: ByteInput;
+  extensionFollows?: boolean;
 };
 
 export type OptionalPathTableCopies = boolean | {
@@ -199,6 +360,7 @@ export type IsoFileEntry = {
   extendedAttributeRecordFields?: ExtendedAttributeRecord;
   data?: Uint8Array;
   systemUse?: Uint8Array;
+  rockRidge?: RockRidgeMetadata;
   sections?: IsoFileSection[];
 };
 
@@ -229,6 +391,7 @@ export type IsoDirectoryEntry = {
   extendedAttributeRecord?: Uint8Array;
   extendedAttributeRecordFields?: ExtendedAttributeRecord;
   systemUse?: Uint8Array;
+  rockRidge?: RockRidgeMetadata;
   sections?: IsoFileSection[];
 };
 
@@ -358,6 +521,8 @@ export type SupplementaryVolumeDescriptor = BaseVolumeDescriptor & {
   type: 2;
   kind: "supplementary";
   version: 1;
+  extension?: "joliet";
+  jolietLevel?: 1 | 2 | 3;
   volumeFlags: number;
   systemIdentifier: string;
   volumeIdentifier: string;

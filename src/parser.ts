@@ -5,6 +5,7 @@ import { decodeDirectoryRecord, FILE_FLAG_ASSOCIATED, FILE_FLAG_DIRECTORY, FILE_
 import { decodeExtendedAttributeRecord, extendedAttributeRecordFileFlags } from "./extended-attribute-record.js";
 import { decodeFileIdentifier, decodeUcs2FileIdentifier, isLevelOneFileIdentifier, isSupportedPrimaryDirectoryIdentifier, isSupportedPrimaryFileIdentifier, stripVersion } from "./identifiers.js";
 import { decodePathTable, type PathTableRecord } from "./path-table.js";
+import { tryParseRockRidgeMetadata, type SuspParseOptions } from "./rock-ridge.js";
 import {
   type IsoDirectoryEntry,
   type IsoFileEntry,
@@ -52,6 +53,7 @@ type DirectoryTreeReadOptions = {
   enforceFilePathLength?: boolean;
   depth?: number;
   filePathLengthPrefix?: number;
+  rockRidge?: SuspParseOptions;
 };
 
 export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?: boolean } = {}): IsoImage {
@@ -2410,9 +2412,13 @@ function parseSupplementaryLikeDescriptor(image: Uint8Array, offset: number, sec
     effectiveAt: decodeSecondaryVolumeDate(image, offset + 864),
     escapeSequences: image.slice(offset + 88, offset + 120),
   };
-  return image[offset + 6] === 2
-    ? { ...common, kind: "enhanced", version: 2 }
-    : { ...common, kind: "supplementary", version: 1 };
+  if (image[offset + 6] === 2) {
+    return { ...common, kind: "enhanced", version: 2 };
+  }
+  const jolietLevel = jolietLevelForEscapeSequences(common.escapeSequences);
+  return jolietLevel === undefined
+    ? { ...common, kind: "supplementary", version: 1 }
+    : { ...common, kind: "supplementary", version: 1, extension: "joliet", jolietLevel };
 }
 
 function decodeSecondaryVolumeDate(image: Uint8Array, offset: number): Date | null {
@@ -2551,6 +2557,8 @@ function readDirectoryTree(
   let previousOrdinaryRecord: DecodedDirectoryRecord | undefined;
   let previousOrdinaryPath = "";
   const ordinaryRecordKeys = new Set<string>();
+  let selfRecordSystemUse: Uint8Array | undefined;
+  let rockRidgeOptions = options.rockRidge;
 
   while (offset < bytes.byteLength) {
     const length = bytes[offset]!;
@@ -2581,6 +2589,13 @@ function readDirectoryTree(
     if (index < 2) {
       assertSupportedDirectoryRecord(record, path || ".", volumeSetSize, { allowInterleaving: true, allowMultiExtent: true });
       assertDotDirectoryRecordForParsing(record, index, directory, parent, path || ".");
+      if (index === 0 && record.systemUse.byteLength > 0) {
+        selfRecordSystemUse = record.systemUse;
+        const rootRockRidge = tryParseRockRidgeMetadata(record.systemUse, { image });
+        if (rootRockRidge?.susp?.skipBytes !== undefined) {
+          rockRidgeOptions = { image, skipBytes: rootRockRidge.susp.skipBytes };
+        }
+      }
       continue;
     }
     const isDirectory = (record.flags & FILE_FLAG_DIRECTORY) === FILE_FLAG_DIRECTORY;
@@ -2615,6 +2630,7 @@ function readDirectoryTree(
       }
       const childPath = joinPath(path, identifier);
       const child = directoryEntryFromSectionChain(chain.records, childPath, decodeIdentifier);
+      attachRockRidgeMetadata(child, firstRecord.systemUse, image, rockRidgeOptions);
       if (firstRecord.volumeSequenceNumber !== localVolumeSequenceNumber) {
         children.push(markExternalDirectory(child));
         continue;
@@ -2630,6 +2646,7 @@ function readDirectoryTree(
       }
       children.push(readDirectoryTree(image, child, directory, childPath, includeData, localVolumeSequenceNumber, volumeSetSize, new Set(visited), {
         ...options,
+        ...(rockRidgeOptions === undefined ? {} : { rockRidge: rockRidgeOptions }),
         depth: depth + 1,
         filePathLengthPrefix: filePathLengthPrefix + record.identifier.length + 1,
       }));
@@ -2649,6 +2666,7 @@ function readDirectoryTree(
       if (firstRecord.systemUse.byteLength > 0) {
         file.systemUse = firstRecord.systemUse;
       }
+      attachRockRidgeMetadata(file, firstRecord.systemUse, image, rockRidgeOptions);
       if (firstRecord.volumeSequenceNumber !== localVolumeSequenceNumber) {
         children.push(markExternalFile(file));
         continue;
@@ -2676,6 +2694,10 @@ function readDirectoryTree(
   }
 
   const entry = { ...directory, children };
+  if (selfRecordSystemUse && selfRecordSystemUse.byteLength > 0) {
+    entry.systemUse = selfRecordSystemUse;
+    attachRockRidgeMetadata(entry, selfRecordSystemUse, image, options.rockRidge);
+  }
   if (entry.extendedAttributeRecordLength > 0 && !entry.extendedAttributeRecord) {
     entry.extendedAttributeRecord = image.slice(directory.extent * SECTOR_SIZE, (directory.extent + directory.extendedAttributeRecordLength) * SECTOR_SIZE);
     const fields = decodeOptionalExtendedAttributeRecord(entry.extendedAttributeRecord);
@@ -2685,6 +2707,13 @@ function readDirectoryTree(
     }
   }
   return entry;
+}
+
+function attachRockRidgeMetadata(entry: IsoDirectoryEntry | IsoFileEntry, systemUse: Uint8Array, image: Uint8Array, options: SuspParseOptions = {}): void {
+  const rockRidge = tryParseRockRidgeMetadata(systemUse, { ...options, image });
+  if (rockRidge) {
+    entry.rockRidge = rockRidge;
+  }
 }
 
 function assertDirectoryDataLengthForParsing(directory: Pick<IsoDirectoryEntry, "size">, path: string): void {
@@ -2809,6 +2838,20 @@ function isPrintableUcs2IdentifierCodeUnit(code: number): boolean {
 function secondaryEscapeSequence(bytes: Uint8Array): Uint8Array {
   const sequenceEnd = bytes.indexOf(0);
   return sequenceEnd === -1 ? bytes : bytes.subarray(0, sequenceEnd);
+}
+
+function jolietLevelForEscapeSequences(bytes: Uint8Array): 1 | 2 | 3 | undefined {
+  const sequence = secondaryEscapeSequence(bytes);
+  if (bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x40))) {
+    return 1;
+  }
+  if (bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x43))) {
+    return 2;
+  }
+  if (bytesEqual(sequence, Uint8Array.of(0x25, 0x2f, 0x45))) {
+    return 3;
+  }
+  return undefined;
 }
 
 function assertDotDirectoryRecordForParsing(
