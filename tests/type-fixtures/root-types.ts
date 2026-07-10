@@ -174,6 +174,9 @@ const imageFromObjectOverload = createIsoImage({
 const parsed: IsoImage = parseIsoImage(image);
 const parsedFromView: IsoImage = parseIsoImage(imageInput, { includeData: false });
 const parsedWithPrimarySelection: IsoImage = parseIsoImage(image, { primaryVolumeDescriptorIndex: 0 } satisfies ParseIsoOptions);
+const parsedWithDescriptorReservedBytes: IsoImage = parseIsoImage(image, {
+  allowNonzeroDescriptorReservedBytes: true,
+} satisfies ParseIsoOptions);
 const volumeSet: IsoVolumeSet = parseIsoVolumeSet([image, imageInput], { includeData: false });
 const descriptors: VolumeDescriptor[] = parseVolumeDescriptors(image);
 const issues: ValidationIssue[] = validateIsoImage(image);
@@ -216,6 +219,7 @@ void fileEntry;
 void imageFromObjectOverload;
 void issues;
 void parsedFromView;
+void parsedWithDescriptorReservedBytes;
 void partition;
 void primary;
 void rockRidge;

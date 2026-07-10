@@ -69,7 +69,7 @@ export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOption
     if (descriptor.kind === "primary") {
       assertSupportedDescriptorProfile(descriptor, "primary volume descriptor");
       assertVolumeDescriptorMetadata(descriptor, "primary volume descriptor");
-      assertZeroDescriptorRanges(descriptor, primaryVolumeDescriptorZeroRanges());
+      assertZeroDescriptorRanges(descriptor, primaryVolumeDescriptorZeroRanges(), options.allowNonzeroDescriptorReservedBytes);
       assertDescriptorCharacterFields(descriptor, primaryVolumeDescriptorCharacterFields());
       assertDescriptorRootFileReferences(image, descriptor, "pvd");
       assertDescriptorRootDirectoryRecordIdentifier(descriptor, "primary");
@@ -78,12 +78,12 @@ export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOption
       assertSupportedBootVolumeDescriptor(descriptor);
       assertSupportedBootCatalog(image, descriptor);
     } else if (descriptor.kind === "partition") {
-      assertZeroDescriptorRanges(descriptor, partitionDescriptorZeroRanges());
+      assertZeroDescriptorRanges(descriptor, partitionDescriptorZeroRanges(), options.allowNonzeroDescriptorReservedBytes);
       assertSupportedPartitionVolumeDescriptor(image, descriptor, pvd);
     } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
-      assertZeroDescriptorRanges(descriptor, secondaryVolumeDescriptorZeroRanges());
+      assertZeroDescriptorRanges(descriptor, secondaryVolumeDescriptorZeroRanges(), options.allowNonzeroDescriptorReservedBytes);
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
       assertSupportedSecondaryEscapeSequences(descriptor);
@@ -2108,7 +2108,14 @@ function validateZeroDescriptorRanges(
   return issues;
 }
 
-function assertZeroDescriptorRanges(descriptor: VolumeDescriptor, ranges: DescriptorZeroRange[]): void {
+function assertZeroDescriptorRanges(
+  descriptor: VolumeDescriptor,
+  ranges: DescriptorZeroRange[],
+  allowNonzeroDescriptorReservedBytes = false,
+): void {
+  if (allowNonzeroDescriptorReservedBytes) {
+    return;
+  }
   const issues = validateZeroDescriptorRanges(descriptor, descriptorZeroRangeCodePrefix(descriptor), ranges);
   if (issues.length > 0) {
     throw new Error(issues[0]!.message);

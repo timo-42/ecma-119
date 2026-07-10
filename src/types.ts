@@ -632,6 +632,11 @@ export type ParseIsoOptions = {
   /** Load regular file, partition, and El Torito boot-image payload bytes. Defaults to true. */
   includeData?: boolean;
   /**
+   * Allow nonzero unused and reserved bytes in volume descriptor zero ranges.
+   * Defaults to false; use validateIsoImage to report those nonconformances.
+   */
+  allowNonzeroDescriptorReservedBytes?: boolean;
+  /**
    * Selects the primary volume descriptor used for root and file results.
    * The index is zero-based among primary volume descriptors and defaults to 0.
    */
