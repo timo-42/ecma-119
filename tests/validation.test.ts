@@ -40,6 +40,32 @@ describe("validateIsoImage hardening", () => {
     expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
+  test("permits nonzero PVD unused bytes only when explicitly requested", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "interoperability\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    image.fill(0xa5, PVD_OFFSET + 88, PVD_OFFSET + 120);
+
+    expect(() => parseIsoImage(image, { includeData: false })).toThrow(/primary volume descriptor unused field at BP 89 to 120 must be zero/i);
+    expect(parseIsoImage(image, {
+      includeData: false,
+      allowNonzeroDescriptorReservedBytes: true,
+    }).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(validateIsoImage(image)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "pvd.unused",
+        message: "primary volume descriptor unused field at BP 89 to 120 must be zero",
+      }),
+    ]));
+    expect(validateIsoImage(image)).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
+
+    image[PVD_OFFSET + 81] ^= 0xff;
+    expect(() => parseIsoImage(image, {
+      includeData: false,
+      allowNonzeroDescriptorReservedBytes: true,
+    })).toThrow(/both-endian uint32 mismatch/i);
+  });
+
   test("reports malformed descriptor standard identifiers with targeted issues", () => {
     const image = baselineImage();
     image[PVD_OFFSET + 1] = "X".charCodeAt(0);
