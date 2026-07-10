@@ -1,7 +1,7 @@
 {
   "name": "ecma-119",
   "version": "0.1.0",
-  "description": "Read and write ECMA-119 / ISO 9660 CD-ROM images with structured extension metadata.",
+  "description": "Read and write ECMA-119 / ISO 9660 and UDF 2.01 / ECMA-167 volume images.",
   "type": "module",
   "license": "MIT",
   "author": "Timo Haas",
@@ -52,7 +52,9 @@
     "filesystem",
     "joliet",
     "rock-ridge",
-    "el-torito"
+    "el-torito",
+    "udf",
+    "ecma-167"
   ],
   "devDependencies": {
     "@types/node": "^24.0.0",
