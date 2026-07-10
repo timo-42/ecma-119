@@ -197,7 +197,7 @@ function collectNodes(root: Node): Node[] {
 }
 
 function encodeDirectoryData(directory: Node): Uint8Array {
-  const entries = [encodeFileIdentifier(directory, directory, "", PARENT_FID_CHARACTERISTICS), ...directory.children.map((child) => encodeFileIdentifier(directory, child, child.name, child.kind === "directory" ? DIRECTORY_FID_CHARACTERISTICS : 0))];
+  const entries = [encodeFileIdentifier(directory, directory.parent ?? directory, "", PARENT_FID_CHARACTERISTICS), ...directory.children.map((child) => encodeFileIdentifier(directory, child, child.name, child.kind === "directory" ? DIRECTORY_FID_CHARACTERISTICS : 0))];
   return concat(entries);
 }
 

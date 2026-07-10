@@ -220,6 +220,10 @@ function readAllocationData(context: ParsedContext, descriptor: UdfFileEntryDesc
   let outputOffset = 0;
   for (const allocation of descriptor.allocationDescriptors) {
     if (allocation.type !== 0) throw new Error(`unsupported UDF allocation extent type ${allocation.type}`);
+    const allocationSectors = Math.ceil(allocation.length / UDF_LOGICAL_BLOCK_SIZE);
+    if (allocation.location + allocationSectors > context.partition.length) {
+      throw new Error("UDF allocation descriptor exceeds partition bounds");
+    }
     const start = (context.partition.startLocation + allocation.location) * UDF_LOGICAL_BLOCK_SIZE;
     const end = start + allocation.length;
     if (end > context.image.byteLength || outputOffset + allocation.length > length) throw new Error("UDF allocation descriptor is out of bounds");

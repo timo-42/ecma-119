@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
-import { createUdfImage, parseUdfImage, parseUdfVolumeStructures, validateUdfImage } from "../src/udf/index";
+import { createUdfImage, parseUdfImage, parseUdfVolumeStructures, UDF_DESCRIPTOR_TAG_IDENTIFIER, validateUdfImage } from "../src/udf/index";
+import { finalizeUdfDescriptor } from "../src/udf/codec";
 
 describe("UDF 2.01 ECMA-167 images", () => {
   test("writes, validates, and reads nested regular files with OSTA Unicode names", () => {
@@ -26,6 +27,8 @@ describe("UDF 2.01 ECMA-167 images", () => {
       ["DOCS/EMPTY.BIN", ""],
       ["README.TXT", "hello UDF\n"],
     ]);
+    const docs = parsed.root.children.find((node) => node.kind === "directory" && node.name === "DOCS");
+    expect(docs?.descriptor.allocationDescriptors).toHaveLength(1);
   });
 
   test("can omit payload bytes while retaining the UDF tree", () => {
@@ -44,5 +47,24 @@ describe("UDF 2.01 ECMA-167 images", () => {
     expect(validateUdfImage(image)).toEqual([expect.objectContaining({ code: "udf.parse" })]);
     expect(() => createUdfImage([], { revision: "2.50" })).toThrow(/revision 2\.01 only/i);
     expect(() => createUdfImage([], { logicalBlockSize: 1024 })).toThrow(/2048-byte logical block size/i);
+  });
+
+  test("rejects allocation extents that exceed the selected partition", () => {
+    const image = createUdfImage([{ path: "DATA.BIN", data: "x" }]);
+    const partitionStart = 274;
+    const rootFileEntry = partitionStart + 1;
+    const rootOffset = rootFileEntry * 2048;
+    const rootLength = 16 + image[rootOffset + 10]! + (image[rootOffset + 11]! << 8);
+    const root = image.slice(rootOffset, rootOffset + rootLength);
+    root[180] = 0xff;
+    root[181] = 0xff;
+    root[182] = 0xff;
+    root[183] = 0x7f;
+    image.set(finalizeUdfDescriptor(root, {
+      tagIdentifier: UDF_DESCRIPTOR_TAG_IDENTIFIER.FILE_ENTRY,
+      tagLocation: 1,
+    }), rootOffset);
+
+    expect(() => parseUdfImage(image)).toThrow(/allocation descriptor exceeds partition bounds/i);
   });
 });
