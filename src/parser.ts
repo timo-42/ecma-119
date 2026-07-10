@@ -63,13 +63,18 @@ export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOption
   const descriptors = parseVolumeDescriptors(image);
   assertSupportedDescriptorSequenceProfile(descriptors);
   const primaryVolumeDescriptorIndex = options.primaryVolumeDescriptorIndex ?? 0;
+  const allowNonzeroPrimaryVolumeDescriptorUnusedBytes = options.allowNonzeroPrimaryVolumeDescriptorUnusedBytes || options.interoperability === true;
   const primaryVolumeDescriptors = primaryDescriptors(descriptors);
   const pvd = selectPrimaryVolumeDescriptor(primaryVolumeDescriptors, primaryVolumeDescriptorIndex);
   for (const descriptor of descriptors) {
     if (descriptor.kind === "primary") {
       assertSupportedDescriptorProfile(descriptor, "primary volume descriptor");
       assertVolumeDescriptorMetadata(descriptor, "primary volume descriptor");
-      assertZeroDescriptorRanges(descriptor, primaryVolumeDescriptorZeroRanges(), options.allowNonzeroDescriptorReservedBytes);
+      assertZeroDescriptorRanges(
+        descriptor,
+        primaryVolumeDescriptorZeroRanges(),
+        allowNonzeroPrimaryVolumeDescriptorUnusedBytes ? ["unused"] : [],
+      );
       assertDescriptorCharacterFields(descriptor, primaryVolumeDescriptorCharacterFields());
       assertDescriptorRootFileReferences(image, descriptor, "pvd");
       assertDescriptorRootDirectoryRecordIdentifier(descriptor, "primary");
@@ -78,12 +83,15 @@ export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOption
       assertSupportedBootVolumeDescriptor(descriptor);
       assertSupportedBootCatalog(image, descriptor);
     } else if (descriptor.kind === "partition") {
-      assertZeroDescriptorRanges(descriptor, partitionDescriptorZeroRanges(), options.allowNonzeroDescriptorReservedBytes);
+      assertZeroDescriptorRanges(descriptor, partitionDescriptorZeroRanges());
       assertSupportedPartitionVolumeDescriptor(image, descriptor, pvd);
     } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+      if (options.interoperability) {
+        continue;
+      }
       assertSupportedDescriptorProfile(descriptor, `${descriptor.kind} volume descriptor`);
       assertVolumeDescriptorMetadata(descriptor, `${descriptor.kind} volume descriptor`);
-      assertZeroDescriptorRanges(descriptor, secondaryVolumeDescriptorZeroRanges(), options.allowNonzeroDescriptorReservedBytes);
+      assertZeroDescriptorRanges(descriptor, secondaryVolumeDescriptorZeroRanges());
       assertVolumeSetConsistentWithPrimary(descriptor, pvd);
       assertSupportedSecondaryVolumeFlags(descriptor);
       assertSupportedSecondaryEscapeSequences(descriptor);
@@ -98,17 +106,27 @@ export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOption
   }
   const includeData = options.includeData ?? true;
   const descriptorsWithBootCatalogs = descriptors.map((descriptor) => populateBootCatalog(image, descriptor, includeData));
-  const populatedDescriptors = descriptorsWithBootCatalogs.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
+  const populatedDescriptors = descriptorsWithBootCatalogs.map((descriptor) => (
+    options.interoperability && (descriptor.kind === "supplementary" || descriptor.kind === "enhanced")
+      ? descriptor
+      : populateDescriptorDirectoryTree(image, descriptor, includeData)
+  ));
   for (const descriptor of populatedDescriptors) {
     if (descriptor.kind === "primary") {
       assertDescriptorPathTableHierarchy(image, descriptor, "path_table");
-    } else if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
+    } else if (!options.interoperability && (descriptor.kind === "supplementary" || descriptor.kind === "enhanced")) {
       assertDescriptorPathTableHierarchy(image, descriptor, `${descriptor.kind}_path_table`);
     }
   }
   const populatedPrimaryVolumeDescriptors = primaryDescriptors(populatedDescriptors);
   for (const descriptor of populatedPrimaryVolumeDescriptors) {
-    assertPrimaryVolumeSpaceSize(image, descriptor, populatedDescriptors);
+    assertPrimaryVolumeSpaceSize(
+      image,
+      descriptor,
+      options.interoperability
+        ? populatedDescriptors.filter((candidate) => candidate.kind !== "supplementary" && candidate.kind !== "enhanced")
+        : populatedDescriptors,
+    );
   }
   const primaryVolumeDescriptor = selectPrimaryVolumeDescriptor(populatedPrimaryVolumeDescriptors, primaryVolumeDescriptorIndex);
   const root = primaryVolumeDescriptor.rootDirectoryRecord;
@@ -2111,12 +2129,13 @@ function validateZeroDescriptorRanges(
 function assertZeroDescriptorRanges(
   descriptor: VolumeDescriptor,
   ranges: DescriptorZeroRange[],
-  allowNonzeroDescriptorReservedBytes = false,
+  ignoredKinds: DescriptorZeroRange["code"][] = [],
 ): void {
-  if (allowNonzeroDescriptorReservedBytes) {
-    return;
-  }
-  const issues = validateZeroDescriptorRanges(descriptor, descriptorZeroRangeCodePrefix(descriptor), ranges);
+  const issues = validateZeroDescriptorRanges(
+    descriptor,
+    descriptorZeroRangeCodePrefix(descriptor),
+    ranges.filter((range) => !ignoredKinds.includes(range.code)),
+  );
   if (issues.length > 0) {
     throw new Error(issues[0]!.message);
   }

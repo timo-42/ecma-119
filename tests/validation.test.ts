@@ -40,7 +40,7 @@ describe("validateIsoImage hardening", () => {
     expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "image.parse" })]));
   });
 
-  test("permits nonzero PVD unused bytes only when explicitly requested", () => {
+  test("permits nonzero PVD BP 89-120 unused bytes only when explicitly requested", () => {
     const image = createIsoImage([{ path: "README.TXT", data: "interoperability\n" }], {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
@@ -49,7 +49,7 @@ describe("validateIsoImage hardening", () => {
     expect(() => parseIsoImage(image, { includeData: false })).toThrow(/primary volume descriptor unused field at BP 89 to 120 must be zero/i);
     expect(parseIsoImage(image, {
       includeData: false,
-      allowNonzeroDescriptorReservedBytes: true,
+      allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true,
     }).files.map((file) => file.path)).toEqual(["README.TXT"]);
     expect(validateIsoImage(image)).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -62,8 +62,25 @@ describe("validateIsoImage hardening", () => {
     image[PVD_OFFSET + 81] ^= 0xff;
     expect(() => parseIsoImage(image, {
       includeData: false,
-      allowNonzeroDescriptorReservedBytes: true,
+      allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true,
     })).toThrow(/both-endian uint32 mismatch/i);
+  });
+
+  test("interoperability mode retains malformed secondary descriptors without parsing their trees", () => {
+    const image = createIsoImage([{ path: "README.TXT", data: "interoperability\n" }], {
+      supplementaryVolumeDescriptors: [{ volumeIdentifier: "SUPPLEMENTARY" }],
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const supplementaryOffset = PVD_OFFSET + SECTOR_SIZE;
+    image[supplementaryOffset + 8] = 0xff;
+
+    expect(() => parseIsoImage(image, { includeData: false })).toThrow(/supplementary volume descriptor system identifier contains invalid/i);
+    const parsed = parseIsoImage(image, { includeData: false, interoperability: true });
+    expect(parsed.files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(parsed.descriptors.find((descriptor) => descriptor.kind === "supplementary")?.pathTables).toBeUndefined();
+    expect(validateIsoImage(image)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "supplementary.system_identifier.characters" }),
+    ]));
   });
 
   test("reports malformed descriptor standard identifiers with targeted issues", () => {
