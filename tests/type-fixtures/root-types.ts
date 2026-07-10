@@ -173,6 +173,8 @@ const imageFromObjectOverload = createIsoImage({
 });
 const parsed: IsoImage = parseIsoImage(image);
 const parsedFromView: IsoImage = parseIsoImage(imageInput, { includeData: false });
+const interoperableParsed: IsoImage = parseIsoImage(image, { interoperability: true });
+const parsedWithNonzeroPvdUnusedBytes: IsoImage = parseIsoImage(image, { allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true });
 const parsedWithPrimarySelection: IsoImage = parseIsoImage(image, { primaryVolumeDescriptorIndex: 0 } satisfies ParseIsoOptions);
 const parsedWithDescriptorReservedBytes: IsoImage = parseIsoImage(image, {
   allowNonzeroDescriptorReservedBytes: true,
