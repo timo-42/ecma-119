@@ -177,7 +177,7 @@ const interoperableParsed: IsoImage = parseIsoImage(image, { interoperability: t
 const parsedWithNonzeroPvdUnusedBytes: IsoImage = parseIsoImage(image, { allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true });
 const parsedWithPrimarySelection: IsoImage = parseIsoImage(image, { primaryVolumeDescriptorIndex: 0 } satisfies ParseIsoOptions);
 const parsedWithDescriptorReservedBytes: IsoImage = parseIsoImage(image, {
-  allowNonzeroDescriptorReservedBytes: true,
+  allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true,
 } satisfies ParseIsoOptions);
 const volumeSet: IsoVolumeSet = parseIsoVolumeSet([image, imageInput], { includeData: false });
 const descriptors: VolumeDescriptor[] = parseVolumeDescriptors(image);
