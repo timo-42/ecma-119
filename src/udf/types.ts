@@ -116,6 +116,7 @@ export type UdfLongAllocationDescriptor = {
 export type UdfShortAllocationDescriptor = {
   length: number;
   location: number;
+  type?: number;
 };
 
 export type UdfFileSetDescriptor = UdfDescriptorBase & {
