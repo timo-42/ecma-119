@@ -51,6 +51,10 @@ describe("validateIsoImage hardening", () => {
       includeData: false,
       allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true,
     }).files.map((file) => file.path)).toEqual(["README.TXT"]);
+    expect(parseIsoImage(image, {
+      includeData: false,
+      interoperability: true,
+    }).files.map((file) => file.path)).toEqual(["README.TXT"]);
     expect(validateIsoImage(image)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: "pvd.unused",
