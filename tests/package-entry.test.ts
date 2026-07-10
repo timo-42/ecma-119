@@ -14,11 +14,16 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
       import?: string;
       types?: string;
     };
+    "./udf"?: {
+      import?: string;
+      types?: string;
+    };
   };
   main?: string;
   types?: string;
 };
 const builtEntryPath = resolve(root, "dist/index.js");
+const builtUdfEntryPath = resolve(root, "dist/udf/index.js");
 
 type PackDryRunOutput = Array<{
   files: Array<{
@@ -36,6 +41,8 @@ function requiredPackageEntryPaths(): string[] {
     packageJson.types,
     packageJson.exports?.["."]?.import,
     packageJson.exports?.["."]?.types,
+    packageJson.exports?.["./udf"]?.import,
+    packageJson.exports?.["./udf"]?.types,
   ]
     .filter((path): path is string => typeof path === "string")
     .map((path) => pathPosix.normalize(path.replace(/^\.\//u, "")));
@@ -77,6 +84,8 @@ describe("package entry", () => {
     expect(packageJson.types).toBe("./dist/index.d.ts");
     expect(packageJson.exports?.["."]?.import).toBe("./dist/index.js");
     expect(packageJson.exports?.["."]?.types).toBe("./dist/index.d.ts");
+    expect(packageJson.exports?.["./udf"]?.import).toBe("./dist/udf/index.js");
+    expect(packageJson.exports?.["./udf"]?.types).toBe("./dist/udf/index.d.ts");
   });
 
   test("package packlist includes manifest entry targets after a clean build", () => {
@@ -136,6 +145,21 @@ describe("package entry", () => {
       jolietLevel: 3,
     });
     expect(new TextDecoder("ascii").decode(parsed.files[0]?.data)).toBe("package entry roundtrip\n");
+  }, 20_000);
+
+  test("built UDF subpath writes validates and reads an image", async () => {
+    buildPackage();
+    const udf = await import(pathToFileURL(builtUdfEntryPath).href);
+    const image = udf.createUdfImage([{ path: "PACKAGE.TXT", data: "UDF package entry\n" }], {
+      volumeIdentifier: "UDF_PACKAGE",
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    const parsed = udf.parseUdfImage(image, { includeData: true });
+
+    expect(udf.validateUdfImage(image)).toEqual([]);
+    expect(parsed.primaryVolumeDescriptor.volumeIdentifier).toBe("UDF_PACKAGE");
+    expect(parsed.files[0]).toMatchObject({ path: "PACKAGE.TXT", size: "UDF package entry\n".length });
+    expect(new TextDecoder().decode(parsed.files[0]?.data)).toBe("UDF package entry\n");
   }, 20_000);
 
   test("published package contains files referenced by emitted source maps", () => {

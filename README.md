@@ -2,6 +2,8 @@
 
 TypeScript utilities for reading and writing ECMA-119 4th edition / ISO 9660 CD-ROM volume images.
 
+The package also provides a separate UDF 2.01 profile built on ECMA-167 3rd edition through the `ecma-119/udf` subpath.
+
 This package is in initial development. The supported profile targets ECMA-119 images with 2,048-byte logical sectors, one or more primary volume descriptors for reader interoperability, one or more volume descriptor set terminators, optional supplementary/enhanced volume descriptors with mirrored directory trees and optional UCS-2BE or Joliet identifier authoring, structured boot and partition descriptors with opaque use/payload bytes, El Torito boot catalog and boot image authoring/parsing, Rock Ridge/SUSP System Use metadata parsing and inline authoring, path tables, Level 1 primary identifier authoring by default, optional Level 2 primary identifiers, regular file sections including generated non-interleaved, generated multi-extent, generated interleaved, and read-side compatible multi-extent/interleaved sections, writer-generated single-extent directory records with optional interleaving, read-side compatible multi-extent/interleaved directory records, writer-authored external file and directory records within a volume set, unresolved read-side metadata for external records within a volume set, and multi-image resolution for external directory children and regular file payloads.
 
 The implementation targets ECMA-119 4th edition, June 2019. Tests exercise generated write-then-read ISO images, handcrafted in-memory reader images that are not produced by the writer, and checked-in ISO byte fixtures produced by an independent external tool.
@@ -64,6 +66,25 @@ console.log(partition?.data?.subarray(0, 4));
 ```
 
 `createIsoImage(files, options)` and `createIsoImage({ files, ...options })` are equivalent authoring forms.
+
+### UDF / ECMA-167
+
+```ts
+import { createUdfImage, parseUdfImage } from "ecma-119/udf";
+
+const image = createUdfImage([
+  { path: "README.TXT", data: "Hello from UDF\n" },
+  { path: "DOCS/CAFÉ.TXT", data: "UTF-16 CS0 name\n" }
+], {
+  revision: "2.01",
+  volumeIdentifier: "EXAMPLE_UDF"
+});
+
+const parsed = parseUdfImage(image);
+console.log(parsed.files.map((file) => file.path));
+```
+
+The current UDF profile writes and reads 2,048-byte logical blocks, NSR03 volume recognition, ECMA-167 descriptor tags with CRC/checksum validation, anchor/VDS/LVID structures, a single Type-1 physical partition, one file set, ECMA-167 File Entries, directory File Identifier Descriptors, OSTA compressed Unicode names, and contiguous `short_ad` allocation descriptors. `parseUdfImage(image, { includeData: false })` retains the directory tree and metadata without file payload bytes. VAT, sparing and metadata partitions, multi-volume writing, extended file entries, streams, extended attributes, allocation continuations, and non-contiguous allocation descriptors are not supported yet.
 
 The root package entry intentionally exposes these API groups:
 
