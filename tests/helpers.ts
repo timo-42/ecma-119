@@ -74,9 +74,9 @@ export function findImageCreator(
   );
 }
 
-export function findIsoParser(module: Ecma119Module): ((image: Uint8Array, options?: { includeData?: boolean }) => unknown) | undefined {
+export function findIsoParser(module: Ecma119Module): ((image: Uint8Array, options?: { includeData?: boolean; primaryVolumeDescriptorIndex?: number }) => unknown) | undefined {
   return typeof module.parseIsoImage === "function"
-    ? module.parseIsoImage as (image: Uint8Array, options?: { includeData?: boolean }) => unknown
+    ? module.parseIsoImage as (image: Uint8Array, options?: { includeData?: boolean; primaryVolumeDescriptorIndex?: number }) => unknown
     : undefined;
 }
 

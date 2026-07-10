@@ -187,7 +187,7 @@ describe("validateIsoImage hardening", () => {
     );
   });
 
-  test("reports duplicate primary volume descriptors", () => {
+  test("reads multiple primary volume descriptors and selects the requested descriptor", () => {
     const image = createIsoImage([{ path: "README.TXT", data: "duplicate primary descriptor\n" }], {
       bootRecord: {
         bootSystemIdentifier: "BOOT",
@@ -195,25 +195,23 @@ describe("validateIsoImage hardening", () => {
       createdAt: new Date("2024-01-01T00:00:00Z"),
     });
     image.set(image.subarray(PVD_OFFSET, PVD_OFFSET + SECTOR_SIZE), TERMINATOR_OFFSET);
+    image.fill(0x20, TERMINATOR_OFFSET + 40, TERMINATOR_OFFSET + 72);
+    image.set(new TextEncoder().encode("SECONDARY_PVD"), TERMINATOR_OFFSET + 40);
 
     expect(parseVolumeDescriptors(image).map((descriptor) => descriptor.kind)).toEqual(["primary", "primary", "terminator"]);
-    expect(() => parseIsoImage(image)).toThrow(/volume descriptor sequence contains 2 primary volume descriptors/i);
-    const issues = validateIsoImage(image);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "descriptor.primary_duplicate",
-          message: "volume descriptor sequence contains 2 primary volume descriptors; the supported profile requires exactly one",
-        }),
-      ]),
-    );
-    expect(issues).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "image.parse",
-        }),
-      ]),
-    );
+    const defaultParsed = parseIsoImage(image, { includeData: true });
+    const selectedParsed = parseIsoImage(image, { includeData: true, primaryVolumeDescriptorIndex: 1 });
+
+    expect(validateIsoImage(image)).toEqual([]);
+    expect(defaultParsed.primaryVolumeDescriptorIndex).toBe(0);
+    expect(defaultParsed.primaryVolumeDescriptors).toHaveLength(2);
+    expect(defaultParsed.primaryVolumeDescriptor.volumeIdentifier).not.toBe("SECONDARY_PVD");
+    expect(selectedParsed.primaryVolumeDescriptorIndex).toBe(1);
+    expect(selectedParsed.primaryVolumeDescriptor).toBe(selectedParsed.primaryVolumeDescriptors[1]);
+    expect(selectedParsed.primaryVolumeDescriptor.volumeIdentifier).toBe("SECONDARY_PVD");
+    expect(selectedParsed.files[0]?.data).toEqual(new TextEncoder().encode("duplicate primary descriptor\n"));
+    expect(() => parseIsoImage(image, { primaryVolumeDescriptorIndex: 2 })).toThrow(/primaryVolumeDescriptorIndex 2 is out of range/i);
+    expect(() => parseIsoImage(image, { primaryVolumeDescriptorIndex: -1 })).toThrow(/primaryVolumeDescriptorIndex must be a non-negative integer/i);
   });
 
   test("accepts multiple boot record descriptors", () => {
