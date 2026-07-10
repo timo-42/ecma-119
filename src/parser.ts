@@ -15,6 +15,7 @@ import {
   type IsoVolumeSet,
   type IsoNode,
   type IsoPathTables,
+  type ParseIsoOptions,
   type BootVolumeDescriptor,
   type EnhancedVolumeDescriptor,
   type PrimaryVolumeDescriptor,
@@ -56,24 +57,24 @@ type DirectoryTreeReadOptions = {
   rockRidge?: SuspParseOptions;
 };
 
-export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?: boolean } = {}): IsoImage {
+export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOptions = {}): IsoImage {
   const image = bytesFromImageInput(imageInput);
   assertSectorAlignedImage(image);
   const descriptors = parseVolumeDescriptors(image);
   assertSupportedDescriptorSequenceProfile(descriptors);
-  const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
-  if (!pvd) {
-    throw new Error("missing primary volume descriptor");
-  }
-  assertSupportedDescriptorProfile(pvd, "primary volume descriptor");
-  assertVolumeDescriptorMetadata(pvd, "primary volume descriptor");
-  assertZeroDescriptorRanges(pvd, primaryVolumeDescriptorZeroRanges());
-  assertDescriptorCharacterFields(pvd, primaryVolumeDescriptorCharacterFields());
-  assertDescriptorRootFileReferences(image, pvd, "pvd");
-  assertDescriptorRootDirectoryRecordIdentifier(pvd, "primary");
-  validateDescriptorPathTableReferences(image, pvd, "primary volume descriptor");
+  const primaryVolumeDescriptorIndex = options.primaryVolumeDescriptorIndex ?? 0;
+  const primaryVolumeDescriptors = primaryDescriptors(descriptors);
+  const pvd = selectPrimaryVolumeDescriptor(primaryVolumeDescriptors, primaryVolumeDescriptorIndex);
   for (const descriptor of descriptors) {
-    if (descriptor.kind === "boot") {
+    if (descriptor.kind === "primary") {
+      assertSupportedDescriptorProfile(descriptor, "primary volume descriptor");
+      assertVolumeDescriptorMetadata(descriptor, "primary volume descriptor");
+      assertZeroDescriptorRanges(descriptor, primaryVolumeDescriptorZeroRanges());
+      assertDescriptorCharacterFields(descriptor, primaryVolumeDescriptorCharacterFields());
+      assertDescriptorRootFileReferences(image, descriptor, "pvd");
+      assertDescriptorRootDirectoryRecordIdentifier(descriptor, "primary");
+      validateDescriptorPathTableReferences(image, descriptor, "primary volume descriptor");
+    } else if (descriptor.kind === "boot") {
       assertSupportedBootVolumeDescriptor(descriptor);
       assertSupportedBootCatalog(image, descriptor);
     } else if (descriptor.kind === "partition") {
@@ -95,7 +96,6 @@ export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?
       assertVolumeDescriptorSetTerminatorReservedBytes(descriptor);
     }
   }
-  assertSupportedDirectoryEntry(pvd.rootDirectoryRecord, ".", pvd.volumeSetSize);
   const includeData = options.includeData ?? true;
   const descriptorsWithBootCatalogs = descriptors.map((descriptor) => populateBootCatalog(image, descriptor, includeData));
   const populatedDescriptors = descriptorsWithBootCatalogs.map((descriptor) => populateDescriptorDirectoryTree(image, descriptor, includeData));
@@ -106,22 +106,24 @@ export function parseIsoImage(imageInput: IsoImageInput, options: { includeData?
       assertDescriptorPathTableHierarchy(image, descriptor, `${descriptor.kind}_path_table`);
     }
   }
-  assertPrimaryVolumeSpaceSize(image, pvd, populatedDescriptors);
-  const primaryVolumeDescriptor = populatedDescriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
-  if (!primaryVolumeDescriptor) {
-    throw new Error("missing primary volume descriptor");
+  const populatedPrimaryVolumeDescriptors = primaryDescriptors(populatedDescriptors);
+  for (const descriptor of populatedPrimaryVolumeDescriptors) {
+    assertPrimaryVolumeSpaceSize(image, descriptor, populatedDescriptors);
   }
+  const primaryVolumeDescriptor = selectPrimaryVolumeDescriptor(populatedPrimaryVolumeDescriptors, primaryVolumeDescriptorIndex);
   const root = primaryVolumeDescriptor.rootDirectoryRecord;
   return {
     systemArea: image.slice(0, sectorOffset(SYSTEM_AREA_SECTORS)),
     descriptors: populatedDescriptors,
+    primaryVolumeDescriptors: populatedPrimaryVolumeDescriptors,
+    primaryVolumeDescriptorIndex,
     primaryVolumeDescriptor,
     root,
     files: collectParsedFiles(root),
   };
 }
 
-export function parseIsoVolumeSet(imageInputs: IsoImageInput[], options: { includeData?: boolean } = {}): IsoVolumeSet {
+export function parseIsoVolumeSet(imageInputs: IsoImageInput[], options: ParseIsoOptions = {}): IsoVolumeSet {
   const includeData = options.includeData ?? true;
   const members = imageInputs.map((imageInput) => {
     const bytes = bytesFromImageInput(imageInput);
@@ -197,15 +199,19 @@ export function validateIsoImage(imageInput: IsoImageInput): ValidationIssue[] {
         issues.push(...validateBootVolumeDescriptor(image, descriptor));
       }
     }
-    const pvd = descriptors.find((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.type === 1);
-    if (!pvd) {
+    const pvds = primaryDescriptors(descriptors);
+    if (pvds.length === 0) {
       issues.push({ code: "descriptor.primary_missing", message: "primary volume descriptor is required" });
     } else {
-      issues.push(...validatePrimaryVolumeDescriptor(image, pvd, descriptors));
-      issues.push(...validateDirectoryHierarchy(image, pvd.rootDirectoryRecord, pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber, pvd.volumeSetSize, new Set(), {
-        hierarchyDepthLabel: "primary",
-        validatePrimaryLevelOne: true,
-      }));
+      const pvd = pvds[0]!;
+      for (const [index, primary] of pvds.entries()) {
+        const prefix = index === 0 ? "pvd" : `pvd_${index + 1}`;
+        issues.push(...validatePrimaryVolumeDescriptor(image, primary, descriptors, prefix));
+        issues.push(...validateDirectoryHierarchy(image, primary.rootDirectoryRecord, primary.rootDirectoryRecord, ".", primary.volumeSequenceNumber, primary.volumeSetSize, new Set(), {
+          hierarchyDepthLabel: "primary",
+          validatePrimaryLevelOne: true,
+        }));
+      }
       for (const descriptor of descriptors) {
         if (descriptor.kind === "supplementary" || descriptor.kind === "enhanced") {
           issues.push(...validateSupplementaryLikeVolumeDescriptor(image, descriptor, descriptors, pvd));
@@ -232,13 +238,6 @@ export function validateIsoImage(imageInput: IsoImageInput): ValidationIssue[] {
 
 function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const primaryCount = descriptors.filter((descriptor) => descriptor.kind === "primary").length;
-  if (primaryCount > 1) {
-    issues.push({
-      code: "descriptor.primary_duplicate",
-      message: `volume descriptor sequence contains ${primaryCount} primary volume descriptors; the supported profile requires exactly one`,
-    });
-  }
   for (const descriptor of descriptors) {
     if (descriptor.kind === "unknown") {
       issues.push({
@@ -252,10 +251,6 @@ function validateDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): Val
 }
 
 function assertSupportedDescriptorSequenceProfile(descriptors: VolumeDescriptor[]): void {
-  const primaryCount = descriptors.filter((descriptor) => descriptor.kind === "primary").length;
-  if (primaryCount > 1) {
-    throw new Error(`volume descriptor sequence contains ${primaryCount} primary volume descriptors; the supported profile requires exactly one`);
-  }
   const unknown = descriptors.find((descriptor) => descriptor.kind === "unknown");
   if (unknown) {
     throw new Error(`volume descriptor type ${unknown.type} at sector ${unknown.sector} is outside the supported profile`);
@@ -264,6 +259,27 @@ function assertSupportedDescriptorSequenceProfile(descriptors: VolumeDescriptor[
   if (orderIssue) {
     throw new Error(orderIssue.message);
   }
+}
+
+function primaryDescriptors(descriptors: VolumeDescriptor[]): PrimaryVolumeDescriptor[] {
+  return descriptors.filter((descriptor): descriptor is PrimaryVolumeDescriptor => descriptor.kind === "primary");
+}
+
+function selectPrimaryVolumeDescriptor(
+  descriptors: PrimaryVolumeDescriptor[],
+  index: number,
+): PrimaryVolumeDescriptor {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error(`primaryVolumeDescriptorIndex must be a non-negative integer; received ${index}`);
+  }
+  if (descriptors.length === 0) {
+    throw new Error("missing primary volume descriptor");
+  }
+  const descriptor = descriptors[index];
+  if (!descriptor) {
+    throw new Error(`primaryVolumeDescriptorIndex ${index} is out of range; image contains ${descriptors.length} primary volume descriptor${descriptors.length === 1 ? "" : "s"}`);
+  }
+  return descriptor;
 }
 
 function validateDescriptorSequenceOrder(descriptors: VolumeDescriptor[]): ValidationIssue[] {
@@ -804,20 +820,20 @@ function validateDecodedPathTableForParsing(
   }
 }
 
-function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[]): ValidationIssue[] {
+function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDescriptor, descriptors: VolumeDescriptor[], codePrefix = "pvd"): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  issues.push(...validateZeroDescriptorRanges(pvd, "pvd", primaryVolumeDescriptorZeroRanges()));
-  issues.push(...validateDescriptorCharacterFields(pvd, "pvd", primaryVolumeDescriptorCharacterFields()));
-  issues.push(...validateDescriptorRootFileReferences(image, pvd, "pvd"));
-  issues.push(...validateDescriptorRootDirectoryRecordIdentifier(pvd, "pvd", "primary"));
+  issues.push(...validateZeroDescriptorRanges(pvd, codePrefix, primaryVolumeDescriptorZeroRanges()));
+  issues.push(...validateDescriptorCharacterFields(pvd, codePrefix, primaryVolumeDescriptorCharacterFields()));
+  issues.push(...validateDescriptorRootFileReferences(image, pvd, codePrefix));
+  issues.push(...validateDescriptorRootDirectoryRecordIdentifier(pvd, codePrefix, "primary"));
   if (pvd.logicalBlockSize !== SECTOR_SIZE) {
-    issues.push({ code: "pvd.logical_block_size", message: "logical block size must be 2048 for the supported profile" });
+    issues.push({ code: `${codePrefix}.logical_block_size`, message: "logical block size must be 2048 for the supported profile" });
   }
-  issues.push(...validateVolumeSpaceSize(image, pvd, descriptors, "pvd"));
+  issues.push(...validateVolumeSpaceSize(image, pvd, descriptors, codePrefix));
   if (pvd.fileStructureVersion !== 1) {
-    issues.push({ code: "pvd.file_structure_version", message: "primary volume descriptor file structure version must be 1" });
+    issues.push({ code: `${codePrefix}.file_structure_version`, message: "primary volume descriptor file structure version must be 1" });
   }
-  issues.push(...validateVolumeDescriptorMetadata(pvd, "pvd", "primary volume descriptor"));
+  issues.push(...validateVolumeDescriptorMetadata(pvd, codePrefix, "primary volume descriptor"));
   issues.push(...validateDirectoryEntryInterleaving(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryReservedFileFlags(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryDirectoryFlags(pvd.rootDirectoryRecord, "."));
@@ -825,7 +841,7 @@ function validatePrimaryVolumeDescriptor(image: Uint8Array, pvd: PrimaryVolumeDe
   issues.push(...validateDirectoryEntryVolumeSequence(pvd.rootDirectoryRecord, ".", pvd.volumeSetSize));
   issues.push(...validateDirectoryEntryMultiExtent(pvd.rootDirectoryRecord, "."));
   issues.push(...validateDirectoryEntryExtendedAttributeRecord(image, pvd.rootDirectoryRecord, ".", pvd.volumeSequenceNumber));
-  issues.push(...validatePathTableReferences(image, pvd, "path_table"));
+  issues.push(...validatePathTableReferences(image, pvd, codePrefix === "pvd" ? "path_table" : `${codePrefix}_path_table`));
   return issues;
 }
 
@@ -3051,9 +3067,8 @@ function resolveExternalVolumeEntries(
     );
     descriptor.rootDirectoryRecord = resolvedRoot;
     markTreeExternalToOrigin(resolvedRoot, originVolumeSequenceNumber);
-    if (descriptor.kind === "primary") {
+    if (descriptor === image.primaryVolumeDescriptor) {
       image.root = resolvedRoot;
-      image.primaryVolumeDescriptor.rootDirectoryRecord = resolvedRoot;
     }
   }
 }
@@ -4312,10 +4327,7 @@ function hasTargetedIssueForParseFailure(issues: ValidationIssue[], message: str
     if (issue.code === "image.parse" || issue.code === "descriptor.sequence") {
       return false;
     }
-    if (
-      (issue.code === "descriptor.primary_duplicate" || issue.code === "descriptor.unknown")
-      && issue.message === message
-    ) {
+    if (issue.code === "descriptor.unknown" && issue.message === message) {
       return true;
     }
     if (issue.code === "descriptor.sequence.order" && issue.message === message) {

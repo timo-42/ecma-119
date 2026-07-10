@@ -29,6 +29,7 @@ import {
   type IsoVolumeSet,
   type JolietOptions,
   type PrimaryVolumeDescriptor,
+  type ParseIsoOptions,
   type RockRidgeInput,
   type RockRidgeMetadata,
   type SuspEntry,
@@ -172,11 +173,14 @@ const imageFromObjectOverload = createIsoImage({
 });
 const parsed: IsoImage = parseIsoImage(image);
 const parsedFromView: IsoImage = parseIsoImage(imageInput, { includeData: false });
+const parsedWithPrimarySelection: IsoImage = parseIsoImage(image, { primaryVolumeDescriptorIndex: 0 } satisfies ParseIsoOptions);
 const volumeSet: IsoVolumeSet = parseIsoVolumeSet([image, imageInput], { includeData: false });
 const descriptors: VolumeDescriptor[] = parseVolumeDescriptors(image);
 const issues: ValidationIssue[] = validateIsoImage(image);
 
 const primary: PrimaryVolumeDescriptor = parsed.primaryVolumeDescriptor;
+const primaryDescriptors: PrimaryVolumeDescriptor[] = parsed.primaryVolumeDescriptors;
+const primaryDescriptorIndex: number = parsed.primaryVolumeDescriptorIndex;
 const node: IsoNode | undefined = parsed.root.children[0];
 const entryPath: string | undefined = node?.path;
 const fileEntry: IsoFileEntry | undefined = parsed.files[0];

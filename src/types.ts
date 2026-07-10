@@ -619,9 +619,23 @@ export type VolumeDescriptor =
 export type IsoImage = {
   systemArea: Uint8Array;
   descriptors: VolumeDescriptor[];
+  /** All primary volume descriptors in descriptor-sequence order. */
+  primaryVolumeDescriptors: PrimaryVolumeDescriptor[];
+  /** The zero-based index of primaryVolumeDescriptor within primaryVolumeDescriptors. */
+  primaryVolumeDescriptorIndex: number;
   primaryVolumeDescriptor: PrimaryVolumeDescriptor;
   files: IsoFileEntry[];
   root: IsoDirectoryEntry;
+};
+
+export type ParseIsoOptions = {
+  /** Load regular file, partition, and El Torito boot-image payload bytes. Defaults to true. */
+  includeData?: boolean;
+  /**
+   * Selects the primary volume descriptor used for root and file results.
+   * The index is zero-based among primary volume descriptors and defaults to 0.
+   */
+  primaryVolumeDescriptorIndex?: number;
 };
 
 export type IsoVolumeSet = {
