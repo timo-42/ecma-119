@@ -73,7 +73,9 @@ export function parseIsoImage(imageInput: IsoImageInput, options: ParseIsoOption
       assertZeroDescriptorRanges(
         descriptor,
         primaryVolumeDescriptorZeroRanges(),
-        allowNonzeroPrimaryVolumeDescriptorUnusedBytes ? ["unused"] : [],
+        allowNonzeroPrimaryVolumeDescriptorUnusedBytes
+          ? primaryVolumeDescriptorZeroRanges().filter((range) => range.start === 88 && range.end === 120)
+          : [],
       );
       assertDescriptorCharacterFields(descriptor, primaryVolumeDescriptorCharacterFields());
       assertDescriptorRootFileReferences(image, descriptor, "pvd");
@@ -2129,12 +2131,14 @@ function validateZeroDescriptorRanges(
 function assertZeroDescriptorRanges(
   descriptor: VolumeDescriptor,
   ranges: DescriptorZeroRange[],
-  ignoredKinds: DescriptorZeroRange["code"][] = [],
+  ignoredRanges: Pick<DescriptorZeroRange, "start" | "end">[] = [],
 ): void {
   const issues = validateZeroDescriptorRanges(
     descriptor,
     descriptorZeroRangeCodePrefix(descriptor),
-    ranges.filter((range) => !ignoredKinds.includes(range.code)),
+    ranges.filter((range) => !ignoredRanges.some((ignoredRange) => (
+      ignoredRange.start === range.start && ignoredRange.end === range.end
+    ))),
   );
   if (issues.length > 0) {
     throw new Error(issues[0]!.message);

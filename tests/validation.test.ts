@@ -68,6 +68,19 @@ describe("validateIsoImage hardening", () => {
       includeData: false,
       allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true,
     })).toThrow(/both-endian uint32 mismatch/i);
+
+    const otherUnusedRange = createIsoImage([{ path: "README.TXT", data: "interoperability\n" }], {
+      createdAt: new Date("2024-01-01T00:00:00Z"),
+    });
+    otherUnusedRange[PVD_OFFSET + 7] = 0xa5;
+    expect(() => parseIsoImage(otherUnusedRange, {
+      includeData: false,
+      allowNonzeroPrimaryVolumeDescriptorUnusedBytes: true,
+    })).toThrow(/primary volume descriptor unused field at BP 8 must be zero/i);
+    expect(() => parseIsoImage(otherUnusedRange, {
+      includeData: false,
+      interoperability: true,
+    })).toThrow(/primary volume descriptor unused field at BP 8 must be zero/i);
   });
 
   test("interoperability mode retains malformed secondary descriptors without parsing their trees", () => {
